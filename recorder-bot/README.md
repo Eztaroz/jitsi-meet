@@ -10,7 +10,7 @@ This is a standalone package, like `tests/`. It has its own dependencies, runs o
 |---|---|
 | `src/main.ts` | The service's entry point: the control API, and shutdown on `SIGTERM`. |
 | `src/api.ts` | The control API (`POST /consultations`, `GET /consultations/{id}`, `GET /health`), behind a bearer secret. |
-| `src/consultations.ts`, `src/consultation.ts` | The running consultations. Each one feeds the bot's events to its lifecycle module and carries out the module's commands. |
+| `src/consultations.ts`, `src/consultation.ts` | The running consultations. Each one feeds the bot's events to its lifecycle module, carries out the module's commands, and relaunches a bot that crashed or lost its connection. |
 | `src/consultationLifecycle.ts` | The consultation lifecycle module. It is pure: it takes timestamped events and returns timeline entries and commands (start a timer, cancel a timer, stop). It owns the stop rule and the timeline, and derives the participants, tracks, verified identities, staff visits and gaps. |
 | `src/evidence.ts` | The evidence recording on disk: track files in the spool while the consultation runs, then the remux, `timeline.json`, `manifest.json` and the move into the evidence storage root. |
 | `src/identity.ts` | A participant's verified identity and role, from the identity Prosody puts in its presence and the role markers. |

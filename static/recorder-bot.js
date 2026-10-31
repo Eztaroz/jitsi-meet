@@ -214,6 +214,9 @@
         const events = JitsiMeetJS.events.conference;
 
         conference = connection.initJitsiConference(params.room, {
+            // The bot's own account is on the hidden domain. lib-jitsi-meet needs it to tell other participants on
+            // it, such as another recorder, or this bot's previous session after a crash, from humans.
+            hiddenDomain: params.jid.slice(params.jid.indexOf('@') + 1),
             p2p: { enabled: false }
         });
 

@@ -494,6 +494,147 @@ describe('interruption gaps', () => {
     });
 });
 
+describe('interruptions', () => {
+    test('tracks still recorded when the bot is interrupted end then', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'track_started', endpointId: 'patient1', file: '01-patient1-audio.webm', kind: 'audio' });
+        mock.timers.tick(20_000);
+        c.send({ type: 'bot_interrupted' });
+
+        assert.deepEqual(c.tracks().map(t => [ t.file, t.stop ]), [ [ '01-patient1-audio.webm', at(20_000) ] ]);
+        assert.deepEqual(c.timeline.slice(-2), [
+            { at: at(20_000), type: 'bot_interrupted' },
+            { at: at(20_000), file: '01-patient1-audio.webm', type: 'track_stopped' }
+        ]);
+    });
+
+    test('a participant the resumed bot finds in the room stays, with no new join', () => {
+        const staffA = { id: 'staff-a@hospital' };
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'participant_joined', endpointId: 'staff1', role: 'staff', identity: staffA });
+        mock.timers.tick(10_000);
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(5_000);
+
+        // The relaunched bot is told who is in the room as it joins.
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'participant_joined', endpointId: 'staff1', role: 'staff', identity: staffA });
+        c.send({ type: 'bot_resumed' });
+
+        assert.deepEqual(c.participants().map(p => [ p.endpointId, p.joins, p.leaves ]), [
+            [ 'patient1', [ at(0) ], [] ],
+            [ 'staff1', [ at(0) ], [] ]
+        ]);
+        assert.deepEqual(c.staffVisits(), [
+            { endpointId: 'staff1', identity: staffA, displayName: undefined, start: at(0), end: undefined }
+        ]);
+        assert.deepEqual(c.timeline.filter(e => e.type === 'participant_joined').length, 2);
+    });
+
+    test('a participant the resumed bot does not find left during the gap; the bot learns it at the resume', () => {
+        const staffA = { id: 'staff-a@hospital' };
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'participant_joined', endpointId: 'staff1', role: 'staff', identity: staffA });
+        mock.timers.tick(10_000);
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(5_000);
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'participant_joined', endpointId: 'staff2', role: 'staff', identity: staffA });
+        c.send({ type: 'bot_resumed' });
+
+        assert.deepEqual(c.participants().map(p => [ p.endpointId, p.joins, p.leaves ]), [
+            [ 'patient1', [ at(0) ], [] ],
+            [ 'staff1', [ at(0) ], [ at(15_000) ] ],
+            [ 'staff2', [ at(15_000) ], [] ]
+        ]);
+        assert.deepEqual(c.staffVisits().map(v => [ v.endpointId, v.start, v.end ]), [
+            [ 'staff1', at(0), at(15_000) ],
+            [ 'staff2', at(15_000), undefined ]
+        ]);
+        assert.deepEqual(c.timeline.slice(-3), [
+            { at: at(15_000), type: 'bot_resumed' },
+            { at: at(15_000), type: 'gap', start: at(10_000), end: at(15_000) },
+            { at: at(15_000), endpointId: 'staff1', type: 'participant_left' }
+        ]);
+    });
+
+    test('if everyone left during the gap, the empty-room grace runs from the resume', () => {
+        const c = consultation({ emptyRoomMs: 60_000 });
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        mock.timers.tick(10_000);
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(5_000);
+        c.send({ type: 'bot_resumed' });
+        mock.timers.tick(59_999);
+        assert.equal(c.stop, undefined);
+
+        mock.timers.tick(1);
+        assert.deepEqual(c.stop, { at: at(75_000), reason: 'no_humans_for_grace' });
+    });
+
+    test('the first-join wait runs on through an interruption', () => {
+        const c = consultation({ firstJoinMs: 600_000 });
+
+        c.send({ type: 'bot_joined' });
+        mock.timers.tick(300_000);
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(10_000);
+        c.send({ type: 'bot_resumed' });
+        mock.timers.tick(290_000);
+
+        assert.deepEqual(c.stop, { at: at(600_000), reason: 'no_one_joined' });
+    });
+
+    test('a bot interrupted before it ever joined starts the first-join wait when it resumes', () => {
+        const c = consultation({ firstJoinMs: 600_000 });
+
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(10_000);
+        c.send({ type: 'bot_resumed' });
+        mock.timers.tick(600_000);
+
+        assert.deepEqual(c.stop, { at: at(610_000), reason: 'no_one_joined' });
+    });
+
+    test('a resume without an interruption changes nothing', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'bot_resumed' });
+
+        assert.deepEqual(c.participants().map(p => p.leaves), [ [] ]);
+        assert.deepEqual(c.timeline.filter(e => e.type === 'gap' || e.type === 'participant_left'), []);
+    });
+
+    test('a bot that fails for good stops the consultation, ending the gap', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        mock.timers.tick(10_000);
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(5_000);
+        c.send({ type: 'bot_failed' });
+
+        assert.deepEqual(c.stop, { at: at(15_000), reason: 'bot_failed' });
+        assert.deepEqual(c.timeline.filter(e => e.type === 'gap'), [
+            { at: at(15_000), type: 'gap', start: at(10_000), end: at(15_000) }
+        ]);
+    });
+});
+
 describe('timeline', () => {
     test('records every event at its time, ending with the stop reason', () => {
         const c = consultation();

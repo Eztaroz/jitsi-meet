@@ -18,6 +18,7 @@ export interface IConsultation {
 
     /** Where the evidence recording is, relative to the evidence storage root, once it is stored. */
     evidenceLocation?: string;
+    relaunches: number;
     startedAt: string;
     status: string;
     stopReason?: string;
@@ -172,6 +173,7 @@ export async function getConsultation(consultationId: string, apiUrl?: string): 
  * @param {string} consultationId - The consultation.
  * @param {Function} predicate - What to wait for.
  * @param {Object} options - Options.
+ * @param {string} options.apiUrl - Which instance of the service; the main one by default.
  * @param {string} options.description - What is awaited, for the failure message.
  * @param {number} options.timeout - How long to wait, in milliseconds.
  * @returns {Promise<IConsultation>} The matching consultation.
@@ -179,16 +181,17 @@ export async function getConsultation(consultationId: string, apiUrl?: string): 
 export async function waitForConsultation(
         consultationId: string,
         predicate: (consultation: IConsultation) => boolean,
-        { description, timeout = 30_000 }: { description: string; timeout?: number; }): Promise<IConsultation> {
+        options: { apiUrl?: string; description: string; timeout?: number; }): Promise<IConsultation> {
+    const { apiUrl, description, timeout = 30_000 } = options;
     const deadline = Date.now() + timeout;
-    let consultation = await getConsultation(consultationId);
+    let consultation = await getConsultation(consultationId, apiUrl);
 
     while (!predicate(consultation)) {
         if (Date.now() > deadline) {
             throw new Error(`Timed out waiting for ${description}; last status ${JSON.stringify(consultation)}`);
         }
         await new Promise(resolve => setTimeout(resolve, 500));
-        consultation = await getConsultation(consultationId);
+        consultation = await getConsultation(consultationId, apiUrl);
     }
 
     return consultation;
@@ -198,10 +201,12 @@ export async function waitForConsultation(
  * Waits until the bot records the consultation, that is once it is in the conference.
  *
  * @param {string} consultationId - The consultation.
+ * @param {string} apiUrl - Which instance of the service; the main one by default.
  * @returns {Promise<IConsultation>}
  */
-export function waitForRecording(consultationId: string): Promise<IConsultation> {
+export function waitForRecording(consultationId: string, apiUrl?: string): Promise<IConsultation> {
     return waitForConsultation(consultationId, c => c.status === 'recording', {
+        apiUrl,
         description: 'the bot to join'
     });
 }
@@ -349,6 +354,26 @@ export async function waitForRecordingLabel(participant: Participant, consultati
 }
 
 /**
+ * Waits until the consultation has reached a final status: `stored`, `spooled` or `failed`.
+ *
+ * @param {string} consultationId - The consultation.
+ * @param {Object} options - Options.
+ * @param {string} options.apiUrl - Which instance of the service; the main one by default.
+ * @param {number} options.timeout - How long to wait, in milliseconds.
+ * @returns {Promise<IConsultation>}
+ */
+export function waitForFinalStatus(consultationId: string, { apiUrl, timeout = 30_000 }: {
+    apiUrl?: string;
+    timeout?: number;
+} = {}): Promise<IConsultation> {
+    return waitForConsultation(consultationId, c => [ 'stored', 'spooled', 'failed' ].includes(c.status), {
+        apiUrl,
+        description: 'the consultation to reach a final status',
+        timeout
+    });
+}
+
+/**
  * Waits until the consultation's evidence recording is in the evidence storage root.
  *
  * @param {string} consultationId - The consultation.
@@ -356,10 +381,7 @@ export async function waitForRecordingLabel(participant: Participant, consultati
  * @returns {Promise<IConsultation>}
  */
 export function waitForEvidence(consultationId: string, timeout = 30_000): Promise<IConsultation> {
-    return waitForConsultation(consultationId, c => [ 'stored', 'spooled', 'failed' ].includes(c.status), {
-        description: 'the evidence recording to be stored',
-        timeout
-    }).then(consultation => {
+    return waitForFinalStatus(consultationId, { timeout }).then(consultation => {
         if (consultation.status !== 'stored' || !consultation.evidenceLocation) {
             throw new Error(`The evidence recording was not stored: ${JSON.stringify(consultation)}`);
         }
@@ -397,6 +419,7 @@ export interface IManifest {
     participants: Array<{
         displayName?: string;
         endpointId: string;
+        hidden?: true;
         identity?: IIdentity;
         joins: string[];
         leaves: string[];
@@ -490,4 +513,58 @@ export async function setCameraHeight(participant: Participant, height: number):
 
         await track?.applyConstraints({ height: h, width: Math.round(h * 16 / 9) });
     }, height);
+}
+
+/**
+ * Returns why the relaunch tests cannot run here, or undefined when they can. They kill a bot's browser in the
+ * service's docker container.
+ *
+ * @returns {string|undefined}
+ */
+export function relaunchUnavailableReason(): string | undefined {
+    const { container, fragileApiUrl, fragileContainer } = config.recorderBot;
+
+    return evidenceUnavailableReason()
+        ?? (container && fragileApiUrl && fragileContainer ? undefined
+            : 'RECORDER_BOT_CONTAINER, RECORDER_BOT_FRAGILE_API_URL and RECORDER_BOT_FRAGILE_CONTAINER are not set');
+}
+
+/**
+ * Kills the browser that records a consultation, as a crash would. The service labels each browser process with
+ * its consultation id.
+ *
+ * @param {string} consultationId - The consultation.
+ * @param {string} container - The docker container the service runs in.
+ * @returns {void}
+ */
+export function killBotBrowser(consultationId: string, container = config.recorderBot.container ?? ''): void {
+    execFileSync('docker', [ 'exec', container, 'pkill', '-KILL', '-f', '--', `recorder-bot-consultation=${consultationId}` ]);
+}
+
+/**
+ * Returns the endpoint ids of the hidden participants a participant sees.
+ *
+ * @param {Participant} participant - The participant.
+ * @returns {Promise<string[]>}
+ */
+export function getHiddenIds(participant: Participant): Promise<string[]> {
+    return participant.execute(() => APP.conference._room.getParticipants()
+        .filter((p: any) => p.isHidden())
+        .map((p: any) => p.getId()));
+}
+
+/**
+ * Waits until a participant sees a bot other than the ones it saw before: a relaunched bot.
+ *
+ * @param {Participant} participant - The participant.
+ * @param {string[]} before - The hidden participants it saw before.
+ * @returns {Promise<void>}
+ */
+export async function waitForNewBot(participant: Participant, before: string[]): Promise<void> {
+    await participant.driver.waitUntil(
+        async () => (await getHiddenIds(participant)).some(id => !before.includes(id)),
+        {
+            timeout: 30_000,
+            timeoutMsg: `${participant.name} does not see a relaunched bot in the conference`
+        });
 }

@@ -179,6 +179,14 @@ A consultation with a patient and one staff member records two video tracks, so 
 
 Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress; the storage root needs it times the consultations per day times the retention period.
 
+### Crashes
+
+Each consultation's bot runs in its own browser, so a crash affects that consultation only. Its Chromium process carries `--recorder-bot-consultation=<consultation id>`, which Chromium ignores, so that an operator can tell which browser records which consultation.
+
+When a bot's browser crashes, or the bot loses its connection, while the consultation runs, the service records `bot_interrupted` on the timeline and relaunches the bot into the same room about 2 seconds later. The relaunched bot records to new files in the same spool folder. Once it is back in the room, the service records `bot_resumed`, and the manifest lists the stretch in between as a gap. A participant the relaunched bot finds in the room stayed through the gap; one it does not find left during it, and is recorded as leaving when the bot resumed, because that is when the service learns it. The empty-room grace and the first-join wait then apply as usual: if everyone left during the gap, the grace runs from the resume.
+
+The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES` times. When it may not relaunch it again, the consultation stops with `stopReason` `bot_failed` and status `failed`, and what was recorded is still finalised and stored. A bot that goes away after its consultation has stopped is not relaunched.
+
 ### Settings
 
 | Variable | Default | What |
@@ -191,6 +199,7 @@ Storage is at most about 680 MB per 30-minute consultation with two video partic
 | `RECORDER_BOT_STORAGE_ROOT` | required | The evidence storage root: the directory evidence recordings are moved to, for example the mount point of the hospital's file storage. The service never creates it |
 | `RECORDER_BOT_SPOOL_DIR` | `/var/lib/recorder-bot/spool` in the image | Local storage where consultations are recorded and finalised. Keep it on a persistent volume with room for the consultations in progress |
 | `RECORDER_BOT_MAX_CONSULTATIONS` | `2` | How many consultations the service records at once. See [Capacity](#capacity) |
+| `RECORDER_BOT_MAX_RELAUNCHES` | `3` | How many times a consultation's bot may be relaunched after a crash or a lost connection; `0` never relaunches it. See [Crashes](#crashes) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
 | `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join, or from when it started waiting for someone to start the room |
 | `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
@@ -206,7 +215,7 @@ Every request needs the bearer secret; without it the service answers `401`.
 | Request | Answer |
 |---|---|
 | `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` for a new consultation; `200` and the same for the consultation already running in that HN's room; `503` when the service is at its limit |
-| `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, and once stored `evidenceLocation` |
+| `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, `relaunches` (how many times its bot was relaunched), and once stored `evidenceLocation` |
 | `GET /health` | `200` and `{ "status": "ok", "activeConsultations", "maxConsultations" }`, where `activeConsultations` counts the consultations that have not stopped |
 
 The room-creation system can repeat a `POST` safely, for example after a timeout: while a consultation runs in the HN's room, every `POST` for that HN returns it, and no second bot joins. Once it has stopped, the next `POST` starts a new consultation. A `503` means the consultation is not being recorded; the room-creation system must retry or alert someone, never carry on silently.
@@ -222,7 +231,7 @@ A consultation's `status` goes:
 5. a final status:
    - `stored`: the evidence recording is in the storage root, at `evidenceLocation`, which is relative to the storage root;
    - `spooled`: it could not be moved to the storage root, and stays in the spool; `error` says why;
-   - `failed`: the bot or the finalisation failed; `error` says why.
+   - `failed`: the bot could not be relaunched, or the finalisation failed; `error` says why. When the bot failed, what it recorded is still stored, at `evidenceLocation`.
 
 `stopReason` says why it stopped:
 
@@ -233,6 +242,7 @@ A consultation's `status` goes:
 | `no_one_joined` | Nobody joined within `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` |
 | `kicked` | A moderator removed the bot |
 | `shutdown` | The service was stopped |
+| `bot_failed` | The bot crashed or lost its connection, and could not be relaunched. See [Crashes](#crashes) |
 
 ### Evidence recordings
 
@@ -250,7 +260,7 @@ The folder holds:
 |---|---|
 | `NN-<endpoint id>-audio.webm` | One participant join's audio: Opus at 64 kbps |
 | `NN-<endpoint id>-video.webm` | One participant join's video: VP8 at up to 1.5 Mbps, at whatever resolution the participant sent, changes included |
-| `timeline.json` | Every join, with the participant's verified identity and role, leave, track start and stop, and video resolution change, in order, with its time |
+| `timeline.json` | Every join, with the participant's verified identity and role, leave, track start and stop, video resolution change, and interruption of the bot, in order, with its time |
 | `manifest.json` | The summary below |
 
 `NN` numbers the files in the order their tracks started. A participant who rejoins has a new endpoint id, so their rejoin is recorded to new files.
@@ -265,7 +275,7 @@ The folder holds:
 | `identities` | For each verified identity, across its rejoins: `identity`, `role`, its `endpointIds`, one per join, and its `files` |
 | `files` | For each file: `name`, `kind`, `endpointId`, `start` and `stop` on the timeline, `duration` in seconds and `bytes` |
 | `staffVisits` | Each staff visit, from a staff member's join to their leave: `identity`, `displayName`, `endpointId`, `start` and `end`. A visit still open at the stop ends then |
-| `gaps` | Each stretch the bot did not record (filled in once the bot is relaunched after a crash) |
+| `gaps` | Each stretch the bot did not record, from a crash or lost connection (`start`) until the relaunched bot was back, or the consultation stopped (`end`) |
 
 While a consultation runs, each track is written to the spool in one-second chunks. Once it stops, the service closes every recorder, remuxes each file with a stream copy so that it has a duration and is seekable, writes `timeline.json` and `manifest.json`, then moves the folder into the storage root. On the same filesystem the move is a rename. Otherwise the folder is copied into `<storage root>/.incoming/` first and then renamed into place, so a consultation folder in the storage root is always complete. Leave `.incoming` alone.
 

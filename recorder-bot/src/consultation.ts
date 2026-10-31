@@ -1,6 +1,7 @@
 /**
  * One consultation being recorded: the adapter between the in-page bot, real timers and the consultation lifecycle
- * module, which decides when the consultation stops.
+ * module, which decides when the consultation stops. When the bot crashes or loses its connection while the
+ * consultation runs, the consultation relaunches it into the same room and the same spool folder.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -37,6 +38,9 @@ export interface IConsultationSnapshot {
     /** Where the evidence recording is, relative to the evidence storage root, once it is stored. */
     evidenceLocation?: string;
     hn: string;
+
+    /** How many times the bot was relaunched after a crash or a lost connection. */
+    relaunches: number;
     room: string;
     startedAt: string;
     status: ConsultationStatus;
@@ -45,6 +49,9 @@ export interface IConsultationSnapshot {
 }
 
 type EventInput = LifecycleEvent extends infer E ? E extends LifecycleEvent ? Omit<E, 'at'> : never : never;
+
+/** How long to wait before relaunching a bot that crashed or lost its connection. */
+const RELAUNCH_DELAY_MS = 2000;
 
 const TERMINAL: ReadonlySet<ConsultationStatus> = new Set([ 'stored', 'spooled', 'failed' ]);
 const RUNNING: ReadonlySet<ConsultationStatus> = new Set([ 'starting', 'waiting_for_participants', 'recording' ]);
@@ -67,13 +74,24 @@ export class Consultation {
     private readonly timeline: TimelineEntry[] = [];
     private readonly timers = new Map<Timer, ReturnType<typeof setTimeout>>();
 
-    /** The file of each of the page's recorders. */
+    /** The file of each recorder of each launch of the bot, keyed by {@link recorderKey}. */
     private readonly files = new Map<string, string>();
+
+    /** Interrupted bots still closing; their last chunks may still be arriving. */
+    private readonly retiring: Promise<void>[] = [];
 
     /** Files a chunk could not be written to, so that each is logged once. */
     private readonly failedFiles = new Set<string>();
     private bot?: IBot;
     private botJoined = false;
+
+    /** Counts the bot's launches, so that what an interrupted launch still reports is ignored. */
+    private launches = 0;
+    private relaunches = 0;
+
+    /** Whether the bot is interrupted: it crashed or lost its connection, and has not resumed. */
+    private interrupted = false;
+    private relaunchTimer?: ReturnType<typeof setTimeout>;
     private error?: string;
     private evidenceLocation?: string;
     private meetingId?: string;
@@ -136,6 +154,7 @@ export class Consultation {
             error: this.error,
             evidenceLocation: this.evidenceLocation,
             hn: this.hn,
+            relaunches: this.relaunches,
             room: this.room,
             startedAt: this.startedAt.toISOString(),
             status: this.status,
@@ -145,23 +164,20 @@ export class Consultation {
     }
 
     /**
-     * Launches the bot. Failures end the consultation with status `failed`.
+     * Creates the consultation's spool folder and launches the bot.
      *
      * @returns {void}
      */
     start() {
         log.info('consultation starting', { consultationId: this.id });
-        this.evidence.open().then(() => launchBot(this.config, { consultationId: this.id, room: this.room }, {
-            onChunk: (recorderId, data) => this.onChunk(recorderId, data),
-            onCrash: reason => this.fail(reason),
-            onEvent: event => this.onPageEvent(event)
-        })).then(bot => {
-            this.bot = bot;
-            if (!this.isActive() || this.status === 'finalising') {
-                // It ended while the browser was starting.
-                bot.stop({ leave: true });
-            }
-        }, error => this.fail(`launch_failed: ${error instanceof Error ? error.message : String(error)}`));
+        this.evidence.open().then(() => this.launch(), error => {
+            this.error = `spool_failed: ${errorCode(error)}`;
+            log.error('could not create the consultation\'s spool folder', {
+                consultationId: this.id,
+                error: errorCode(error)
+            });
+            this.settle('failed');
+        });
     }
 
     /**
@@ -176,12 +192,91 @@ export class Consultation {
     }
 
     /**
+     * Launches a bot in a new browser. Its crash, or the loss of its connection, interrupts the consultation.
+     *
+     * @returns {void}
+     */
+    private launch() {
+        const launch = ++this.launches;
+        const isCurrent = () => launch === this.launches;
+
+        launchBot(this.config, { consultationId: this.id, room: this.room }, {
+            onChunk: (recorderId, data) => this.onChunk(recorderKey(launch, recorderId), data),
+            onCrash: reason => {
+                if (isCurrent()) {
+                    this.interrupt(reason);
+                }
+            },
+            onEvent: event => {
+                if (isCurrent()) {
+                    this.onPageEvent(event, launch);
+                }
+            }
+        }).then(bot => {
+            if (isCurrent() && this.isRunning()) {
+                this.bot = bot;
+            } else {
+                // Interrupted, or stopped, while the browser was starting.
+                this.retiring.push(bot.stop({ leave: true }));
+            }
+        }, error => {
+            if (isCurrent()) {
+                this.interrupt(`launch_failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+        });
+    }
+
+    /**
+     * Handles a bot that crashed or lost its connection while the consultation runs: records the interruption and
+     * relaunches the bot, as long as relaunches are left. After that, the consultation stops with what it has.
+     *
+     * @param {string} reason - What happened to the bot.
+     * @returns {void}
+     */
+    private interrupt(reason: string) {
+        if (!this.isRunning()) {
+            return;
+        }
+        log.warn('bot interrupted', { consultationId: this.id, error: reason, relaunches: this.relaunches });
+
+        // From here on, the old bot is ignored. It may still deliver its last chunks while it closes.
+        this.launches += 1;
+        if (this.bot) {
+            this.retiring.push(this.bot.stop({ leave: false }));
+            this.bot = undefined;
+        }
+        if (!this.interrupted) {
+            this.interrupted = true;
+            this.send({ type: 'bot_interrupted' });
+        }
+
+        if (this.relaunches >= this.config.maxRelaunches) {
+            this.error = `bot_failed: ${reason}`;
+            log.error('bot could not be relaunched; stopping with what was recorded', {
+                consultationId: this.id,
+                relaunches: this.relaunches
+            });
+            this.send({ type: 'bot_failed' });
+
+            return;
+        }
+        this.relaunches += 1;
+        this.relaunchTimer = setTimeout(() => {
+            if (this.isRunning()) {
+                log.info('relaunching bot', { consultationId: this.id, relaunch: this.relaunches });
+                this.launch();
+            }
+        }, RELAUNCH_DELAY_MS);
+    }
+
+    /**
      * Maps what the page reports to lifecycle events.
      *
      * @param {PageEvent} event - The page event.
+     * @param {number} launch - Which launch of the bot reported it.
      * @returns {void}
      */
-    private onPageEvent(event: PageEvent) {
+    private onPageEvent(event: PageEvent, launch: number) {
         switch (event.type) {
         case 'connected':
             log.info('bot connected', { consultationId: this.id });
@@ -192,14 +287,23 @@ export class Consultation {
             if (this.status === 'starting') {
                 this.status = 'waiting_for_participants';
             }
+            if (this.interrupted) {
+                // The room is not running, so nobody is in it: the relaunched bot knows that much.
+                this.resume();
+            }
             this.send({ type: 'waiting_for_host' });
             break;
         case 'joined':
-            log.info('bot joined', { consultationId: this.id });
             this.botJoined = true;
             this.meetingId ??= event.meetingId;
             this.updateStatus();
-            this.send({ meetingId: event.meetingId, type: 'bot_joined' });
+            if (this.interrupted) {
+                // lib-jitsi-meet reported who is in the room before this.
+                this.resume();
+            } else {
+                log.info('bot joined', { consultationId: this.id });
+                this.send({ meetingId: event.meetingId, type: 'bot_joined' });
+            }
             break;
         case 'meeting_id':
             this.meetingId ??= event.meetingId;
@@ -225,12 +329,12 @@ export class Consultation {
         case 'track_started': {
             const file = this.evidence.newFile(event.endpointId, event.kind);
 
-            this.files.set(event.recorderId, file);
+            this.files.set(recorderKey(launch, event.recorderId), file);
             this.send({ endpointId: event.endpointId, file, kind: event.kind, type: 'track_started' });
             break;
         }
         case 'track_stopped': {
-            const file = this.files.get(event.recorderId);
+            const file = this.files.get(recorderKey(launch, event.recorderId));
 
             if (file) {
                 this.send({ file, type: 'track_stopped' });
@@ -238,7 +342,7 @@ export class Consultation {
             break;
         }
         case 'video_resolution': {
-            const file = this.files.get(event.recorderId);
+            const file = this.files.get(recorderKey(launch, event.recorderId));
 
             if (file) {
                 this.send({ file, height: event.height, type: 'video_resolution', width: event.width });
@@ -249,7 +353,7 @@ export class Consultation {
             log.warn('recorder error', {
                 consultationId: this.id,
                 error: event.error,
-                file: this.files.get(event.recorderId)
+                file: this.files.get(recorderKey(launch, event.recorderId))
             });
             break;
         case 'room_destroyed':
@@ -261,20 +365,31 @@ export class Consultation {
         case 'connection_failed':
         case 'conference_failed':
         case 'disconnected':
-            this.fail(`${event.type}: ${event.error}`);
+            this.interrupt(`${event.type}: ${event.error}`);
             break;
         }
     }
 
     /**
+     * Records that the relaunched bot is back.
+     *
+     * @returns {void}
+     */
+    private resume() {
+        log.info('bot resumed', { consultationId: this.id, relaunches: this.relaunches });
+        this.interrupted = false;
+        this.send({ type: 'bot_resumed' });
+    }
+
+    /**
      * Appends a recorder's chunk to its file in the spool.
      *
-     * @param {string} recorderId - The page's recorder.
+     * @param {string} key - The recorder, from {@link recorderKey}.
      * @param {Buffer} data - The chunk.
      * @returns {Promise<void>}
      */
-    private async onChunk(recorderId: string, data: Buffer) {
-        const file = this.files.get(recorderId);
+    private async onChunk(key: string, data: Buffer) {
+        const file = this.files.get(key);
 
         if (!file) {
             log.warn('chunk for an unknown recorder', { consultationId: this.id });
@@ -360,7 +475,7 @@ export class Consultation {
 
     /**
      * Stops the bot after the lifecycle module decided the consultation is over, finalises the evidence recording
-     * and moves it into the storage root.
+     * and moves it into the storage root. Whatever was recorded is finalised and stored, even when the bot failed.
      *
      * @param {StopReason} reason - Why.
      * @returns {Promise<void>}
@@ -371,7 +486,10 @@ export class Consultation {
         log.info('consultation stopping', { consultationId: this.id, reason });
 
         // When the room is gone, leaving would only wait for a timeout.
-        await this.bot?.stop({ leave: reason !== 'room_destroyed' && reason !== 'kicked' });
+        await Promise.all([
+            this.bot?.stop({ leave: reason !== 'room_destroyed' && reason !== 'kicked' }),
+            ...this.retiring
+        ]);
 
         try {
             await this.evidence.finalise({
@@ -415,24 +533,9 @@ export class Consultation {
         }
         this.evidenceLocation = location;
         log.info('evidence recording stored', { consultationId: this.id, files: this.lifecycle.tracks().length });
-        this.settle('stored');
-    }
 
-    /**
-     * Ends the consultation because its bot failed.
-     *
-     * @param {string} error - What failed.
-     * @returns {void}
-     */
-    private fail(error: string) {
-        if (!this.isActive() || this.status === 'finalising') {
-            return;
-        }
-        log.error('consultation failed', { consultationId: this.id, error });
-        this.error = error;
-        this.stoppedAt = new Date();
-        this.bot?.stop({ leave: false });
-        this.settle('failed');
+        // A consultation whose bot could not be relaunched failed, even though what it recorded is stored.
+        this.settle(reason === 'bot_failed' ? 'failed' : 'stored');
     }
 
     /**
@@ -446,8 +549,20 @@ export class Consultation {
             clearTimeout(timer);
         }
         this.timers.clear();
+        clearTimeout(this.relaunchTimer);
         this.status = status;
         log.info('consultation ended', { consultationId: this.id, status });
         this.resolveDone();
     }
+}
+
+/**
+ * Names one recorder of one launch of the bot. Each launch numbers its recorders from the start.
+ *
+ * @param {number} launch - The launch.
+ * @param {string} recorderId - The page's recorder.
+ * @returns {string}
+ */
+function recorderKey(launch: number, recorderId: string): string {
+    return `${launch}/${recorderId}`;
 }

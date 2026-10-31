@@ -92,6 +92,9 @@ export async function launchBot(config: IConfig, params: IBotParams, callbacks: 
     const browser: Browser = await chromium.launch({
         args: [
             '--autoplay-policy=no-user-gesture-required',
+
+            // Chromium ignores this; it tells an operator which consultation a browser process records.
+            `--recorder-bot-consultation=${consultationId}`,
             ...config.ignoreCertificateErrors ? [ '--ignore-certificate-errors' ] : []
         ],
         executablePath: config.chromiumPath

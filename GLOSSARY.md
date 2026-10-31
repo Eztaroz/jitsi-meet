@@ -61,3 +61,7 @@ _Avoid_: Archive, bucket, upload
 **Spool**:
 The recorder bot service's own local storage, where a consultation is recorded and finalised before its evidence recording moves to the evidence storage root.
 _Avoid_: Cache, temp folder
+
+**Gap**:
+A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or the consultation stopped.
+_Avoid_: Outage, hole, downtime

@@ -8,7 +8,13 @@
 
 export type Role = 'staff' | 'patient' | 'unknown';
 export type Timer = 'first_join' | 'empty_room';
-export type StopReason = 'room_destroyed' | 'no_humans_for_grace' | 'no_one_joined' | 'kicked' | 'shutdown';
+export type StopReason =
+    | 'room_destroyed'
+    | 'no_humans_for_grace'
+    | 'no_one_joined'
+    | 'kicked'
+    | 'shutdown'
+    | 'bot_failed';
 
 export type TrackKind = 'audio' | 'video';
 
@@ -47,8 +53,18 @@ export type LifecycleEvent = { at: Date; } & (
 
     /** The recorder bot service is shutting down. */
     | { type: 'shutdown'; }
+
+    /** The bot crashed or lost its connection. Until it resumes, it sees nothing. */
     | { type: 'bot_interrupted'; }
+
+    /**
+     * The relaunched bot is back in the room. It reports who is there as `participant_joined` events before this
+     * one.
+     */
     | { type: 'bot_resumed'; }
+
+    /** The bot could not be relaunched. */
+    | { type: 'bot_failed'; }
     | { timer: Timer; type: 'timer_fired'; }
 );
 
@@ -242,6 +258,9 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
     let stopped = false;
     let interruptedAt: Date | undefined;
 
+    /** The participants the bot has found in the room since it was interrupted. */
+    const seenSinceInterruption = new Set<string>();
+
     /**
      * Closes the current interruption, if any.
      *
@@ -254,6 +273,87 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
         interruptedAt = undefined;
 
         return start ? [ { at, end: at, start, type: 'gap' } ] : [];
+    }
+
+    /**
+     * Records that a participant left.
+     *
+     * @param {Date} at - When.
+     * @param {string} endpointId - The participant.
+     * @returns {ILifecycleResult}
+     */
+    function leave(at: Date, endpointId: string): ILifecycleResult {
+        participants.get(endpointId)?.leaves.push(at);
+
+        if (hidden.delete(endpointId)) {
+            return { entries: [ { at, endpointId, type: 'participant_left' } ], commands: [] };
+        }
+
+        humans.delete(endpointId);
+
+        const visit = openVisits.get(endpointId);
+
+        if (visit) {
+            visit.end = at;
+            openVisits.delete(endpointId);
+        }
+
+        return {
+            entries: [ { at, endpointId, type: 'participant_left' } ],
+            commands: humans.size ? [] : [ startTimer('empty_room', emptyRoomMs) ]
+        };
+    }
+
+    /**
+     * Ends the current interruption: closes its gap, and records that every participant the relaunched bot did not
+     * find in the room left during it. The bot learns that only now, so that is when they are recorded as leaving.
+     *
+     * @param {Date} at - When the bot resumed.
+     * @returns {ILifecycleResult}
+     */
+    function resume(at: Date): ILifecycleResult {
+        if (!interruptedAt) {
+            return nothing();
+        }
+
+        const result: ILifecycleResult = { entries: [ { at, type: 'bot_resumed' }, ...closeGap(at) ], commands: [] };
+
+        for (const endpointId of [ ...humans, ...hidden ]) {
+            if (!seenSinceInterruption.has(endpointId)) {
+                const left = leave(at, endpointId);
+
+                result.entries.push(...left.entries);
+                result.commands.push(...left.commands);
+            }
+        }
+        seenSinceInterruption.clear();
+
+        // A bot that never joined before waits for the first human from now on.
+        const anyoneJoined = [ ...participants.values() ].some(p => !p.hidden);
+
+        if (!anyoneJoined && !activeTimers.has('first_join')) {
+            result.commands.push(startTimer('first_join', firstJoinMs));
+        }
+
+        return result;
+    }
+
+    /**
+     * Ends every track still recorded.
+     *
+     * @param {Date} at - When.
+     * @returns {TimelineEntry[]} Their stop entries.
+     */
+    function stopTracks(at: Date): TimelineEntry[] {
+        const entries: TimelineEntry[] = [ ...openTracks.values() ].map(track => {
+            track.stop = at;
+
+            return { at, file: track.file, type: 'track_stopped' };
+        });
+
+        openTracks.clear();
+
+        return entries;
     }
 
     /**
@@ -271,16 +371,8 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
         }
         openVisits.clear();
 
-        const trackStops: TimelineEntry[] = [ ...openTracks.values() ].map(track => {
-            track.stop = at;
-
-            return { at, file: track.file, type: 'track_stopped' };
-        });
-
-        openTracks.clear();
-
         return {
-            entries: [ ...closeGap(at), ...trackStops, { at, reason, type: 'stopped' } ],
+            entries: [ ...closeGap(at), ...stopTracks(at), { at, reason, type: 'stopped' } ],
             commands: [
                 ...[ ...activeTimers ].flatMap(cancelTimer),
                 { reason, type: 'stop' }
@@ -310,6 +402,16 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             }
             case 'participant_joined': {
                 const { at, displayName, endpointId, identity, role } = event;
+
+                if (interruptedAt) {
+                    seenSinceInterruption.add(endpointId);
+
+                    // Still in the room from before the interruption: not a new join.
+                    if (humans.has(endpointId) || hidden.has(endpointId)) {
+                        return nothing();
+                    }
+                }
+
                 let participant = participants.get(endpointId);
 
                 if (!participant) {
@@ -351,29 +453,8 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                     commands: [ ...cancelTimer('first_join'), ...cancelTimer('empty_room') ]
                 };
             }
-            case 'participant_left': {
-                const { at, endpointId } = event;
-
-                participants.get(endpointId)?.leaves.push(at);
-
-                if (hidden.delete(endpointId)) {
-                    return { entries: [ { at, endpointId, type: 'participant_left' } ], commands: [] };
-                }
-
-                humans.delete(endpointId);
-
-                const visit = openVisits.get(endpointId);
-
-                if (visit) {
-                    visit.end = at;
-                    openVisits.delete(endpointId);
-                }
-
-                return {
-                    entries: [ { at, endpointId, type: 'participant_left' } ],
-                    commands: humans.size ? [] : [ startTimer('empty_room', emptyRoomMs) ]
-                };
-            }
+            case 'participant_left':
+                return leave(event.at, event.endpointId);
             case 'track_started': {
                 const { at, endpointId, file, kind } = event;
                 const track = { endpointId, file, kind, start: at, stop: undefined };
@@ -401,16 +482,23 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             }
             case 'bot_interrupted':
                 interruptedAt ??= event.at;
+                seenSinceInterruption.clear();
 
-                return { entries: [ { at: event.at, type: 'bot_interrupted' } ], commands: [] };
+                // The bot's recorders went with it.
+                return {
+                    entries: [ { at: event.at, type: 'bot_interrupted' }, ...stopTracks(event.at) ],
+                    commands: []
+                };
             case 'bot_resumed':
-                return { entries: [ { at: event.at, type: 'bot_resumed' }, ...closeGap(event.at) ], commands: [] };
+                return resume(event.at);
             case 'room_destroyed':
                 return stop(event.at, 'room_destroyed');
             case 'kicked':
                 return stop(event.at, 'kicked');
             case 'shutdown':
                 return stop(event.at, 'shutdown');
+            case 'bot_failed':
+                return stop(event.at, 'bot_failed');
             case 'timer_fired':
                 if (!activeTimers.delete(event.timer)) {
                     return nothing();

@@ -67,7 +67,18 @@ export const config = {
          */
         limitedApiUrl: process.env.RECORDER_BOT_LIMITED_API_URL?.trim()?.replace(/\/+$/, ''),
         /** The service's evidence storage root as this machine sees it, absolute or relative to tests/. */
-        storageRoot: process.env.RECORDER_BOT_STORAGE_ROOT?.trim()
+        storageRoot: process.env.RECORDER_BOT_STORAGE_ROOT?.trim(),
+        /**
+         * The docker container the main instance of the service runs in, so that the relaunch tests can kill a
+         * bot's browser.
+         */
+        container: process.env.RECORDER_BOT_CONTAINER?.trim(),
+        /**
+         * The control API of an instance of the service configured never to relaunch a crashed bot
+         * (RECORDER_BOT_MAX_RELAUNCHES=0), and its docker container. Same bearer secret.
+         */
+        fragileApiUrl: process.env.RECORDER_BOT_FRAGILE_API_URL?.trim()?.replace(/\/+$/, ''),
+        fragileContainer: process.env.RECORDER_BOT_FRAGILE_CONTAINER?.trim()
     },
     roomName: {
         /** Optional fixed room name that overrides the generated one entirely. */

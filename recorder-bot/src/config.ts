@@ -41,6 +41,12 @@ export interface IConfig {
     maxHeight: number;
 
     /**
+     * How many times a consultation's bot may be relaunched after it crashed or lost its connection. Once they are
+     * used up, the consultation stops and stores what was recorded.
+     */
+    maxRelaunches: number;
+
+    /**
      * Which verified identities are staff and which the patient. With none, the service records no identities, so no
      * staff visits.
      */
@@ -74,14 +80,15 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 /**
- * Reads a positive integer variable.
+ * Reads an integer variable.
  *
  * @param {NodeJS.ProcessEnv} env - The environment.
  * @param {string} name - The variable.
  * @param {number} fallback - The default.
+ * @param {number} min - The lowest value allowed.
  * @returns {number}
  */
-function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+function integer(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1): number {
     const raw = env[name]?.trim();
 
     if (!raw) {
@@ -90,8 +97,8 @@ function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number)
 
     const value = Number(raw);
 
-    if (!Number.isInteger(value) || value <= 0) {
-        throw new Error(`${name} must be a positive integer, got "${raw}"`);
+    if (!Number.isInteger(value) || value < min) {
+        throw new Error(`${name} must be an integer of at least ${min}, got "${raw}"`);
     }
 
     return value;
@@ -116,17 +123,18 @@ function flag(env: NodeJS.ProcessEnv, name: string): boolean {
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
     return {
-        apiPort: positiveInteger(env, 'RECORDER_BOT_API_PORT', 8090),
+        apiPort: integer(env, 'RECORDER_BOT_API_PORT', 8090),
         apiSecret: required(env, 'RECORDER_BOT_API_SECRET'),
         botJid: required(env, 'RECORDER_BOT_JID'),
         botPassword: required(env, 'RECORDER_BOT_PASSWORD'),
         chromiumPath: env.RECORDER_BOT_CHROMIUM_PATH?.trim() || undefined,
-        emptyRoomGraceMs: positiveInteger(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', 60) * 1000,
-        firstJoinWaitMs: positiveInteger(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', 600) * 1000,
+        emptyRoomGraceMs: integer(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', 60) * 1000,
+        firstJoinWaitMs: integer(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', 600) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
-        maxConsultations: positiveInteger(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),
-        maxHeight: positiveInteger(env, 'RECORDER_BOT_MAX_HEIGHT', 720),
+        maxConsultations: integer(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),
+        maxHeight: integer(env, 'RECORDER_BOT_MAX_HEIGHT', 720),
+        maxRelaunches: integer(env, 'RECORDER_BOT_MAX_RELAUNCHES', 3, 0),
         roleMarkers: {
             patient: parseRoleMarker(env.RECORDER_BOT_PATIENT_MARKER, 'RECORDER_BOT_PATIENT_MARKER'),
             staff: parseRoleMarker(env.RECORDER_BOT_STAFF_MARKER, 'RECORDER_BOT_STAFF_MARKER')
