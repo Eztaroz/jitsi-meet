@@ -5,4 +5,4 @@ Participants must know the consultation is recorded, but the recorder bot is hid
 ## Consequences
 
 - There is no in-call consent prompt and no audible notice; any consent the hospital needs must be collected outside the call.
-- The presence-only label path was confirmed by reading code, not by running it; the prototype must verify it.
+- The prototype confirmed the path works (`resources/prototype-recorder-capture/README.md` on branch `prototype/recorder-bot-capture`), with one requirement. The bot must re-send its presence shortly after each participant joins. Otherwise a joiner can process the bot's presence before jitsi-meet starts listening for recorder state, and that joiner never sees the label.

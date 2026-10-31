@@ -504,9 +504,13 @@ Effort is my estimate, not sourced.
 ## 5. Unverified
 
 - **Prosody core behaviour:** the exact semantics of `restrict_room_creation`, and how non-persistent rooms are destroyed when empty. prosody.im was unreachable from this environment (proxy 403).
-- **Headless capture:** whether headless Chromium (no Xvfb, no audio device) plays and records remote WebRTC audio and video tracks with `MediaRecorder`, and how many rooms one instance can record. No primary source found.
-- **WebM files:** whether WebM produced by `MediaRecorder` has seekable metadata and duration, and how to align several per-track files to one clock. Not checked.
-- **Presence-only label (N2):** behaviour comes from reading code; it was not run.
+The prototype in `resources/prototype-recorder-capture/` on branch `prototype/recorder-bot-capture` (see its README) settled three items:
+
+- **Headless capture:** headless Chromium with no Xvfb and no audio device records remote audio and video with `MediaRecorder`. Remote audio records only when it is attached to a (muted) `<audio>` element; without one the file is empty. Cost is about one CPU core per 720p video track. Not settled: how many rooms one instance can record.
+- **WebM files:** `MediaRecorder` WebM has no duration; a `-c copy` remux restores it, and resolution changes inside one file decode cleanly. Not settled: aligning several per-track files to one clock.
+- **Presence-only label (N2):** works, provided the bot re-sends its presence after each join. Without that, a joiner can miss it.
+
+Still unverified:
 - **Bot as initiator (N1):** what name the "started by" notification shows when the initiator is a hidden participant. Whether Jicofo checks anything about the "Jibri" after `ON`, for example that it actually joined.
 - **`mod_muc_wait_for_host` and lobby whitelist:** the order of their pre-join hooks when the bot joins first.
 - **Docker with JWT:** how a Docker Jibri passes `token_verification` with JWT enabled, given that no allowlist is set there.
