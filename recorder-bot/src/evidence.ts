@@ -12,6 +12,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import type {
+    IIdentitySummary,
     IParticipant,
     IStaffVisit,
     ITrack,
@@ -36,6 +37,7 @@ export interface IEvidenceInput {
     consultationId: string;
     end: Date;
     hn: string;
+    identities: IIdentitySummary[];
 
     /** The conference's meeting id, as jitsi-meet and the videobridge log it. */
     meetingId?: string;
@@ -252,6 +254,7 @@ export class EvidenceRecording {
             end: input.end,
             stopReason: input.stopReason,
             participants: input.participants,
+            identities: input.identities,
             files,
             staffVisits: input.staffVisits,
             gaps: input.timeline.flatMap(e => e.type === 'gap' ? [ { end: e.end, start: e.start } ] : [])

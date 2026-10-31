@@ -35,6 +35,10 @@ export type ITokenOptions = {
     room?: string;
     sub?: string;
     /**
+     * Claims merged into the token's context.user, over the defaults (e.g. a fixed 'id').
+     */
+    userClaims?: Record<string, string>;
+    /**
      * Whether to set the 'visitor' flag.
      */
     visitor?: boolean;
@@ -69,7 +73,8 @@ export function generatePayload(options: ITokenOptions): any {
                 'name': options.displayName,
                 'id': uuidv4(),
                 'avatar': 'https://avatars0.githubusercontent.com/u/3671647',
-                'email': 'john.doe@jitsi.org'
+                'email': 'john.doe@jitsi.org',
+                ...options.userClaims
             },
             'group': uuidv4(),
             'features': {

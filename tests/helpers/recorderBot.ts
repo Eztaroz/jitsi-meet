@@ -30,6 +30,19 @@ export interface IConsultation {
  * @returns {string|undefined}
  */
 export function recorderBotUnavailableReason(): string | undefined {
+    if (expectations.recorderBot.verifiedIdentities) {
+        return 'the deployment needs a token for every participant; only the identity tests run against it';
+    }
+
+    return serviceUnavailableReason();
+}
+
+/**
+ * Returns why the recorder bot service cannot be reached here, or undefined when it can.
+ *
+ * @returns {string|undefined}
+ */
+function serviceUnavailableReason(): string | undefined {
     if (!expectations.recorderBot.available) {
         return 'the recorder bot is not expected to be available';
     }
@@ -38,6 +51,24 @@ export function recorderBotUnavailableReason(): string | undefined {
     }
 
     return undefined;
+}
+
+/**
+ * Returns why the identity tests cannot run here, or undefined when they can. They need a deployment that verifies
+ * participants' identities, tokens for its participants, and the evidence storage root.
+ *
+ * @returns {string|undefined}
+ */
+export function identityUnavailableReason(): string | undefined {
+    if (!expectations.recorderBot.verifiedIdentities) {
+        return 'the deployment is not expected to verify participants\' identities';
+    }
+    if (!config.jwt.kid || !config.jwt.privateKeyPath) {
+        return 'JWT_KID and JWT_PRIVATE_KEY_PATH are not set';
+    }
+
+    return serviceUnavailableReason()
+        ?? (config.recorderBot.storageRoot ? undefined : 'RECORDER_BOT_STORAGE_ROOT is not set');
 }
 
 /**
@@ -348,6 +379,12 @@ export interface IEvidenceFile {
     stop: string;
 }
 
+/** A participant's verified identity, as an evidence recording's manifest lists it. */
+export interface IIdentity {
+    id: string;
+    name?: string;
+}
+
 /** An evidence recording's manifest.json. */
 export interface IManifest {
     consultationId: string;
@@ -355,10 +392,18 @@ export interface IManifest {
     files: IEvidenceFile[];
     gaps: Array<{ end: string; start: string; }>;
     hn: string;
+    identities: Array<{ endpointIds: string[]; files: string[]; identity: IIdentity; role: string; }>;
     meetingId?: string;
-    participants: Array<{ displayName?: string; endpointId: string; joins: string[]; leaves: string[]; }>;
+    participants: Array<{
+        displayName?: string;
+        endpointId: string;
+        identity?: IIdentity;
+        joins: string[];
+        leaves: string[];
+        role: string;
+    }>;
     room: string;
-    staffVisits: unknown[];
+    staffVisits: Array<{ displayName?: string; end: string; endpointId: string; identity?: IIdentity; start: string; }>;
     start: string;
     stopReason: string;
 }

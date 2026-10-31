@@ -36,6 +36,8 @@ services:
             - RECORDER_BOT_JITSI_URL=${PUBLIC_URL}
             - RECORDER_BOT_MAX_CONSULTATIONS
             - RECORDER_BOT_MAX_HEIGHT
+            - RECORDER_BOT_PATIENT_MARKER
+            - RECORDER_BOT_STAFF_MARKER
             - RECORDER_BOT_STORAGE_ROOT
             - TZ
         depends_on:

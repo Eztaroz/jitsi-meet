@@ -1,0 +1,36 @@
+# The JWT variant of the local test deployment: participants authenticate with JWT, and Prosody puts each one's
+# verified identity in their presence (presence_identity), which the recorder bot reads. Start it on top of
+# docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.jwt.yml up -d
+#
+# Generate the keys first with jwt/generate-keys.sh. See README.md.
+
+x-jwt-auth: &jwt-auth
+    ENABLE_AUTH: 1
+    AUTH_TYPE: jwt
+
+services:
+    web:
+        volumes:
+            # Prosody fetches the public keys from here: http://web/.well-known/asap/<sha256 of the key id>.pem.
+            - ./jwt/asap:/usr/share/jitsi-meet/.well-known/asap:ro
+        environment:
+            <<: *jwt-auth
+
+    prosody:
+        environment:
+            <<: *jwt-auth
+            # The tests' tokens (tests/helpers/token.ts) are issued by "chat" for "jitsi".
+            JWT_APP_ID: jitsi
+            JWT_ACCEPTED_ISSUERS: chat
+            JWT_ACCEPTED_AUDIENCES: jitsi
+            JWT_ASAP_KEYSERVER: http://web/.well-known/asap
+            # The recorder bot's identity and role markers (recorder-bot/deploy/README.md).
+            XMPP_MODULES: presence_identity
+            # The bot signs in to the hidden recorder domain, with a password rather than a token.
+            XMPP_MUC_CONFIGURATION: token_verification_allowlist = { "${XMPP_HIDDEN_DOMAIN}" }
+
+    jicofo:
+        environment:
+            <<: *jwt-auth

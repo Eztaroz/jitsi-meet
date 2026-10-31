@@ -65,6 +65,7 @@ function consultation(options?: ILifecycleOptions) {
     return {
         commands,
         send,
+        identities: () => lifecycle.identities(),
         participants: () => lifecycle.participants(),
         staffVisits: () => lifecycle.staffVisits(),
         tracks: () => lifecycle.tracks(),
@@ -125,6 +126,27 @@ describe('first-join wait', () => {
         mock.timers.tick(3_600_000);
 
         assert.equal(c.stop, undefined);
+    });
+
+    test('runs from when the bot starts waiting for a host to start the room', () => {
+        const c = consultation({ firstJoinMs: 600_000 });
+
+        c.send({ type: 'waiting_for_host' });
+        mock.timers.tick(600_000);
+
+        assert.deepEqual(c.stop, { at: at(600_000), reason: 'no_one_joined' });
+        assert.deepEqual(c.timeline[0], { at: at(0), type: 'waiting_for_host' });
+    });
+
+    test('does not start again when the bot joins after waiting for a host', () => {
+        const c = consultation({ firstJoinMs: 600_000 });
+
+        c.send({ type: 'waiting_for_host' });
+        mock.timers.tick(200_000);
+        c.send({ type: 'bot_joined' });
+        mock.timers.tick(400_000);
+
+        assert.deepEqual(c.stop, { at: at(600_000), reason: 'no_one_joined' });
     });
 });
 
@@ -630,5 +652,53 @@ describe('participants', () => {
                 leaves: []
             }
         ]);
+    });
+});
+
+describe('identities', () => {
+    const staffA = { id: 'staff-a@hospital', name: 'Dr A' };
+    const patientP = { id: 'patient-p', name: 'Patient P' };
+
+    test('groups the endpoints and files of each verified identity, across rejoins', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient', identity: patientP });
+        c.send({ type: 'track_started', endpointId: 'patient1', file: '01-patient1-audio.webm', kind: 'audio' });
+        c.send({ type: 'participant_joined', endpointId: 'staff1', role: 'staff', identity: staffA });
+        c.send({ type: 'track_started', endpointId: 'staff1', file: '02-staff1-audio.webm', kind: 'audio' });
+        c.send({ type: 'track_started', endpointId: 'staff1', file: '03-staff1-video.webm', kind: 'video' });
+        c.send({ type: 'participant_left', endpointId: 'staff1' });
+        c.send({ type: 'participant_joined', endpointId: 'guest1', role: 'unknown' });
+        c.send({ type: 'track_started', endpointId: 'guest1', file: '04-guest1-audio.webm', kind: 'audio' });
+        c.send({ type: 'participant_joined', endpointId: 'staff2', role: 'staff', identity: staffA });
+        c.send({ type: 'track_started', endpointId: 'staff2', file: '05-staff2-audio.webm', kind: 'audio' });
+        c.send({ type: 'track_started', endpointId: 'patient1', file: '06-patient1-video.webm', kind: 'video' });
+
+        assert.deepEqual(c.identities(), [
+            {
+                identity: patientP,
+                role: 'patient',
+                endpointIds: [ 'patient1' ],
+                files: [ '01-patient1-audio.webm', '06-patient1-video.webm' ]
+            },
+            {
+                identity: staffA,
+                role: 'staff',
+                endpointIds: [ 'staff1', 'staff2' ],
+                files: [ '02-staff1-audio.webm', '03-staff1-video.webm', '05-staff2-audio.webm' ]
+            }
+        ]);
+    });
+
+    test('without verified identities there are none', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'unknown' });
+        c.send({ type: 'participant_joined', endpointId: 'staff1', role: 'unknown' });
+
+        assert.deepEqual(c.identities(), []);
+        assert.deepEqual(c.staffVisits(), []);
     });
 });

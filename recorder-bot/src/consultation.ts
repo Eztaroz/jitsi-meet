@@ -16,6 +16,7 @@ import {
     createConsultationLifecycle
 } from './consultationLifecycle.ts';
 import { EvidenceRecording, evidenceLocation } from './evidence.ts';
+import { participantIdentity } from './identity.ts';
 import { errorCode, log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
 
@@ -185,6 +186,14 @@ export class Consultation {
         case 'connected':
             log.info('bot connected', { consultationId: this.id });
             break;
+        case 'waiting_for_host':
+            // With Jicofo authentication, only an authenticated participant starts the room; the bot is not one.
+            log.info('bot waiting for a host to start the room', { consultationId: this.id });
+            if (this.status === 'starting') {
+                this.status = 'waiting_for_participants';
+            }
+            this.send({ type: 'waiting_for_host' });
+            break;
         case 'joined':
             log.info('bot joined', { consultationId: this.id });
             this.botJoined = true;
@@ -204,7 +213,9 @@ export class Consultation {
                 displayName: event.displayName,
                 endpointId: event.endpointId,
                 hidden: event.hidden,
-                role: 'unknown',
+                ...event.hidden
+                    ? { role: 'unknown' }
+                    : participantIdentity(event.identity, this.config.roleMarkers),
                 type: 'participant_joined'
             });
             break;
@@ -367,6 +378,7 @@ export class Consultation {
                 consultationId: this.id,
                 end: this.stoppedAt ?? new Date(),
                 hn: this.hn,
+                identities: this.lifecycle.identities(),
                 meetingId: this.meetingId,
                 participants: this.lifecycle.participants(),
                 room: this.room,

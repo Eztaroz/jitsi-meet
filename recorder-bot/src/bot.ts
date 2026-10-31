@@ -15,9 +15,20 @@ import { log } from './log.ts';
 export type PageEvent =
     | { type: 'connected'; }
     | { error: string; type: 'connection_failed'; }
+
+    /** The bot may not start the room itself, and keeps trying to join until a participant who may has. */
+    | { type: 'waiting_for_host'; }
     | { meetingId?: string; type: 'joined'; }
     | { meetingId?: string; type: 'meeting_id'; }
-    | { displayName?: string; endpointId: string; hidden: boolean; type: 'participant_joined'; }
+    | {
+        displayName?: string;
+        endpointId: string;
+        hidden: boolean;
+
+        /** The identity in the participant's presence, as lib-jitsi-meet reports it. */
+        identity?: unknown;
+        type: 'participant_joined';
+    }
     | { endpointId: string; type: 'participant_left'; }
     | { endpointId: string; kind: TrackKind; recorderId: string; type: 'track_started'; }
     | { recorderId: string; type: 'track_stopped'; }

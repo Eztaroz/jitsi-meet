@@ -49,6 +49,30 @@ npm run test-single -- specs/recorderBot/hiddenBot.spec.ts
 
 Where wdio cannot download Chrome or chromedriver, set `CHROME_BINARY` and `CHROMEDRIVER_BINARY` (see `tests/env.example`).
 
+## The JWT variant
+
+`docker-compose.jwt.yml` turns on JWT authentication, and Prosody's `presence_identity` module, so that the bot records each participant's verified identity and role (`recorder-bot/deploy/README.md`, Verified identities). `.env` sets the role markers for both variants; without JWT they mark nobody. Generate the key pair the tests sign tokens with, then start the deployment with both files:
+
+```bash
+./jwt/generate-keys.sh
+```
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.jwt.yml up -d
+```
+
+Every participant then needs a token. Run the tests with `tests.jwt.env` on top of `tests.env`: only `specs/recorderBot/identity.spec.ts` runs, and the other recorderBot tests are skipped. From `tests/`:
+
+```bash
+set -a; . ../recorder-bot/test-deployment/tests.env; . ../recorder-bot/test-deployment/tests.jwt.env; set +a
+```
+
+```bash
+npm run test-single -- specs/recorderBot/identity.spec.ts
+```
+
+To go back, run `docker compose up -d` without the JWT file; the containers regenerate their configuration.
+
 ## Stopping it
 
 ```bash

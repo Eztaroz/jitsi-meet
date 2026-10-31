@@ -22,7 +22,8 @@ import {
 setTestProperties(__filename, {
     description: 'A consultation in which staff leave and join again is ended for everyone. Its evidence recording \
 lands in the evidence storage root: one playable audio and one playable video file for each participant join, the \
-timeline and the manifest. Skipped unless the recorderBot.available expectation and RECORDER_BOT_STORAGE_ROOT are set.',
+timeline and the manifest. Without verified identities, every participant\'s role is unknown and there are no staff \
+visits. Skipped unless the recorderBot.available expectation and RECORDER_BOT_STORAGE_ROOT are set.',
     usesBrowsers: [ 'p1', 'p2' ]
 });
 
@@ -106,6 +107,9 @@ describe('Recorder bot: evidence recording', () => {
             end: consultation.stoppedAt,
             gaps: [],
             hn,
+
+            // This deployment does not verify identities, so no participant has one and none is staff.
+            identities: [],
             room: encodeURIComponent(hn.toLowerCase()).toLowerCase(),
             staffVisits: [],
             start: consultation.startedAt,
@@ -120,8 +124,8 @@ describe('Recorder bot: evidence recording', () => {
     });
 
     it('the manifest lists every participant join, each with one audio and one video file', () => {
-        expect(manifest.participants.map(p => [ p.endpointId, p.displayName ]))
-            .toEqual(joins.map(j => [ j.endpointId, j.name ]));
+        expect(manifest.participants.map(p => [ p.endpointId, p.displayName, p.identity, p.role ]))
+            .toEqual(joins.map(j => [ j.endpointId, j.name, undefined, 'unknown' ]));
 
         // Staff's first join is the one that left before the end.
         expect(manifest.participants.map(p => [ p.joins.length, p.leaves.length ])).toEqual([ [ 1, 0 ], [ 1, 1 ], [ 1, 0 ] ]);

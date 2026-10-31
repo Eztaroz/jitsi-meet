@@ -70,7 +70,7 @@ When the conference MUC component limits occupants with `muc_max_occupants`, kee
 muc_access_whitelist = { "focus@auth.meet.example.org", "recorder-bot@recorder.meet.example.org" }
 ```
 
-docker-jitsi-meet: `ENABLE_RECORDING=1`, `XMPP_HIDDEN_DOMAIN=recorder.meet.example.org`, `JIBRI_RECORDER_USER=recorder-bot` and `JIBRI_RECORDER_PASSWORD=<bot password>` create the VirtualHost, register the account, and set `muc_lobby_whitelist` and, with `MAX_PARTICIPANTS`, `muc_access_whitelist`. Check `token_verification_allowlist` yourself when JWT is on.
+docker-jitsi-meet: `ENABLE_RECORDING=1`, `XMPP_HIDDEN_DOMAIN=recorder.meet.example.org`, `JIBRI_RECORDER_USER=recorder-bot` and `JIBRI_RECORDER_PASSWORD=<bot password>` create the VirtualHost, register the account, and set `muc_lobby_whitelist` and, with `MAX_PARTICIPANTS`, `muc_access_whitelist`. When JWT is on, set `token_verification_allowlist` with `XMPP_MUC_CONFIGURATION=token_verification_allowlist = { "recorder.meet.example.org" }`; that variable is split at commas, so add other entries after a comma.
 
 ### Jicofo
 
@@ -112,6 +112,30 @@ While the bot is in the room, every participant sees jitsi-meet's in-call record
 ### Join links
 
 The hospital's links must not override prejoin settings in the URL hash (for example `#config.prejoinConfig.enabled=false`). jitsi-meet then starts without media, and there is nothing to record. The prototype hit this. Set prejoin in the deployment's `config.js` instead.
+
+### Verified identities
+
+The bot can tell staff from the patient only when the deployment verifies who each participant is. Without that, every participant's role is `unknown` and the manifest lists no staff visits; everything else is recorded the same.
+
+With JWT authentication, Prosody's `presence_identity` module copies each participant's token claims, `context.user` and `context.group`, into the participant's presence, and removes any identity the participant's client put there itself. The bot reads it, keeps the `id` and `name` claims, and gives the participant a role with two role markers:
+
+| Setting | Example | Who it marks |
+|---|---|---|
+| `RECORDER_BOT_STAFF_MARKER` | `user.hospital_role=staff` | Staff: participants whose token has `"context": { "user": { "hospital_role": "staff" } }` |
+| `RECORDER_BOT_PATIENT_MARKER` | `user.hospital_role=patient` | The patient |
+
+A role marker is `user.<claim>=<value>`, for a claim in `context.user`, or `group=<value>`, for `context.group`. Values are compared as text, and the staff marker is checked first. A participant with neither is `unknown`, and so is one without an `id` claim. The hospital's token issuer sets the claim; use one of the hospital's own rather than one Jitsi reads, such as `moderator` or `affiliation`.
+
+The service trusts presence identities only while a role marker is set, so set them only once `presence_identity` runs on every VirtualHost participants sign in to: on a VirtualHost without it, a client can claim any identity. Load it on the main VirtualHost, and on the guest VirtualHost if there is one:
+
+```lua
+VirtualHost "meet.example.org"
+    modules_enabled = { "presence_identity"; }
+```
+
+With Jicofo authentication, only an authenticated participant starts a room, and the bot is not one. When the bot is asked to record a room nobody has started yet, it waits for someone who may and tries to join again every 5 seconds. Meanwhile its status is `waiting_for_participants`, the timeline starts with `waiting_for_host`, and the first-join wait counts from then.
+
+docker-jitsi-meet: `ENABLE_AUTH=1` and `AUTH_TYPE=jwt` with the `JWT_*` settings, and `XMPP_MODULES=presence_identity`, which loads it on the main VirtualHost and, with `ENABLE_GUESTS=1`, on the guest one.
 
 ## The recorder bot service
 
@@ -168,7 +192,9 @@ Storage is at most about 680 MB per 30-minute consultation with two video partic
 | `RECORDER_BOT_SPOOL_DIR` | `/var/lib/recorder-bot/spool` in the image | Local storage where consultations are recorded and finalised. Keep it on a persistent volume with room for the consultations in progress |
 | `RECORDER_BOT_MAX_CONSULTATIONS` | `2` | How many consultations the service records at once. See [Capacity](#capacity) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
-| `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join |
+| `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join, or from when it started waiting for someone to start the room |
+| `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
+| `RECORDER_BOT_PATIENT_MARKER` | none | Which verified identity is the patient, written the same way |
 | `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
 | `RECORDER_BOT_CHROMIUM_PATH` | Playwright's | A Chromium binary to run instead |
 | `RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS` | `false` | Accept any certificate from the web server. Only for test deployments |
@@ -190,7 +216,7 @@ The consultation id is an opaque UUID. The service's logs name consultations by 
 A consultation's `status` goes:
 
 1. `starting` while the bot launches and joins;
-2. `waiting_for_participants` once the bot is in the room, until the first human joins;
+2. `waiting_for_participants` once the bot is in the room, or waits for someone to start it, until the first human joins;
 3. `recording` from then on, including while the room is empty within the grace;
 4. `finalising` once it has stopped, while the evidence recording is prepared;
 5. a final status:
@@ -224,7 +250,7 @@ The folder holds:
 |---|---|
 | `NN-<endpoint id>-audio.webm` | One participant join's audio: Opus at 64 kbps |
 | `NN-<endpoint id>-video.webm` | One participant join's video: VP8 at up to 1.5 Mbps, at whatever resolution the participant sent, changes included |
-| `timeline.json` | Every join, leave, track start and stop, and video resolution change, in order, with its time |
+| `timeline.json` | Every join, with the participant's verified identity and role, leave, track start and stop, and video resolution change, in order, with its time |
 | `manifest.json` | The summary below |
 
 `NN` numbers the files in the order their tracks started. A participant who rejoins has a new endpoint id, so their rejoin is recorded to new files.
@@ -235,9 +261,10 @@ The folder holds:
 |---|---|
 | `consultationId`, `hn`, `room`, `meetingId` | Which consultation. `meetingId` is the conference's id in the Jitsi logs |
 | `start`, `end`, `stopReason` | When it started and stopped, and why it stopped |
-| `participants` | For each participant join: `endpointId`, `displayName`, `role`, and the times in `joins` and `leaves` |
+| `participants` | For each participant join: `endpointId`, `displayName`, `identity` (`id` and `name`, when verified), `role`, and the times in `joins` and `leaves` |
+| `identities` | For each verified identity, across its rejoins: `identity`, `role`, its `endpointIds`, one per join, and its `files` |
 | `files` | For each file: `name`, `kind`, `endpointId`, `start` and `stop` on the timeline, `duration` in seconds and `bytes` |
-| `staffVisits` | Each staff visit (filled in once the deployment identifies staff) |
+| `staffVisits` | Each staff visit, from a staff member's join to their leave: `identity`, `displayName`, `endpointId`, `start` and `end`. A visit still open at the stop ends then |
 | `gaps` | Each stretch the bot did not record (filled in once the bot is relaunched after a crash) |
 
 While a consultation runs, each track is written to the spool in one-second chunks. Once it stops, the service closes every recorder, remuxes each file with a stream copy so that it has a duration and is seekable, writes `timeline.json` and `manifest.json`, then moves the folder into the storage root. On the same filesystem the move is a rename. Otherwise the folder is copied into `<storage root>/.incoming/` first and then renamed into place, so a consultation folder in the storage root is always complete. Leave `.incoming` alone.

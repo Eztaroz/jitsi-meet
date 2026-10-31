@@ -1,3 +1,5 @@
+import { type IRoleMarkers, parseRoleMarker } from './identity.ts';
+
 /**
  * The recorder bot service's settings, read from environment variables so that administrators can tune the service
  * without code changes. `recorder-bot/deploy/README.md` documents each one.
@@ -37,6 +39,12 @@ export interface IConfig {
 
     /** The highest video resolution the bot asks for. */
     maxHeight: number;
+
+    /**
+     * Which verified identities are staff and which the patient. With none, the service records no identities, so no
+     * staff visits.
+     */
+    roleMarkers: IRoleMarkers;
 
     /**
      * Where consultations are recorded while they run and finalised, before they move to the storage root. It must
@@ -119,6 +127,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
         maxConsultations: positiveInteger(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),
         maxHeight: positiveInteger(env, 'RECORDER_BOT_MAX_HEIGHT', 720),
+        roleMarkers: {
+            patient: parseRoleMarker(env.RECORDER_BOT_PATIENT_MARKER, 'RECORDER_BOT_PATIENT_MARKER'),
+            staff: parseRoleMarker(env.RECORDER_BOT_STAFF_MARKER, 'RECORDER_BOT_STAFF_MARKER')
+        },
         spoolDir: required(env, 'RECORDER_BOT_SPOOL_DIR'),
         storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT')
     };

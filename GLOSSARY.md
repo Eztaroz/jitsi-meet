@@ -32,6 +32,14 @@ _Avoid_: Call, session, meeting, visit
 One continuous stretch during which a given staff member is present in a consultation.
 _Avoid_: Session, attendance
 
+**Verified identity**:
+Who a participant is, as the deployment's authentication vouches for it (the token's user id and name), as opposed to the display name the participant typed.
+_Avoid_: User, account, login
+
+**Role marker**:
+The token claim and value that make a verified identity staff, or the patient.
+_Avoid_: Role mapping, rule
+
 ### Recording
 
 **Recorder bot**:

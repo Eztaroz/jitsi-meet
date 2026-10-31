@@ -134,6 +134,8 @@ services:
             - RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS=true
             - RECORDER_BOT_STORAGE_ROOT=/evidence
             - RECORDER_BOT_MAX_CONSULTATIONS
+            - RECORDER_BOT_PATIENT_MARKER
+            - RECORDER_BOT_STAFF_MARKER
         depends_on:
             - web
 

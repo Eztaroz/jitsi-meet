@@ -1,6 +1,6 @@
 /**
  * The consultation lifecycle module: owns the stop rule and the timeline of one consultation, and summarises its
- * participants, tracks and staff visits for the manifest.
+ * participants, tracks, verified identities and staff visits for the manifest.
  *
  * It is pure. It takes timestamped events and returns timeline entries and commands. It does no I/O and has no
  * timers of its own: the caller runs the timers it asks for and reports back with a `timer_fired` event.
@@ -19,6 +19,12 @@ export interface IIdentity {
 }
 
 export type LifecycleEvent = { at: Date; } & (
+
+    /**
+     * The bot may not start the room itself (Jicofo authentication), and waits for a participant who may. The
+     * first-join wait runs from here.
+     */
+    | { type: 'waiting_for_host'; }
     | { meetingId?: string; type: 'bot_joined'; }
     | {
         displayName?: string;
@@ -52,6 +58,7 @@ export type LifecycleCommand =
     | { reason: StopReason; type: 'stop'; };
 
 export type TimelineEntry = { at: Date; } & (
+    | { type: 'waiting_for_host'; }
     | { meetingId?: string; type: 'bot_joined'; }
     | {
         displayName?: string;
@@ -94,6 +101,20 @@ export interface IParticipant {
     role: Role;
 }
 
+/** Everything recorded of one verified identity, across its rejoins. */
+export interface IIdentitySummary {
+
+    /** Its endpoints, in the order they joined: one per join. */
+    endpointIds: string[];
+
+    /** The files of its tracks, in the order they started. */
+    files: string[];
+    identity: IIdentity;
+
+    /** Its role at its first join. */
+    role: Role;
+}
+
 /** One recorded track: one file. */
 export interface ITrack {
     endpointId: string;
@@ -128,6 +149,14 @@ export interface IConsultationLifecycle {
      * @returns {ILifecycleResult} The timeline entries and commands the event produced.
      */
     handle: (event: LifecycleEvent) => ILifecycleResult;
+
+    /**
+     * Returns the participants with a verified identity, grouped by identity, in the order each identity first
+     * joined.
+     *
+     * @returns {IIdentitySummary[]}
+     */
+    identities: () => IIdentitySummary[];
 
     /**
      * Returns the participants so far, in the order they first joined, with when they joined and left.
@@ -266,11 +295,19 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             }
 
             switch (event.type) {
-            case 'bot_joined':
+            case 'waiting_for_host':
+            case 'bot_joined': {
+                const waitForFirstJoin = !humans.size && !activeTimers.has('first_join');
+
                 return {
-                    entries: [ { at: event.at, meetingId: event.meetingId, type: 'bot_joined' } ],
-                    commands: humans.size ? [] : [ startTimer('first_join', firstJoinMs) ]
+                    entries: [
+                        event.type === 'bot_joined'
+                            ? { at: event.at, meetingId: event.meetingId, type: 'bot_joined' }
+                            : { at: event.at, type: 'waiting_for_host' }
+                    ],
+                    commands: waitForFirstJoin ? [ startTimer('first_join', firstJoinMs) ] : []
                 };
+            }
             case 'participant_joined': {
                 const { at, displayName, endpointId, identity, role } = event;
                 let participant = participants.get(endpointId);
@@ -381,6 +418,32 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
 
                 return stop(event.at, TIMER_STOP_REASONS[event.timer]);
             }
+        },
+
+        identities() {
+            const summaries = new Map<string, IIdentitySummary>();
+            const byEndpoint = new Map<string, IIdentitySummary>();
+
+            for (const { endpointId, hidden: isHidden, identity, role } of participants.values()) {
+                if (!identity || isHidden) {
+                    continue;
+                }
+
+                let summary = summaries.get(identity.id);
+
+                if (!summary) {
+                    summary = { endpointIds: [], files: [], identity: { ...identity }, role };
+                    summaries.set(identity.id, summary);
+                }
+                summary.endpointIds.push(endpointId);
+                byEndpoint.set(endpointId, summary);
+            }
+
+            for (const track of tracks) {
+                byEndpoint.get(track.endpointId)?.files.push(track.file);
+            }
+
+            return [ ...summaries.values() ];
         },
 
         participants() {

@@ -23,9 +23,13 @@
     // How long after a participant joins the bot sends its presence again (ADR 0004).
     const PRESENCE_RESEND_MS = 2000;
 
+    // How often the bot tries again to join a room it may not start itself, as jitsi-meet does.
+    const WAIT_FOR_HOST_RETRY_MS = 5000;
+
     let connection;
     let conference;
     let stopping = false;
+    let waitingForHost = false;
     let recorderCount = 0;
 
     /** The recorder of each remote track that is being recorded. */
@@ -192,7 +196,11 @@
         return {
             displayName: user.getDisplayName(),
             endpointId,
-            hidden: user.isHidden()
+            hidden: user.isHidden(),
+
+            // With JWT authentication, Prosody puts the token's user and group claims here, and the service decides
+            // what to trust.
+            identity: user.getIdentity()
         };
     }
 
@@ -255,6 +263,18 @@
         conference.on(events.CONFERENCE_FAILED, error => {
             if (error === JitsiMeetJS.errors.conference.CONFERENCE_DESTROYED) {
                 emit('room_destroyed');
+            } else if (error === JitsiMeetJS.errors.conference.AUTHENTICATION_REQUIRED) {
+                // With Jicofo authentication, only an authenticated participant starts the room. Wait for one; the
+                // service's first-join wait still applies.
+                if (!waitingForHost) {
+                    waitingForHost = true;
+                    emit('waiting_for_host');
+                }
+                setTimeout(() => {
+                    if (!stopping) {
+                        conference.join();
+                    }
+                }, WAIT_FOR_HOST_RETRY_MS);
             } else {
                 emit('conference_failed', { error });
             }
