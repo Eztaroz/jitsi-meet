@@ -46,6 +46,12 @@ export interface IConfig {
      */
     maxRelaunches: number;
 
+    /** How long evidence recordings are kept, in milliseconds (ADR 0003). Older ones are deleted. */
+    retentionMs: number;
+
+    /** How often the service deletes the evidence recordings older than the retention period, in milliseconds. */
+    retentionSweepMs: number;
+
     /**
      * Which verified identities are staff and which the patient. With none, the service records no identities, so no
      * staff visits.
@@ -67,6 +73,11 @@ export interface IConfig {
      */
     storeRetryMs: number;
 }
+
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The longest interval a timer takes, in seconds: a day. */
+const MAX_INTERVAL_SECONDS = 24 * 60 * 60;
 
 /**
  * Reads a required variable.
@@ -92,9 +103,10 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
  * @param {string} name - The variable.
  * @param {number} fallback - The default.
  * @param {number} min - The lowest value allowed.
+ * @param {number} max - The highest value allowed.
  * @returns {number}
  */
-function integer(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1): number {
+function integer(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1, max = Number.MAX_SAFE_INTEGER): number {
     const raw = env[name]?.trim();
 
     if (!raw) {
@@ -103,8 +115,8 @@ function integer(env: NodeJS.ProcessEnv, name: string, fallback: number, min = 1
 
     const value = Number(raw);
 
-    if (!Number.isInteger(value) || value < min) {
-        throw new Error(`${name} must be an integer of at least ${min}, got "${raw}"`);
+    if (!Number.isInteger(value) || value < min || value > max) {
+        throw new Error(`${name} must be an integer from ${min} to ${max}, got "${raw}"`);
     }
 
     return value;
@@ -141,12 +153,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         maxConsultations: integer(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),
         maxHeight: integer(env, 'RECORDER_BOT_MAX_HEIGHT', 720),
         maxRelaunches: integer(env, 'RECORDER_BOT_MAX_RELAUNCHES', 3, 0),
+        retentionMs: integer(env, 'RECORDER_BOT_RETENTION_DAYS', 90) * DAY_MS,
+        retentionSweepMs: integer(env, 'RECORDER_BOT_RETENTION_SWEEP_SECONDS', 3600, 1, MAX_INTERVAL_SECONDS) * 1000,
         roleMarkers: {
             patient: parseRoleMarker(env.RECORDER_BOT_PATIENT_MARKER, 'RECORDER_BOT_PATIENT_MARKER'),
             staff: parseRoleMarker(env.RECORDER_BOT_STAFF_MARKER, 'RECORDER_BOT_STAFF_MARKER')
         },
         spoolDir: required(env, 'RECORDER_BOT_SPOOL_DIR'),
         storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT'),
-        storeRetryMs: integer(env, 'RECORDER_BOT_STORE_RETRY_SECONDS', 60) * 1000
+        storeRetryMs: integer(env, 'RECORDER_BOT_STORE_RETRY_SECONDS', 60, 1, MAX_INTERVAL_SECONDS) * 1000
     };
 }

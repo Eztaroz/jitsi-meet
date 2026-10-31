@@ -198,7 +198,9 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_JITSI_URL` | required | The Jitsi web server, `https://meet.example.org` |
 | `RECORDER_BOT_STORAGE_ROOT` | required | The evidence storage root: the directory evidence recordings are moved to, for example the mount point of the hospital's file storage. The service never creates it |
 | `RECORDER_BOT_SPOOL_DIR` | `/var/lib/recorder-bot/spool` in the image | Local storage where consultations are recorded and finalised. Keep it on a persistent volume with room for the consultations in progress |
-| `RECORDER_BOT_STORE_RETRY_SECONDS` | `60` | How often the service retries moving the evidence recordings left in the spool into the storage root. See [When the storage root is unavailable](#when-the-storage-root-is-unavailable) |
+| `RECORDER_BOT_RETENTION_DAYS` | `90` | How long evidence recordings are kept (ADR 0003). The service deletes older ones. See [Retention](#retention) |
+| `RECORDER_BOT_RETENTION_SWEEP_SECONDS` | `3600` | How often the service looks for what is older than the retention period; at most a day |
+| `RECORDER_BOT_STORE_RETRY_SECONDS` | `60` | How often the service retries moving the evidence recordings left in the spool into the storage root; at most a day. See [When the storage root is unavailable](#when-the-storage-root-is-unavailable) |
 | `RECORDER_BOT_MAX_CONSULTATIONS` | `2` | How many consultations the service records at once. See [Capacity](#capacity) |
 | `RECORDER_BOT_MAX_RELAUNCHES` | `3` | How many times a consultation's bot may be relaunched after a crash or a lost connection; `0` never relaunches it. See [Crashes](#crashes) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
@@ -289,6 +291,25 @@ A failed attempt leaves nothing in the storage root: its partial copy in `.incom
 The logs name each spooled evidence recording by its consultation id: `could not move a spooled evidence recording to the storage root; will retry` at each failed attempt, with the error code, and `spooled evidence recording stored` once it is moved.
 
 After a restart, the control API no longer knows earlier consultations; their spooled evidence recordings are still retried, and logged by consultation id. A folder in the spool without `manifest.json` was never finalised: the service stopped while that consultation ran, or could not finalise it. The service leaves it there and logs `an evidence recording in the spool was never finalised` once after each start; the recorded media is in its `raw/` folder.
+
+### Retention
+
+ADR 0003 keeps evidence recordings for three months, then deletes them. The service does that itself: when it starts, and then every `RECORDER_BOT_RETENTION_SWEEP_SECONDS`, it deletes
+
+- every evidence recording in the storage root whose consultation start is older than `RECORDER_BOT_RETENTION_DAYS`, and the patient's folder once it is empty;
+- every consultation folder in the spool, and in the storage root's `.incoming`, in which nothing has changed for longer than that: what a crash or an outage of the storage root left behind.
+
+It deletes only what matches the evidence layout: a `<backend-safe HN>/<consultation start>/` folder whose `manifest.json` names that same place, or a folder named after a consultation id in the spool. It never deletes the folder of a consultation still in progress, and never follows a symbolic link. Every other folder or file it leaves alone, and logs once after each start, as `leaving alone a folder that does not match the evidence layout`, with a `reason` and a `folder`. It ignores names that start with `.`, such as a file server's snapshots.
+
+To delete a folder, the service first renames it into `.deleting` next to it, in the storage root or the spool, then deletes it there. A deletion cut short, by a crash for example, is finished by the next sweep; leave `.deleting` alone.
+
+The logs name each deleted folder by its consultation id, with `place` `storage_root`, `spool` or `staging`, and never by HN. The `folder` of a folder left alone is the first 16 hexadecimal digits of the SHA-256 of its path relative to the storage root, or to the spool, so that the log names no HN. To find it, from the storage root:
+
+```bash
+find . -mindepth 1 -maxdepth 2 -printf '%P\n' | while read -r p; do printf '%s %s\n' "$(printf '%s' "$p" | sha256sum | cut -c1-16)" "$p"; done
+```
+
+When several services share one storage root, each of them sweeps it; that is safe.
 
 ### Logs
 

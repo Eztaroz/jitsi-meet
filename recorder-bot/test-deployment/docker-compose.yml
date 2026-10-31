@@ -139,6 +139,8 @@ services:
             - RECORDER_BOT_PATIENT_MARKER
             - RECORDER_BOT_STAFF_MARKER
             - RECORDER_BOT_STORE_RETRY_SECONDS
+            - RECORDER_BOT_RETENTION_DAYS
+            - RECORDER_BOT_RETENTION_SWEEP_SECONDS
         depends_on:
             - web
 
@@ -162,8 +164,9 @@ services:
             - RECORDER_BOT_API_PORT=${RECORDER_BOT_FRAGILE_API_PORT}
             - RECORDER_BOT_MAX_RELAUNCHES=0
 
-    # A fourth instance whose storage root the tests take away and give back, for the storage tests. Its storage root
-    # is ./outage/evidence, which is not there until the tests create it; the service never creates it.
+    # A fourth instance, with a storage root of its own, for the storage and the retention tests. The storage tests take
+    # its storage root, ./outage/evidence, away and give it back; the service never creates it. The retention tests
+    # seed it and its spool with old and recent folders, and it sweeps them often.
     recorder-bot-outage:
         extends:
             service: recorder-bot
@@ -174,6 +177,7 @@ services:
             - RECORDER_BOT_API_PORT=${RECORDER_BOT_OUTAGE_API_PORT}
             - RECORDER_BOT_STORAGE_ROOT=/outage/evidence
             - RECORDER_BOT_STORE_RETRY_SECONDS=${RECORDER_BOT_OUTAGE_STORE_RETRY_SECONDS}
+            - RECORDER_BOT_RETENTION_SWEEP_SECONDS=${RECORDER_BOT_OUTAGE_RETENTION_SWEEP_SECONDS}
 
 networks:
     meet.jitsi:

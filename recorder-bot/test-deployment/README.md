@@ -8,7 +8,7 @@ A Jitsi deployment on one machine, for testing the recorder bot. It runs docker-
 | Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret` |
 | A second recorder bot service, limited to one consultation at a time, for the capacity tests | http://localhost:8091, same secret |
 | A third recorder bot service, which never relaunches a crashed bot, for the relaunch tests | http://localhost:8092, same secret |
-| A fourth recorder bot service, whose storage root the storage tests take away and give back, and which retries every 2 seconds | http://localhost:8093, same secret |
+| A fourth recorder bot service, with a storage root of its own, which the storage tests take away and give back and the retention tests seed. It retries spooled evidence recordings and sweeps every 2 seconds | http://localhost:8093, same secret |
 | Videobridge media | UDP 10000, advertised as 127.0.0.1 |
 
 The recorder bot service uses the host network, so that it reaches the web server on `localhost` and the videobridge on its advertised address, the way browsers on this machine do.

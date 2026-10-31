@@ -62,6 +62,10 @@ _Avoid_: Archive, bucket, upload
 The recorder bot service's own local storage, where a consultation is recorded and finalised before its evidence recording moves to the evidence storage root. While the evidence storage root is unavailable, the evidence recording stays there, spooled, and the service retries the move until it succeeds.
 _Avoid_: Cache, temp folder
 
+**Retention period**:
+How long evidence recordings are kept: three months by default (ADR 0003). The recorder bot service deletes those whose consultation started earlier.
+_Avoid_: Expiry, TTL
+
 **Gap**:
 A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or the consultation stopped.
 _Avoid_: Outage, hole, downtime

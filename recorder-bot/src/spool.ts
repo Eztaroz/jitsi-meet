@@ -18,65 +18,28 @@ export const CONSULTATION_FOLDER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 export class SpoolRetrier {
     private readonly consultations: Consultations;
-    private readonly intervalMs: number;
     private readonly spoolDir: string;
     private readonly storageRoot: string;
 
     /** Folders that cannot be retried, so that each is logged once. */
     private readonly reported = new Set<string>();
-    private sweeping?: Promise<void>;
-    private timer?: ReturnType<typeof setInterval>;
 
     /**
-     * Creates a retrier. Call {@link start} to start it.
+     * Creates a retrier. The service runs {@link retryAll} at start-up and then periodically.
      *
      * @param {Object} options - Options.
      * @param {Consultations} options.consultations - The consultations this service knows about.
-     * @param {number} options.intervalMs - How long to wait between retries, in milliseconds.
      * @param {string} options.spoolDir - The spool.
      * @param {string} options.storageRoot - The evidence storage root.
      */
-    constructor({ consultations, intervalMs, spoolDir, storageRoot }: {
+    constructor({ consultations, spoolDir, storageRoot }: {
         consultations: Consultations;
-        intervalMs: number;
         spoolDir: string;
         storageRoot: string;
     }) {
         this.consultations = consultations;
-        this.intervalMs = intervalMs;
         this.spoolDir = spoolDir;
         this.storageRoot = storageRoot;
-    }
-
-    /**
-     * Retries the spool now, then at every interval.
-     *
-     * @returns {void}
-     */
-    start() {
-        this.sweep();
-        this.timer = setInterval(() => this.sweep(), this.intervalMs);
-    }
-
-    /**
-     * Stops retrying, once the retry under way, if any, is done.
-     *
-     * @returns {Promise<void>}
-     */
-    async stop(): Promise<void> {
-        clearInterval(this.timer);
-        await this.sweeping;
-    }
-
-    /**
-     * Retries every spooled folder, unless a retry is still under way.
-     *
-     * @returns {void}
-     */
-    private sweep() {
-        this.sweeping ??= this.retryAll().finally(() => {
-            this.sweeping = undefined;
-        });
     }
 
     /**
@@ -84,7 +47,7 @@ export class SpoolRetrier {
      *
      * @returns {Promise<void>}
      */
-    private async retryAll(): Promise<void> {
+    async retryAll(): Promise<void> {
         let ids: string[];
 
         try {

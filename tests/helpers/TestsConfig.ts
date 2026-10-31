@@ -80,14 +80,17 @@ export const config = {
         fragileApiUrl: process.env.RECORDER_BOT_FRAGILE_API_URL?.trim()?.replace(/\/+$/, ''),
         fragileContainer: process.env.RECORDER_BOT_FRAGILE_CONTAINER?.trim(),
         /**
-         * An instance of the service whose storage root the storage tests take away and give back: its control API
-         * (same bearer secret), its storage root and its spool as this machine sees them, its docker container, and
-         * how often it retries spooled evidence recordings, in seconds.
+         * An instance of the service with a storage root of its own, which the storage tests take away and give back
+         * and the retention tests seed: its control API (same bearer secret), its storage root and its spool as this
+         * machine sees them, its docker container, how often it retries spooled evidence recordings and sweeps, in
+         * seconds, and its retention period, in days.
          */
         outage: {
             apiUrl: process.env.RECORDER_BOT_OUTAGE_API_URL?.trim()?.replace(/\/+$/, ''),
             container: process.env.RECORDER_BOT_OUTAGE_CONTAINER?.trim(),
+            retentionDays: Number(process.env.RECORDER_BOT_OUTAGE_RETENTION_DAYS?.trim() || '0'),
             retrySeconds: Number(process.env.RECORDER_BOT_OUTAGE_STORE_RETRY_SECONDS?.trim() || '0'),
+            sweepSeconds: Number(process.env.RECORDER_BOT_OUTAGE_RETENTION_SWEEP_SECONDS?.trim() || '0'),
             spool: process.env.RECORDER_BOT_OUTAGE_SPOOL?.trim(),
             storageRoot: process.env.RECORDER_BOT_OUTAGE_STORAGE_ROOT?.trim()
         }

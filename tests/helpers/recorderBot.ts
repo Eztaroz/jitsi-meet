@@ -567,13 +567,27 @@ export function storageUnavailableReason(): string | undefined {
 }
 
 /**
+ * Returns why the retention tests cannot run here, or undefined when they can. They seed the storage root and the
+ * spool of the instance the storage tests use, and read its logs.
+ *
+ * @returns {string|undefined}
+ */
+export function retentionUnavailableReason(): string | undefined {
+    const { retentionDays, sweepSeconds } = config.recorderBot.outage;
+
+    return storageUnavailableReason()
+        ?? (retentionDays > 0 && sweepSeconds > 0 ? undefined
+            : 'RECORDER_BOT_OUTAGE_RETENTION_DAYS and RECORDER_BOT_OUTAGE_RETENTION_SWEEP_SECONDS are not set');
+}
+
+/**
  * Runs a docker command.
  *
  * @param {string[]} args - Its arguments.
- * @returns {void}
+ * @returns {string} What it wrote to its standard output.
  */
-export function docker(...args: string[]): void {
-    execFileSync('docker', args, { stdio: 'pipe' });
+export function docker(...args: string[]): string {
+    return execFileSync('docker', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: 'pipe' });
 }
 
 /**
