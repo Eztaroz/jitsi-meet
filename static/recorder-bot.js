@@ -12,6 +12,9 @@
     const JIBRI_FEATURE = 'http://jitsi.org/protocol/jibri';
     const LEAVE_TIMEOUT_MS = 3000;
 
+    // How long after a participant joins the bot sends its presence again (ADR 0004).
+    const PRESENCE_RESEND_MS = 2000;
+
     let connection;
     let conference;
     let stopping = false;
@@ -76,6 +79,11 @@
             p2p: { enabled: false }
         });
 
+        // ADR 0004: a file recording session in the hidden bot's presence makes every participant's jitsi-meet show
+        // its recording label. The session is the consultation.
+        conference.room.addOrReplaceInPresence('session_id', { value: params.consultationId });
+        conference.room.addOrReplaceInPresence('mode', { value: 'file' });
+
         conference.on(events.CONFERENCE_JOINED, () => {
             conference.setReceiverConstraints({
                 constraints: {},
@@ -84,7 +92,17 @@
             });
             emit('joined', { meetingId: conference.getMeetingUniqueId() });
         });
-        conference.on(events.USER_JOINED, (id, user) => emit('participant_joined', participant(id, user)));
+        conference.on(events.USER_JOINED, (id, user) => {
+            emit('participant_joined', participant(id, user));
+
+            // A joiner receives the bot's presence before its own join completes, which can be before jitsi-meet
+            // listens for recording sessions; that joiner would never show the label. Send it again once it listens.
+            setTimeout(() => {
+                if (!stopping) {
+                    conference.room.sendPresence();
+                }
+            }, PRESENCE_RESEND_MS);
+        });
         conference.on(events.USER_LEFT, id => emit('participant_left', { endpointId: id }));
         conference.on(events.KICKED, () => emit('kicked'));
         conference.on(events.CONFERENCE_FAILED, error => {

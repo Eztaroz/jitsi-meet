@@ -242,3 +242,27 @@ export function getJoinNotifications(participant: Participant): Promise<string[]
     // @ts-ignore
     return participant.execute(() => [ ...window.recorderBotTestJoinNotifications ]);
 }
+
+/**
+ * Waits until a participant shows the recording label for a consultation: jitsi-meet holds a file recording session
+ * with the consultation's id that is on, which is what the in-call label shows, and the label is on screen.
+ *
+ * @param {Participant} participant - The participant.
+ * @param {string} consultationId - The consultation.
+ * @returns {Promise<void>}
+ */
+export async function waitForRecordingLabel(participant: Participant, consultationId: string): Promise<void> {
+    await participant.driver.waitUntil(
+        () => participant.execute(id => APP.store.getState()['features/recording'].sessionDatas.some(
+            session => session.id === id && session.mode === 'file' && session.status === 'on'), consultationId),
+        {
+            timeout: 10_000,
+            timeoutMsg: `${participant.name} has no recording session for the consultation`
+        });
+
+    // The always-visible part of the conference info holds the label, and nothing else in these tests.
+    await participant.driver.$('#alwaysVisible svg').waitForDisplayed({
+        timeout: 5_000,
+        timeoutMsg: `${participant.name} does not show the recording label`
+    });
+}

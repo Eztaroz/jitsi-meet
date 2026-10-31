@@ -104,6 +104,10 @@ config.constraints = {
 
 docker-jitsi-meet: `ENABLE_RECORDING=1` with `XMPP_HIDDEN_DOMAIN` sets `hiddenDomain`; `ENABLE_P2P=false`; `RESOLUTION=720`.
 
+### Recording label
+
+While the bot is in the room, every participant sees jitsi-meet's in-call recording label (ADR 0004). The bot advertises a file recording session in its own presence, named after the consultation id, and sends its presence again about two seconds after each participant joins, so that a joiner who was not listening yet still gets it. This needs no Jibri and no client change. There is no consent prompt and no sound; collect any consent the hospital needs outside the call.
+
 ### Join links
 
 The hospital's links must not override prejoin settings in the URL hash (for example `#config.prejoinConfig.enabled=false`). jitsi-meet then starts without media, and there is nothing to record. The prototype hit this. Set prejoin in the deployment's `config.js` instead.
