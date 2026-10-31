@@ -59,7 +59,7 @@ The file storage the hospital provides, where evidence recordings are kept, one 
 _Avoid_: Archive, bucket, upload
 
 **Spool**:
-The recorder bot service's own local storage, where a consultation is recorded and finalised before its evidence recording moves to the evidence storage root.
+The recorder bot service's own local storage, where a consultation is recorded and finalised before its evidence recording moves to the evidence storage root. While the evidence storage root is unavailable, the evidence recording stays there, spooled, and the service retries the move until it succeeds.
 _Avoid_: Cache, temp folder
 
 **Gap**:

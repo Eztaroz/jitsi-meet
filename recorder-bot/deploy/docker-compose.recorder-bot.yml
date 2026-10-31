@@ -40,6 +40,7 @@ services:
             - RECORDER_BOT_PATIENT_MARKER
             - RECORDER_BOT_STAFF_MARKER
             - RECORDER_BOT_STORAGE_ROOT
+            - RECORDER_BOT_STORE_RETRY_SECONDS
             - TZ
         depends_on:
             - web

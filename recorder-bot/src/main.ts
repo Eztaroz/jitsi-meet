@@ -7,6 +7,7 @@ import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
 import { Consultations } from './consultations.ts';
 import { log } from './log.ts';
+import { SpoolRetrier } from './spool.ts';
 
 const config = loadConfig();
 
@@ -16,7 +17,17 @@ mkdirSync(config.spoolDir, { recursive: true });
 const consultations = new Consultations(config);
 const api = createApi({ consultations, maxConsultations: config.maxConsultations, secret: config.apiSecret });
 
+const retrier = new SpoolRetrier({
+    consultations,
+    intervalMs: config.storeRetryMs,
+    spoolDir: config.spoolDir,
+    storageRoot: config.storageRoot
+});
+
 api.listen(config.apiPort, () => log.info('control API listening', { port: config.apiPort }));
+
+// Including what was spooled before the service last stopped.
+retrier.start();
 
 let shuttingDown = false;
 
@@ -33,6 +44,7 @@ async function shutdown(signal: string) {
     shuttingDown = true;
     log.info('shutting down', { signal });
     api.close();
+    await retrier.stop();
     await consultations.shutdown();
     process.exit(0);
 }

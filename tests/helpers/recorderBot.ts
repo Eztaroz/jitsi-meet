@@ -443,10 +443,11 @@ export interface ITimelineEntry {
  *
  * @param {string} location - The evidence location the control API reported.
  * @param {string} name - The file's name.
+ * @param {string} storageRoot - The storage root; the main instance's by default.
  * @returns {string}
  */
-export function evidencePath(location: string, name = ''): string {
-    return path.resolve(config.recorderBot.storageRoot ?? '', location, name);
+export function evidencePath(location: string, name = '', storageRoot = config.recorderBot.storageRoot ?? ''): string {
+    return path.resolve(storageRoot, location, name);
 }
 
 /**
@@ -454,10 +455,45 @@ export function evidencePath(location: string, name = ''): string {
  *
  * @param {string} location - The evidence location the control API reported.
  * @param {string} name - The file's name.
+ * @param {string} storageRoot - The storage root; the main instance's by default.
  * @returns {T}
  */
-export function readEvidenceJson<T>(location: string, name: 'manifest.json' | 'timeline.json'): T {
-    return JSON.parse(fs.readFileSync(evidencePath(location, name), 'utf8')) as T;
+export function readEvidenceJson<T>(
+        location: string,
+        name: 'manifest.json' | 'timeline.json',
+        storageRoot?: string): T {
+    return JSON.parse(fs.readFileSync(evidencePath(location, name, storageRoot), 'utf8')) as T;
+}
+
+/**
+ * Looks for a consultation's evidence recording in a storage root, by the consultation id in its manifest.
+ *
+ * @param {string} storageRoot - The storage root.
+ * @param {string} consultationId - The consultation.
+ * @returns {string|undefined} Its location in the storage root.
+ */
+export function findEvidence(storageRoot: string, consultationId: string): string | undefined {
+    const folders = (dir: string) => fs.existsSync(dir)
+        ? fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith('.'))
+            .map(e => e.name)
+        : [];
+
+    for (const patient of folders(storageRoot)) {
+        for (const start of folders(path.join(storageRoot, patient))) {
+            const location = path.posix.join(patient, start);
+
+            try {
+                if (readEvidenceJson<IManifest>(location, 'manifest.json', storageRoot).consultationId
+                        === consultationId) {
+                    return location;
+                }
+            } catch {
+                // Not an evidence recording.
+            }
+        }
+    }
+
+    return undefined;
 }
 
 /** What playing a media file all the way through shows. */
@@ -516,6 +552,31 @@ export async function setCameraHeight(participant: Participant, height: number):
 }
 
 /**
+ * Returns why the storage tests cannot run here, or undefined when they can. They take the storage root of an
+ * instance of the service away and give it back, and stop and start that instance's docker container.
+ *
+ * @returns {string|undefined}
+ */
+export function storageUnavailableReason(): string | undefined {
+    const { apiUrl, container, retrySeconds, spool, storageRoot } = config.recorderBot.outage;
+
+    return recorderBotUnavailableReason()
+        ?? (apiUrl && container && retrySeconds > 0 && spool && storageRoot ? undefined
+            : 'RECORDER_BOT_OUTAGE_API_URL, RECORDER_BOT_OUTAGE_CONTAINER, RECORDER_BOT_OUTAGE_SPOOL, '
+                + 'RECORDER_BOT_OUTAGE_STORAGE_ROOT and RECORDER_BOT_OUTAGE_STORE_RETRY_SECONDS are not set');
+}
+
+/**
+ * Runs a docker command.
+ *
+ * @param {string[]} args - Its arguments.
+ * @returns {void}
+ */
+export function docker(...args: string[]): void {
+    execFileSync('docker', args, { stdio: 'pipe' });
+}
+
+/**
  * Returns why the relaunch tests cannot run here, or undefined when they can. They kill a bot's browser in the
  * service's docker container.
  *
@@ -538,7 +599,7 @@ export function relaunchUnavailableReason(): string | undefined {
  * @returns {void}
  */
 export function killBotBrowser(consultationId: string, container = config.recorderBot.container ?? ''): void {
-    execFileSync('docker', [ 'exec', container, 'pkill', '-KILL', '-f', '--', `recorder-bot-consultation=${consultationId}` ]);
+    docker('exec', container, 'pkill', '-KILL', '-f', '--', `recorder-bot-consultation=${consultationId}`);
 }
 
 /**

@@ -93,6 +93,9 @@ export class Consultation {
     private interrupted = false;
     private relaunchTimer?: ReturnType<typeof setTimeout>;
     private error?: string;
+
+    /** Why the bot could not be relaunched, when it could not. */
+    private botFailure?: string;
     private evidenceLocation?: string;
     private meetingId?: string;
     private humanJoined = false;
@@ -181,6 +184,21 @@ export class Consultation {
     }
 
     /**
+     * Records that the evidence recording, left in the spool because the storage root was unavailable, has since been
+     * moved into the storage root.
+     *
+     * @param {string} location - Where in the storage root.
+     * @returns {void}
+     */
+    markStored(location: string) {
+        if (this.status === 'spooled') {
+            this.evidenceLocation = location;
+            this.error = this.botFailure;
+            this.status = this.storedStatus();
+        }
+    }
+
+    /**
      * Stops the consultation because the service is shutting down.
      *
      * @returns {Promise<void>}
@@ -251,7 +269,8 @@ export class Consultation {
         }
 
         if (this.relaunches >= this.config.maxRelaunches) {
-            this.error = `bot_failed: ${reason}`;
+            this.botFailure = `bot_failed: ${reason}`;
+            this.error = this.botFailure;
             log.error('bot could not be relaunched; stopping with what was recorded', {
                 consultationId: this.id,
                 relaunches: this.relaunches
@@ -533,9 +552,17 @@ export class Consultation {
         }
         this.evidenceLocation = location;
         log.info('evidence recording stored', { consultationId: this.id, files: this.lifecycle.tracks().length });
+        this.settle(this.storedStatus());
+    }
 
-        // A consultation whose bot could not be relaunched failed, even though what it recorded is stored.
-        this.settle(reason === 'bot_failed' ? 'failed' : 'stored');
+    /**
+     * Returns the final status of a consultation whose evidence recording is stored. A consultation whose bot could
+     * not be relaunched failed, even though what it recorded is stored.
+     *
+     * @returns {ConsultationStatus}
+     */
+    private storedStatus(): ConsultationStatus {
+        return this.stopReason === 'bot_failed' ? 'failed' : 'stored';
     }
 
     /**

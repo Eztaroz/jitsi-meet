@@ -3,11 +3,12 @@
  *
  * While the consultation runs, each track's chunks are appended to a raw file in the consultation's spool folder.
  * Once it has stopped, the folder is finalised in the spool: every file is remuxed, and the timeline and the manifest
- * are written next to them. Then the folder moves into the evidence storage root as a whole, so that the storage root
- * never holds a partial evidence recording.
+ * are written next to them, the manifest last. Then the folder moves into the evidence storage root as a whole, so that
+ * the storage root never holds a partial evidence recording. While the storage root is unavailable, the folder stays
+ * in the spool and the move is retried (see spool.ts).
  */
 import { execFile } from 'node:child_process';
-import { appendFile, cp, lstat, mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, cp, lstat, mkdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -30,6 +31,7 @@ const run = promisify(execFile);
  */
 export const INCOMING_DIR = '.incoming';
 
+const MANIFEST = 'manifest.json';
 const RAW_DIR = 'raw';
 
 /** What the manifest is made of. */
@@ -120,25 +122,72 @@ function writeJson(file: string, value: unknown): Promise<void> {
     return writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+/** What the service reads back from a finalised folder's manifest. */
+export interface IManifestHeader {
+    consultationId: string;
+    room: string;
+    start: Date;
+}
+
 /**
- * Moves a finalised evidence folder into the storage root, at `location`. Either the whole folder appears there or
- * nothing does.
+ * Reads back the manifest of a finalised folder. A folder has one only once it is finalised: the manifest is written
+ * last, and atomically.
+ *
+ * @param {string} folder - The folder.
+ * @returns {Promise<IManifestHeader|undefined>} Undefined when the folder has no manifest.
+ * @throws {Error} When the manifest cannot be read, or is malformed.
+ */
+export async function readManifest(folder: string): Promise<IManifestHeader | undefined> {
+    let text: string;
+
+    try {
+        text = await readFile(path.join(folder, MANIFEST), 'utf8');
+    } catch (error) {
+        if (errorCode(error) === 'ENOENT') {
+            return undefined;
+        }
+        throw error;
+    }
+
+    const manifest = JSON.parse(text) as Record<string, unknown> | null;
+    const start = new Date(String(manifest?.start));
+
+    if (typeof manifest?.consultationId !== 'string' || typeof manifest.room !== 'string'
+            || Number.isNaN(start.getTime())) {
+        throw Object.assign(new Error('the manifest is malformed'), { code: 'EBADMANIFEST' });
+    }
+
+    return { consultationId: manifest.consultationId, room: manifest.room, start };
+}
+
+/**
+ * Whether a path exists.
+ *
+ * @param {string} file - The path.
+ * @returns {Promise<boolean>}
+ */
+function exists(file: string): Promise<boolean> {
+    return lstat(file).then(() => true, () => false);
+}
+
+/**
+ * Moves a finalised folder to its destination in the storage root. When the destination is on another filesystem,
+ * the folder is copied into the storage root's staging folder first, then renamed, so that the destination never
+ * holds a partial copy; a failed copy is removed.
  *
  * @param {string} folder - The finalised folder in the spool.
  * @param {string} storageRoot - The evidence storage root.
- * @param {string} location - Where in the storage root.
+ * @param {string} destination - Where, in the storage root.
  * @returns {Promise<void>}
  */
-export async function moveIntoStorage(folder: string, storageRoot: string, location: string): Promise<void> {
-    const destination = path.join(storageRoot, location);
+async function moveFolder(folder: string, storageRoot: string, destination: string): Promise<void> {
+    if (await exists(destination)) {
+        // An earlier attempt got the folder there, but stopped before it removed the spool's copy.
+        if ((await readManifest(destination).catch(() => undefined))?.consultationId === path.basename(folder)) {
+            await rm(folder, { force: true, recursive: true });
 
-    // Never create the storage root itself: if it is a mount point that is not mounted, the evidence would land on
-    // the local disk underneath.
-    if (!(await stat(storageRoot)).isDirectory()) {
-        throw Object.assign(new Error('the storage root is not a directory'), { code: 'ENOTDIR' });
-    }
-    await mkdir(path.dirname(destination), { recursive: true });
-    if (await lstat(destination).then(() => true, () => false)) {
+            return;
+        }
         throw Object.assign(new Error('the evidence location is already taken'), { code: 'EEXIST' });
     }
 
@@ -152,14 +201,50 @@ export async function moveIntoStorage(folder: string, storageRoot: string, locat
         }
     }
 
-    // On another filesystem: copy next to the destination, then rename.
     const staging = path.join(storageRoot, INCOMING_DIR, path.basename(folder));
 
-    await rm(staging, { force: true, recursive: true });
-    await mkdir(path.dirname(staging), { recursive: true });
-    await cp(folder, staging, { recursive: true });
-    await rename(staging, destination);
+    try {
+        await rm(staging, { force: true, recursive: true });
+        await mkdir(path.dirname(staging), { recursive: true });
+        await cp(folder, staging, { recursive: true });
+        await rename(staging, destination);
+    } catch (error) {
+        await rm(staging, { force: true, recursive: true }).catch(() => undefined);
+        throw error;
+    }
     await rm(folder, { force: true, recursive: true });
+}
+
+/**
+ * Moves a finalised evidence folder into the storage root, at `location`. Either the whole folder appears there or
+ * nothing does: a failed attempt leaves nothing behind in the storage root, and the folder stays in the spool.
+ *
+ * @param {string} folder - The finalised folder in the spool, named after its consultation.
+ * @param {string} storageRoot - The evidence storage root.
+ * @param {string} location - Where in the storage root.
+ * @returns {Promise<void>}
+ */
+export async function moveIntoStorage(folder: string, storageRoot: string, location: string): Promise<void> {
+    const destination = path.join(storageRoot, location);
+
+    // Never create the storage root itself: if it is a mount point that is not mounted, the evidence would land on
+    // the local disk underneath.
+    if (!(await stat(storageRoot)).isDirectory()) {
+        throw Object.assign(new Error('the storage root is not a directory'), { code: 'ENOTDIR' });
+    }
+
+    // The patient's folder, when this attempt creates it.
+    const created = await mkdir(path.dirname(destination), { recursive: true });
+
+    try {
+        await moveFolder(folder, storageRoot, destination);
+    } catch (error) {
+        if (created) {
+            // Only when it is still empty: another consultation of the patient may have been stored in it since.
+            await rmdir(created).catch(() => undefined);
+        }
+        throw error;
+    }
 }
 
 /**
@@ -229,7 +314,7 @@ export class EvidenceRecording {
     }
 
     /**
-     * Finalises the folder in the spool: remuxes every file, then writes `timeline.json` and `manifest.json`.
+     * Finalises the folder in the spool: remuxes every file, then writes `timeline.json` and, last, `manifest.json`.
      *
      * @param {IEvidenceInput} input - The consultation.
      * @returns {Promise<void>}
@@ -245,7 +330,10 @@ export class EvidenceRecording {
             consultationId: input.consultationId,
             entries: input.timeline
         });
-        await writeJson(path.join(this.folder, 'manifest.json'), {
+        await rm(this.raw, { force: true, recursive: true });
+
+        // Last, and atomically: a folder with a manifest is finalised (readManifest).
+        await writeJson(path.join(this.folder, `${MANIFEST}.tmp`), {
             consultationId: input.consultationId,
             hn: input.hn,
             room: input.room,
@@ -259,7 +347,7 @@ export class EvidenceRecording {
             staffVisits: input.staffVisits,
             gaps: input.timeline.flatMap(e => e.type === 'gap' ? [ { end: e.end, start: e.start } ] : [])
         });
-        await rm(this.raw, { force: true, recursive: true });
+        await rename(path.join(this.folder, `${MANIFEST}.tmp`), path.join(this.folder, MANIFEST));
     }
 
     /**

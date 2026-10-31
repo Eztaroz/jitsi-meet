@@ -78,7 +78,19 @@ export const config = {
          * (RECORDER_BOT_MAX_RELAUNCHES=0), and its docker container. Same bearer secret.
          */
         fragileApiUrl: process.env.RECORDER_BOT_FRAGILE_API_URL?.trim()?.replace(/\/+$/, ''),
-        fragileContainer: process.env.RECORDER_BOT_FRAGILE_CONTAINER?.trim()
+        fragileContainer: process.env.RECORDER_BOT_FRAGILE_CONTAINER?.trim(),
+        /**
+         * An instance of the service whose storage root the storage tests take away and give back: its control API
+         * (same bearer secret), its storage root and its spool as this machine sees them, its docker container, and
+         * how often it retries spooled evidence recordings, in seconds.
+         */
+        outage: {
+            apiUrl: process.env.RECORDER_BOT_OUTAGE_API_URL?.trim()?.replace(/\/+$/, ''),
+            container: process.env.RECORDER_BOT_OUTAGE_CONTAINER?.trim(),
+            retrySeconds: Number(process.env.RECORDER_BOT_OUTAGE_STORE_RETRY_SECONDS?.trim() || '0'),
+            spool: process.env.RECORDER_BOT_OUTAGE_SPOOL?.trim(),
+            storageRoot: process.env.RECORDER_BOT_OUTAGE_STORAGE_ROOT?.trim()
+        }
     },
     roomName: {
         /** Optional fixed room name that overrides the generated one entirely. */

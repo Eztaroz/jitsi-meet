@@ -60,6 +60,12 @@ export interface IConfig {
 
     /** The evidence storage root: where finalised evidence recordings are kept. */
     storageRoot: string;
+
+    /**
+     * How often the service retries moving the evidence recordings left in the spool into the storage root, in
+     * milliseconds.
+     */
+    storeRetryMs: number;
 }
 
 /**
@@ -140,6 +146,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
             staff: parseRoleMarker(env.RECORDER_BOT_STAFF_MARKER, 'RECORDER_BOT_STAFF_MARKER')
         },
         spoolDir: required(env, 'RECORDER_BOT_SPOOL_DIR'),
-        storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT')
+        storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT'),
+        storeRetryMs: integer(env, 'RECORDER_BOT_STORE_RETRY_SECONDS', 60) * 1000
     };
 }

@@ -8,6 +8,7 @@ A Jitsi deployment on one machine, for testing the recorder bot. It runs docker-
 | Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret` |
 | A second recorder bot service, limited to one consultation at a time, for the capacity tests | http://localhost:8091, same secret |
 | A third recorder bot service, which never relaunches a crashed bot, for the relaunch tests | http://localhost:8092, same secret |
+| A fourth recorder bot service, whose storage root the storage tests take away and give back, and which retries every 2 seconds | http://localhost:8093, same secret |
 | Videobridge media | UDP 10000, advertised as 127.0.0.1 |
 
 The recorder bot service uses the host network, so that it reaches the web server on `localhost` and the videobridge on its advertised address, the way browsers on this machine do.
@@ -34,11 +35,11 @@ docker compose up -d
 
 `.env` holds the deployment's settings, including a 10-second empty-room grace and a 20-second first-join wait so that the tests do not wait long; `expectations.json` tells the tests those values. The containers write their generated configuration to `config/`. After a web rebuild, reload the page; after a change to the service, rebuild its image and run `docker compose up -d recorder-bot`.
 
-The service stores evidence recordings in `evidence/`, its evidence storage root, and keeps its spool in `spool/`. It runs as root here so that it can write to both; delete what it wrote with `sudo` if you are not root.
+The services store evidence recordings in `evidence/`, their evidence storage root, and each keeps its spool in its own folder of `spool/`. The fourth service's storage root is `outage/evidence`, which is not there until the storage tests create it; they keep what earlier runs stored there in `outage/evidence-<time>`. The services run as root here so that they can write to these folders; delete what they wrote with `sudo` if you are not root.
 
 ## Running the end-to-end tests
 
-The WebdriverIO suite's `specs/recorderBot` tests run against this deployment. `tests.env` points the suite at it, sets the `recorderBot.available` expectation through `expectations.json`, gives the evidence tests the storage root, and names the containers in which the relaunch tests kill bots' browsers. The evidence tests play the stored files with `ffmpeg` and `ffprobe`, and the relaunch tests run `docker`; they must be on `PATH`. From `tests/`:
+The WebdriverIO suite's `specs/recorderBot` tests run against this deployment. `tests.env` points the suite at it, sets the `recorderBot.available` expectation through `expectations.json`, gives the evidence tests the storage root, and names the containers in which the relaunch tests kill bots' browsers and the storage tests restart the fourth service. The evidence tests play the stored files with `ffmpeg` and `ffprobe`, and the relaunch and storage tests run `docker`; they must be on `PATH`. From `tests/`:
 
 ```bash
 set -a; . ../recorder-bot/test-deployment/tests.env; set +a

@@ -177,7 +177,7 @@ The prototype measured, on a shared 4-vCPU host without GPU:
 
 A consultation with a patient and one staff member records two video tracks, so it needs about two cores. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly.
 
-Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress; the storage root needs it times the consultations per day times the retention period.
+Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
 
 ### Crashes
 
@@ -198,6 +198,7 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_JITSI_URL` | required | The Jitsi web server, `https://meet.example.org` |
 | `RECORDER_BOT_STORAGE_ROOT` | required | The evidence storage root: the directory evidence recordings are moved to, for example the mount point of the hospital's file storage. The service never creates it |
 | `RECORDER_BOT_SPOOL_DIR` | `/var/lib/recorder-bot/spool` in the image | Local storage where consultations are recorded and finalised. Keep it on a persistent volume with room for the consultations in progress |
+| `RECORDER_BOT_STORE_RETRY_SECONDS` | `60` | How often the service retries moving the evidence recordings left in the spool into the storage root. See [When the storage root is unavailable](#when-the-storage-root-is-unavailable) |
 | `RECORDER_BOT_MAX_CONSULTATIONS` | `2` | How many consultations the service records at once. See [Capacity](#capacity) |
 | `RECORDER_BOT_MAX_RELAUNCHES` | `3` | How many times a consultation's bot may be relaunched after a crash or a lost connection; `0` never relaunches it. See [Crashes](#crashes) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
@@ -230,7 +231,7 @@ A consultation's `status` goes:
 4. `finalising` once it has stopped, while the evidence recording is prepared;
 5. a final status:
    - `stored`: the evidence recording is in the storage root, at `evidenceLocation`, which is relative to the storage root;
-   - `spooled`: it could not be moved to the storage root, and stays in the spool; `error` says why;
+   - `spooled`: it could not be moved to the storage root, and stays in the spool; `error` says why. The service retries the move, and once it succeeds the status becomes `stored`, or `failed` when the bot had failed, with `evidenceLocation` (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable));
    - `failed`: the bot could not be relaunched, or the finalisation failed; `error` says why. When the bot failed, what it recorded is still stored, at `evidenceLocation`.
 
 `stopReason` says why it stopped:
@@ -277,7 +278,19 @@ The folder holds:
 | `staffVisits` | Each staff visit, from a staff member's join to their leave: `identity`, `displayName`, `endpointId`, `start` and `end`. A visit still open at the stop ends then |
 | `gaps` | Each stretch the bot did not record, from a crash or lost connection (`start`) until the relaunched bot was back, or the consultation stopped (`end`) |
 
-While a consultation runs, each track is written to the spool in one-second chunks. Once it stops, the service closes every recorder, remuxes each file with a stream copy so that it has a duration and is seekable, writes `timeline.json` and `manifest.json`, then moves the folder into the storage root. On the same filesystem the move is a rename. Otherwise the folder is copied into `<storage root>/.incoming/` first and then renamed into place, so a consultation folder in the storage root is always complete. Leave `.incoming` alone.
+While a consultation runs, each track is written to the spool in one-second chunks. Once it stops, the service closes every recorder, remuxes each file with a stream copy so that it has a duration and is seekable, writes `timeline.json` and, last, `manifest.json`, then moves the folder into the storage root. On the same filesystem the move is a rename. Otherwise the folder is copied into `<storage root>/.incoming/` first and then renamed into place, so a consultation folder in the storage root is always complete. Leave `.incoming` alone.
+
+### When the storage root is unavailable
+
+When the storage root is unavailable as a consultation ends, for example because its share is not mounted or the file server is down, the finalised folder stays in the spool and the consultation is `spooled`, with `error` `store_failed: <code>`. The service retries every spooled folder when it starts and then every `RECORDER_BOT_STORE_RETRY_SECONDS`. Once the move succeeds, the consultation is `stored` and `evidenceLocation` says where the evidence recording is.
+
+A failed attempt leaves nothing in the storage root: its partial copy in `.incoming` is removed, and so is the patient's folder when the attempt created it. The service never creates the storage root itself, so that evidence never lands on the local disk under a share that is not mounted. Keep the spool on a persistent volume with room for the evidence recordings of the longest outage of the storage root you expect.
+
+The logs name each spooled evidence recording by its consultation id: `could not move a spooled evidence recording to the storage root; will retry` at each failed attempt, with the error code, and `spooled evidence recording stored` once it is moved.
+
+After a restart, the control API no longer knows earlier consultations; their spooled evidence recordings are still retried, and logged by consultation id. A folder in the spool without `manifest.json` was never finalised: the service stopped while that consultation ran, or could not finalise it. The service leaves it there and logs `an evidence recording in the spool was never finalised` once after each start; the recorded media is in its `raw/` folder.
+
+### Logs
 
 The service's logs are JSON lines on standard output. They carry the consultation id and no patient data; lib-jitsi-meet's own logs, which name the room, are kept out.
 
