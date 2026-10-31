@@ -14,7 +14,7 @@ const config = loadConfig();
 mkdirSync(config.spoolDir, { recursive: true });
 
 const consultations = new Consultations(config);
-const api = createApi({ consultations, secret: config.apiSecret });
+const api = createApi({ consultations, maxConsultations: config.maxConsultations, secret: config.apiSecret });
 
 api.listen(config.apiPort, () => log.info('control API listening', { port: config.apiPort }));
 

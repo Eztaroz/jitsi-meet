@@ -56,10 +56,11 @@ export function evidenceUnavailableReason(): string | undefined {
  *
  * @param {string} route - The path, starting with "/".
  * @param {RequestInit} init - Request options.
+ * @param {string} apiUrl - Which instance of the service; the main one by default.
  * @returns {Promise<Response>}
  */
-function callApi(route: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(`${config.recorderBot.apiUrl}${route}`, {
+function callApi(route: string, init: RequestInit = {}, apiUrl = config.recorderBot.apiUrl): Promise<Response> {
+    return fetch(`${apiUrl}${route}`, {
         ...init,
         headers: {
             'Authorization': `Bearer ${config.recorderBot.apiSecret}`,
@@ -69,32 +70,63 @@ function callApi(route: string, init: RequestInit = {}): Promise<Response> {
 }
 
 /**
- * Asks the service to record the consultation of a patient.
+ * Asks the service to record the consultation of a patient, and returns its answer whatever it is.
  *
  * @param {string} hn - The patient's HN.
- * @returns {Promise<IConsultation>}
+ * @param {string} apiUrl - Which instance of the service; the main one by default.
+ * @returns {Promise<Object>} The HTTP status and the body.
  */
-export async function startConsultation(hn: string): Promise<IConsultation> {
+export async function postConsultation(hn: string, apiUrl?: string): Promise<{ body: IConsultation; status: number; }> {
     const response = await callApi('/consultations', {
         body: JSON.stringify({ hn }),
         method: 'POST'
-    });
+    }, apiUrl);
 
-    if (!response.ok) {
-        throw new Error(`POST /consultations failed with ${response.status}`);
+    return { body: await response.json() as IConsultation, status: response.status };
+}
+
+/**
+ * Asks the service to record the consultation of a patient.
+ *
+ * @param {string} hn - The patient's HN.
+ * @param {string} apiUrl - Which instance of the service; the main one by default.
+ * @returns {Promise<IConsultation>}
+ */
+export async function startConsultation(hn: string, apiUrl?: string): Promise<IConsultation> {
+    const { body, status } = await postConsultation(hn, apiUrl);
+
+    if (status !== 200 && status !== 201) {
+        throw new Error(`POST /consultations failed with ${status}`);
     }
 
-    return await response.json() as IConsultation;
+    return body;
+}
+
+/**
+ * Reads the service's health.
+ *
+ * @param {string} apiUrl - Which instance of the service; the main one by default.
+ * @returns {Promise<Object>}
+ */
+export async function getHealth(apiUrl?: string): Promise<{ activeConsultations: number; maxConsultations: number; }> {
+    const response = await callApi('/health', {}, apiUrl);
+
+    if (!response.ok) {
+        throw new Error(`GET /health failed with ${response.status}`);
+    }
+
+    return await response.json() as { activeConsultations: number; maxConsultations: number; };
 }
 
 /**
  * Reads a consultation.
  *
  * @param {string} consultationId - The consultation.
+ * @param {string} apiUrl - Which instance of the service; the main one by default.
  * @returns {Promise<IConsultation>}
  */
-export async function getConsultation(consultationId: string): Promise<IConsultation> {
-    const response = await callApi(`/consultations/${consultationId}`);
+export async function getConsultation(consultationId: string, apiUrl?: string): Promise<IConsultation> {
+    const response = await callApi(`/consultations/${consultationId}`, {}, apiUrl);
 
     if (!response.ok) {
         throw new Error(`GET /consultations/${consultationId} failed with ${response.status}`);

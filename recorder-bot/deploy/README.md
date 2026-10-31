@@ -144,6 +144,17 @@ The service's network must reach:
 
 Run one service per deployment. Each consultation runs in its own browser process, so a crash stays with one consultation.
 
+### Capacity
+
+The prototype measured, on a shared 4-vCPU host without GPU:
+
+- about one CPU core per recorded 720p video track, since the bot re-encodes each one;
+- about 0.4 GB of RAM per pair of participants recorded.
+
+A consultation with a patient and one staff member records two video tracks, so it needs about two cores. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly.
+
+Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress; the storage root needs it times the consultations per day times the retention period.
+
 ### Settings
 
 | Variable | Default | What |
@@ -155,6 +166,7 @@ Run one service per deployment. Each consultation runs in its own browser proces
 | `RECORDER_BOT_JITSI_URL` | required | The Jitsi web server, `https://meet.example.org` |
 | `RECORDER_BOT_STORAGE_ROOT` | required | The evidence storage root: the directory evidence recordings are moved to, for example the mount point of the hospital's file storage. The service never creates it |
 | `RECORDER_BOT_SPOOL_DIR` | `/var/lib/recorder-bot/spool` in the image | Local storage where consultations are recorded and finalised. Keep it on a persistent volume with room for the consultations in progress |
+| `RECORDER_BOT_MAX_CONSULTATIONS` | `2` | How many consultations the service records at once. See [Capacity](#capacity) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
 | `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join |
 | `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
@@ -167,9 +179,11 @@ Every request needs the bearer secret; without it the service answers `401`.
 
 | Request | Answer |
 |---|---|
-| `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` |
+| `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` for a new consultation; `200` and the same for the consultation already running in that HN's room; `503` when the service is at its limit |
 | `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, and once stored `evidenceLocation` |
-| `GET /health` | `200` and `{ "status": "ok", "activeConsultations" }` |
+| `GET /health` | `200` and `{ "status": "ok", "activeConsultations", "maxConsultations" }`, where `activeConsultations` counts the consultations that have not stopped |
+
+The room-creation system can repeat a `POST` safely, for example after a timeout: while a consultation runs in the HN's room, every `POST` for that HN returns it, and no second bot joins. Once it has stopped, the next `POST` starts a new consultation. A `503` means the consultation is not being recorded; the room-creation system must retry or alert someone, never carry on silently.
 
 The consultation id is an opaque UUID. The service's logs name consultations by this id, never by HN. The room name is the HN normalised as jitsi-meet normalises a URL room name: NFKC, lower-case, URL-encoded, lower-case again.
 

@@ -6,6 +6,7 @@ A Jitsi deployment on one machine, for testing the recorder bot. It runs docker-
 |---|---|
 | Jitsi web | https://localhost:8443 |
 | Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret` |
+| A second recorder bot service, limited to one consultation at a time, for the capacity tests | http://localhost:8091, same secret |
 | Videobridge media | UDP 10000, advertised as 127.0.0.1 |
 
 The recorder bot service uses the host network, so that it reaches the web server on `localhost` and the videobridge on its advertised address, the way browsers on this machine do.

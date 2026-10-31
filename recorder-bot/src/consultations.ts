@@ -3,6 +3,11 @@
  */
 import type { IConfig } from './config.ts';
 import { Consultation } from './consultation.ts';
+import { log } from './log.ts';
+import { roomNameFromHn } from './roomName.ts';
+
+/** The service already runs as many consultations as it may. */
+export class AtCapacityError extends Error {}
 
 export class Consultations {
     private readonly config: IConfig;
@@ -18,18 +23,34 @@ export class Consultations {
     }
 
     /**
-     * Starts recording a consultation for an HN.
+     * Starts recording a consultation for an HN, unless one is already running in that HN's room: then that one is
+     * returned, so that a request can safely be repeated.
      *
      * @param {string} hn - The patient's HN.
-     * @returns {Consultation}
+     * @returns {Object} The consultation, and whether it was started by this call.
+     * @throws {AtCapacityError} When the service already runs as many consultations as it may.
      */
-    start(hn: string): Consultation {
+    start(hn: string): { consultation: Consultation; created: boolean; } {
+        const room = roomNameFromHn(hn);
+        const running = this.running();
+        const existing = running.find(c => c.room === room);
+
+        if (existing) {
+            log.info('consultation already running', { consultationId: existing.id });
+
+            return { consultation: existing, created: false };
+        }
+        if (running.length >= this.config.maxConsultations) {
+            log.warn('at capacity; consultation refused', { maxConsultations: this.config.maxConsultations });
+            throw new AtCapacityError('at capacity');
+        }
+
         const consultation = new Consultation(hn, this.config);
 
         this.byId.set(consultation.id, consultation);
         consultation.start();
 
-        return consultation;
+        return { consultation, created: true };
     }
 
     /**
@@ -40,6 +61,15 @@ export class Consultations {
      */
     get(id: string): Consultation | undefined {
         return this.byId.get(id);
+    }
+
+    /**
+     * Returns the consultations that have not stopped yet. They count against the limit.
+     *
+     * @returns {Consultation[]}
+     */
+    running(): Consultation[] {
+        return [ ...this.byId.values() ].filter(c => c.isRunning());
     }
 
     /**

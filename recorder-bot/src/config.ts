@@ -32,6 +32,9 @@ export interface IConfig {
     /** The base URL of the Jitsi web server. The bot page is served from it. */
     jitsiUrl: string;
 
+    /** How many consultations the service records at once. It refuses more. */
+    maxConsultations: number;
+
     /** The highest video resolution the bot asks for. */
     maxHeight: number;
 
@@ -114,6 +117,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         firstJoinWaitMs: positiveInteger(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', 600) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
+        maxConsultations: positiveInteger(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),
         maxHeight: positiveInteger(env, 'RECORDER_BOT_MAX_HEIGHT', 720),
         spoolDir: required(env, 'RECORDER_BOT_SPOOL_DIR'),
         storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT')

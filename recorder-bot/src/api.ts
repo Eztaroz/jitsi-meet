@@ -6,7 +6,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
-import type { Consultations } from './consultations.ts';
+import { AtCapacityError, type Consultations } from './consultations.ts';
 import { log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
 
@@ -111,7 +111,11 @@ function hnFrom(body: unknown): string {
  * @param {string} options.secret - The shared bearer secret.
  * @returns {Server}
  */
-export function createApi({ consultations, secret }: { consultations: Consultations; secret: string; }): Server {
+export function createApi({ consultations, maxConsultations, secret }: {
+    consultations: Consultations;
+    maxConsultations: number;
+    secret: string;
+}): Server {
     /**
      * Handles one request.
      *
@@ -130,15 +134,30 @@ export function createApi({ consultations, secret }: { consultations: Consultati
         const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
         if (pathname === '/health' && req.method === 'GET') {
-            send(res, 200, { activeConsultations: consultations.active().length, status: 'ok' });
+            send(res, 200, {
+                activeConsultations: consultations.running().length,
+                maxConsultations,
+                status: 'ok'
+            });
 
             return;
         }
         if (pathname === '/consultations' && req.method === 'POST') {
-            const consultation = consultations.start(hnFrom(await readJson(req)));
-            const { consultationId, status } = consultation.snapshot();
+            const hn = hnFrom(await readJson(req));
+            let started;
 
-            send(res, 201, { consultationId, status });
+            try {
+                started = consultations.start(hn);
+            } catch (error) {
+                if (error instanceof AtCapacityError) {
+                    throw new HttpError(503, 'the recorder bot service is recording as many consultations as it may');
+                }
+                throw error;
+            }
+
+            const { consultationId, status } = started.consultation.snapshot();
+
+            send(res, started.created ? 201 : 200, { consultationId, status });
 
             return;
         }

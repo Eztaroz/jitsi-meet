@@ -46,6 +46,7 @@ export interface IConsultationSnapshot {
 type EventInput = LifecycleEvent extends infer E ? E extends LifecycleEvent ? Omit<E, 'at'> : never : never;
 
 const TERMINAL: ReadonlySet<ConsultationStatus> = new Set([ 'stored', 'spooled', 'failed' ]);
+const RUNNING: ReadonlySet<ConsultationStatus> = new Set([ 'starting', 'waiting_for_participants', 'recording' ]);
 
 /**
  * A consultation, from the request to record it until its evidence is handled.
@@ -112,6 +113,15 @@ export class Consultation {
      */
     isActive(): boolean {
         return !TERMINAL.has(this.status);
+    }
+
+    /**
+     * Whether the consultation has not stopped yet: its bot is starting or in the room.
+     *
+     * @returns {boolean}
+     */
+    isRunning(): boolean {
+        return RUNNING.has(this.status);
     }
 
     /**

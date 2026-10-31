@@ -61,6 +61,11 @@ export const config = {
         apiSecret: process.env.RECORDER_BOT_API_SECRET?.trim(),
         /** The recorder bot service's control API, e.g. http://localhost:8090. */
         apiUrl: process.env.RECORDER_BOT_API_URL?.trim()?.replace(/\/+$/, ''),
+        /**
+         * The control API of a second instance of the service, configured to record at most one consultation at a
+         * time, for the capacity tests. Same bearer secret.
+         */
+        limitedApiUrl: process.env.RECORDER_BOT_LIMITED_API_URL?.trim()?.replace(/\/+$/, ''),
         /** The service's evidence storage root as this machine sees it, absolute or relative to tests/. */
         storageRoot: process.env.RECORDER_BOT_STORAGE_ROOT?.trim()
     },
