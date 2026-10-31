@@ -7,6 +7,9 @@ tests/prosody/allure-results/*
 
 doc/*
 
+# Configuration the recorder bot's test deployment generates at start-up.
+recorder-bot/test-deployment/config/*
+
 # Third-party source code which we (1) do not want to modify or (2) try to
 # modify as little as possible.
 libs/*

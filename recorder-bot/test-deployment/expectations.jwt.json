@@ -1,0 +1,13 @@
+{
+    "recorderBot": {
+        // The JWT variant of the test deployment (docker-compose.jwt.yml) runs the recorder bot service.
+        "available": true,
+        // Short timers, so that the tests do not wait long. They must match .env.
+        "emptyRoomGraceSeconds": 10,
+        "firstJoinWaitSeconds": 20,
+        // The role markers in .env.
+        "patientClaims": { "hospital_role": "patient" },
+        "staffClaims": { "hospital_role": "staff" },
+        "verifiedIdentities": true
+    }
+}

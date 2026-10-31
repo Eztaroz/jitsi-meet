@@ -1,0 +1,58 @@
+# The recorder bot service, as an addition to a docker-jitsi-meet deployment. Copy this file next to that deployment's
+# docker-compose.yml and start both:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.recorder-bot.yml up -d
+#
+# Build the image first from this fork (recorder-bot/README.md):
+#
+#   docker build -t recorder-bot:<version> recorder-bot/
+#
+# Every setting is described in recorder-bot/deploy/README.md. Put the secrets in the deployment's .env, never in this
+# file.
+services:
+    recorder-bot:
+        image: ${RECORDER_BOT_IMAGE:-recorder-bot:latest}
+        restart: unless-stopped
+        # As Playwright recommends for Chromium in a container.
+        init: true
+        ipc: host
+        # Time to finalise the consultations in progress when stopped (README.md, Running it).
+        stop_grace_period: 1m
+        # Only the hospital's room-creation system should reach the control API. Bind it to an internal address.
+        ports:
+            - '${RECORDER_BOT_API_BIND:-127.0.0.1}:${RECORDER_BOT_API_PORT:-8090}:${RECORDER_BOT_API_PORT:-8090}'
+        volumes:
+            # The evidence storage root, at the same path inside the container. The service runs as uid 1001, which
+            # must be able to write to it. The host's mounts propagate, so that the service sees the storage root's
+            # share once it is mounted, even after the service started.
+            - type: bind
+              source: '${RECORDER_BOT_STORAGE_ROOT:?set RECORDER_BOT_STORAGE_ROOT to the evidence storage root}'
+              target: '${RECORDER_BOT_STORAGE_ROOT}'
+              bind:
+                  propagation: rslave
+            # The spool must outlive the container: it holds the consultations in progress, and evidence recordings
+            # that could not be moved to the storage root yet.
+            - recorder-bot-spool:/var/lib/recorder-bot/spool
+        environment:
+            - RECORDER_BOT_API_PORT=${RECORDER_BOT_API_PORT:-8090}
+            - RECORDER_BOT_API_SECRET
+            - RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS
+            - RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS
+            - RECORDER_BOT_JID=${JIBRI_RECORDER_USER}@${XMPP_HIDDEN_DOMAIN}
+            - RECORDER_BOT_PASSWORD=${JIBRI_RECORDER_PASSWORD}
+            - RECORDER_BOT_JITSI_URL=${PUBLIC_URL}
+            - RECORDER_BOT_MAX_CONSULTATIONS
+            - RECORDER_BOT_MAX_HEIGHT
+            - RECORDER_BOT_MAX_RELAUNCHES
+            - RECORDER_BOT_PATIENT_MARKER
+            - RECORDER_BOT_RETENTION_DAYS
+            - RECORDER_BOT_RETENTION_SWEEP_SECONDS
+            - RECORDER_BOT_STAFF_MARKER
+            - RECORDER_BOT_STORAGE_ROOT
+            - RECORDER_BOT_STORE_RETRY_SECONDS
+            - TZ
+        depends_on:
+            - web
+
+volumes:
+    recorder-bot-spool:

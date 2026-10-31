@@ -1,0 +1,43 @@
+# Recorder bot
+
+The recorder bot records every telemedicine consultation as an evidence recording. See the spec in issue #2 and the decisions in `docs/adr/0001` to `0005`.
+
+This is a standalone package, like `tests/`. It has its own dependencies, runs on Node, and nothing in it goes into the web bundle.
+
+## Layout
+
+| Path | What |
+|---|---|
+| `src/main.ts` | The service's entry point: the control API, the spool retrier and the retention sweeper, and shutdown on `SIGTERM`. |
+| `src/api.ts` | The control API (`POST /consultations`, `GET /consultations/{id}`, `GET /health`), behind a bearer secret. |
+| `src/consultations.ts`, `src/consultation.ts` | The running consultations. Each one feeds the bot's events to its lifecycle module, collects the timeline entries the module returns, carries out its commands, and relaunches a bot that crashed or lost its connection. |
+| `src/consultationLifecycle.ts` | The consultation lifecycle module. It is pure: it takes timestamped events and returns timeline entries and commands (start a timer, cancel a timer, stop). It owns the stop rule and decides the timeline entries, and derives the participants, tracks, verified identities, staff visits and gaps. |
+| `src/evidence.ts` | The evidence recording on disk: track files in the spool while the consultation runs, then the remux, `timeline.json`, `manifest.json` and the move into the evidence storage root. |
+| `src/spool.ts` | Retries moving the evidence recordings left in the spool, while the storage root was unavailable, into the storage root: at start-up and then periodically. |
+| `src/retention.ts` | The retention sweeper: deletes evidence recordings older than the retention period, and stale spool folders. |
+| `src/periodic.ts` | Runs the spool retrier and the retention sweeper at start-up and then periodically. |
+| `src/identity.ts` | A participant's verified identity and role, from the identity Prosody puts in its presence and the role markers. |
+| `src/bot.ts` | Runs the bot page in its own headless Chromium, one browser per consultation, and passes on its events and recorded chunks. |
+| `src/roomName.ts` | The room name for an HN, normalised as jitsi-meet normalises a URL room name. |
+| `src/config.ts`, `src/log.ts` | Settings from the environment, and the JSON-lines logger. |
+| `../static/recorder-bot.html`, `../static/recorder-bot.js` | The bot page. The deployment's web server serves it with the rest of the web build; it joins with the deployed lib-jitsi-meet, records each remote track with its own `MediaRecorder`, and reports what happens to the service. |
+| `Dockerfile` | The service's container image. |
+| `deploy/` | The operator guide, the nginx snippet for HNs with `/`, and a compose file for docker-jitsi-meet deployments. |
+| `test-deployment/` | A local deployment of this fork with the service, for the WebdriverIO suite's `specs/recorderBot` tests. |
+| `test/` | Unit tests, run with Node's built-in test runner and its mock timers. |
+
+## Commands
+
+Run these from this directory after `npm install`:
+
+```bash
+npm test
+```
+
+```bash
+npm run typecheck
+```
+
+Start the service with `npm start`; `deploy/README.md` lists its settings. It needs `ffmpeg` and `ffprobe` on `PATH`; the image has them.
+
+The TypeScript sources run directly on Node 22.18 or later, which strips types without a build step. That is why imports name `.ts` files and the sources use only erasable syntax: no `enum`, no `namespace`, no parameter properties.

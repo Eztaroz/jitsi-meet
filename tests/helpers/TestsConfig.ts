@@ -56,6 +56,45 @@ export const config = {
         })(),
         privateKeyPath: process.env.JWT_PRIVATE_KEY_PATH?.trim()
     },
+    recorderBot: {
+        /** The bearer secret of the recorder bot service's control API. */
+        apiSecret: process.env.RECORDER_BOT_API_SECRET?.trim(),
+        /** The recorder bot service's control API, e.g. http://localhost:8090. */
+        apiUrl: process.env.RECORDER_BOT_API_URL?.trim()?.replace(/\/+$/, ''),
+        /**
+         * The control API of a second instance of the service, configured to record at most one consultation at a
+         * time, for the capacity tests. Same bearer secret.
+         */
+        limitedApiUrl: process.env.RECORDER_BOT_LIMITED_API_URL?.trim()?.replace(/\/+$/, ''),
+        /** The service's evidence storage root as this machine sees it, absolute or relative to tests/. */
+        storageRoot: process.env.RECORDER_BOT_STORAGE_ROOT?.trim(),
+        /**
+         * The docker container the main instance of the service runs in, so that the relaunch tests can kill a
+         * bot's browser.
+         */
+        container: process.env.RECORDER_BOT_CONTAINER?.trim(),
+        /**
+         * The control API of an instance of the service configured never to relaunch a crashed bot
+         * (RECORDER_BOT_MAX_RELAUNCHES=0), and its docker container. Same bearer secret.
+         */
+        fragileApiUrl: process.env.RECORDER_BOT_FRAGILE_API_URL?.trim()?.replace(/\/+$/, ''),
+        fragileContainer: process.env.RECORDER_BOT_FRAGILE_CONTAINER?.trim(),
+        /**
+         * An instance of the service with a storage root of its own, which the storage tests take away and give back
+         * and the retention tests seed: its control API (same bearer secret), its storage root and its spool as this
+         * machine sees them, its docker container, how often it retries spooled evidence recordings and sweeps, in
+         * seconds, and its retention period, in days.
+         */
+        isolated: {
+            apiUrl: process.env.RECORDER_BOT_ISOLATED_API_URL?.trim()?.replace(/\/+$/, ''),
+            container: process.env.RECORDER_BOT_ISOLATED_CONTAINER?.trim(),
+            retentionDays: Number(process.env.RECORDER_BOT_ISOLATED_RETENTION_DAYS?.trim() || '0'),
+            retrySeconds: Number(process.env.RECORDER_BOT_ISOLATED_STORE_RETRY_SECONDS?.trim() || '0'),
+            sweepSeconds: Number(process.env.RECORDER_BOT_ISOLATED_RETENTION_SWEEP_SECONDS?.trim() || '0'),
+            spool: process.env.RECORDER_BOT_ISOLATED_SPOOL?.trim(),
+            storageRoot: process.env.RECORDER_BOT_ISOLATED_STORAGE_ROOT?.trim()
+        }
+    },
     roomName: {
         /** Optional fixed room name that overrides the generated one entirely. */
         name: process.env.ROOM_NAME?.trim(),
