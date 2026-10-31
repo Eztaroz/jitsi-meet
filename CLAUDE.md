@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language
+
+- **Work in English.** Everything written into the repo or posted publicly is in English: code, identifiers, code comments, commit messages, branch names, PR titles and bodies, GitHub issues and comments, docs, and prompts to subagents.
+- **Talk to the user in Thai.** Replies, progress reports, summaries, plans and questions (including `AskUserQuestion` prompts and options) are in Thai.
+- In Thai replies, keep code, file paths, commands, identifiers, config keys and quoted errors or logs exactly as they are; do not translate them.
+- Exception: translation files under `lang/` (such as a Thai `lang/main-th.json`) hold Thai text by design.
+
 ## Development Commands
 
 ### Building and Development
@@ -265,3 +272,17 @@ react/features/sample/
 - [Community Forum](https://community.jitsi.org/) - Ask questions and get support
 - [Architecture Guide](https://jitsi.github.io/handbook/docs/architecture) - System overview
 - [Contributing Guidelines](https://jitsi.github.io/handbook/docs/dev-guide/dev-guide-contributing/) - Detailed contribution process
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `Eztaroz/jitsi-meet` (this fork, never upstream `jitsi/jitsi-meet`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
