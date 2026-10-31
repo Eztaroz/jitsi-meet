@@ -8,10 +8,12 @@ import { joinMuc } from '../../helpers/joinMuc';
 import {
     type IManifest,
     type ITimelineEntry,
+    STORAGE_ROOT_MARKER,
     docker,
     evidencePath,
     findEvidence,
     getConsultation,
+    makeStorageRoot,
     patientLinkRoom,
     playMedia,
     readEvidenceJson,
@@ -25,15 +27,17 @@ import {
 
 setTestProperties(__filename, {
     description: 'While the evidence storage root is unavailable, a consultation\'s evidence recording stays in the \
-spool and the consultation is spooled. The service retries the move until it succeeds, and the consultation is then \
-stored, with the whole evidence recording in the storage root. A failed attempt leaves nothing in the storage root. \
-Evidence recordings spooled before the service restarts are retried after it. Skipped unless the \
-recorderBot.available expectation and the RECORDER_BOT_OUTAGE_* variables are set.',
+spool and the consultation is spooled. A folder not marked as the storage root, as an unmounted mount point is, is \
+unavailable too, and the service writes nothing there; so is a storage root it cannot write to. The service retries \
+the move until it succeeds, and the \
+consultation is then stored, with the whole evidence recording in the storage root. A failed attempt leaves nothing \
+in the storage root. Evidence recordings spooled before the service restarts are retried after it. Skipped unless the \
+recorderBot.available expectation and the RECORDER_BOT_ISOLATED_* variables are set.',
     usesBrowsers: [ 'p1' ]
 });
 
-describe('Recorder bot: storage outages', () => {
-    const { apiUrl, container = '', retrySeconds, spool = '', storageRoot: root = '' } = config.recorderBot.outage;
+describe('Recorder bot: unavailable storage root', () => {
+    const { apiUrl, container = '', retrySeconds, spool = '', storageRoot: root = '' } = config.recorderBot.isolated;
     const retryMs = retrySeconds * 1000;
     let patient: Participant;
     let consultationId: string;
@@ -50,7 +54,7 @@ describe('Recorder bot: storage outages', () => {
     }
 
     /**
-     * Records a short consultation on the outage instance, and ends it.
+     * Records a short consultation on the isolated instance, and ends it.
      *
      * @param {string} label - Distinguishes its HN.
      * @returns {Promise<string>} The consultation id.
@@ -67,6 +71,28 @@ describe('Recorder bot: storage outages', () => {
         await patient.getToolbar().clickEndMeetingForAllButton();
 
         return id;
+    }
+
+    /**
+     * Returns the errors the service logged as it failed to move a spooled evidence recording to the storage root.
+     *
+     * @param {string} id - Its consultation.
+     * @param {Date} since - From when.
+     * @returns {string[]}
+     */
+    function retryErrors(id: string, since: Date): string[] {
+        return docker('logs', '--since', since.toISOString(), container)
+            .split('\n')
+            .flatMap(line => {
+                try {
+                    return [ JSON.parse(line) as Record<string, string> ];
+                } catch {
+                    return [];
+                }
+            })
+            .filter(l => l.consultationId === id
+                && l.message === 'could not move a spooled evidence recording to the storage root; will retry')
+            .map(l => l.error);
     }
 
     /**
@@ -112,7 +138,7 @@ describe('Recorder bot: storage outages', () => {
     });
 
     it('while the storage root is unavailable, the evidence recording stays in the spool', async () => {
-        consultationId = await recordConsultation('OUTAGE');
+        consultationId = await recordConsultation('UNAVAILABLE');
 
         const consultation = await waitForFinalStatus(consultationId, { apiUrl });
 
@@ -122,15 +148,40 @@ describe('Recorder bot: storage outages', () => {
         expect(fs.existsSync(path.join(spool, consultationId, 'manifest.json'))).toBe(true);
     });
 
-    it('a failed attempt to store it leaves nothing in the storage root', async () => {
-        // The storage root is back, but a file stands where the move stages its copy: the spool and the storage
-        // root are on different mounts, so every attempt fails after it has created the patient's folder.
+    it('the service writes nothing to a folder not marked as the storage root', async () => {
+        // The folder is there, as a mount point is while its share is not mounted, but it has no marker.
         fs.mkdirSync(root);
+        await patient.driver.pause(3 * retryMs);
+
+        expect((await getConsultation(consultationId, apiUrl)).status).toBe('spooled');
+        expect(fs.readdirSync(root)).toEqual([]);
+        expect(fs.existsSync(path.join(spool, consultationId, 'manifest.json'))).toBe(true);
+    });
+
+    it('the service stores nothing in a storage root it cannot write to', async () => {
+        // The service's instance runs as root, but without the capability to override file permissions.
+        makeStorageRoot(root);
+        fs.chmodSync(root, 0o555);
+
+        const since = new Date();
+
+        await patient.driver.pause(3 * retryMs);
+
+        expect((await getConsultation(consultationId, apiUrl)).status).toBe('spooled');
+        expect(fs.readdirSync(root)).toEqual([ STORAGE_ROOT_MARKER ]);
+        expect(retryErrors(consultationId, since)).toContain('EACCES');
+        expect(fs.existsSync(path.join(spool, consultationId, 'manifest.json'))).toBe(true);
+    });
+
+    it('a failed attempt to store it leaves nothing in the storage root', async () => {
+        // The storage root is writable again, but a file stands where the move stages its copy: the spool and the
+        // storage root are on different mounts, so every attempt fails after it has created the patient's folder.
+        fs.chmodSync(root, 0o755);
         fs.writeFileSync(path.join(root, '.incoming'), '');
         await patient.driver.pause(3 * retryMs);
 
         expect((await getConsultation(consultationId, apiUrl)).status).toBe('spooled');
-        expect(fs.readdirSync(root)).toEqual([ '.incoming' ]);
+        expect(fs.readdirSync(root).sort()).toEqual([ '.incoming', STORAGE_ROOT_MARKER ]);
         expect(fs.existsSync(path.join(spool, consultationId, 'manifest.json'))).toBe(true);
     });
 
@@ -153,15 +204,20 @@ describe('Recorder bot: storage outages', () => {
         });
 
     it('an evidence recording spooled before the service restarts is retried after it', async () => {
+        // This time the folder is there, without its marker.
         takeStorageRootAway();
+        fs.mkdirSync(root);
 
         const id = await recordConsultation('RESTART');
+        const spooled = await waitForFinalStatus(id, { apiUrl });
 
-        expect((await waitForFinalStatus(id, { apiUrl })).status).toBe('spooled');
+        expect(spooled.status).toBe('spooled');
+        expect(spooled.error).toBe('store_failed: NO_STORAGE_ROOT_MARKER');
+        expect(fs.readdirSync(root)).toEqual([]);
 
         // The storage root comes back while the service is down.
         docker('stop', container);
-        fs.mkdirSync(root);
+        makeStorageRoot(root);
         docker('start', container);
 
         // The service no longer knows the consultation; its evidence recording turns up in the storage root, and

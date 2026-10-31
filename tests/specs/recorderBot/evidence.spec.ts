@@ -27,7 +27,7 @@ visits. Skipped unless the recorderBot.available expectation and RECORDER_BOT_ST
     usesBrowsers: [ 'p1', 'p2' ]
 });
 
-/** How long the evidence recording may take to appear in storage once the meeting ends. */
+/** How long the evidence recording may take to appear in storage once the consultation ends. */
 const PROMPT_MS = 15_000;
 
 /**
@@ -84,7 +84,7 @@ describe('Recorder bot: evidence recording', () => {
         await staff.driver.pause(6_000);
     });
 
-    it('the evidence recording appears in storage promptly once the meeting is ended for everyone', async () => {
+    it('the evidence recording appears in storage promptly once the consultation is ended for everyone', async () => {
         await patient.getToolbar().clickEndMeetingForAllButton();
 
         const endedAt = Date.now();
@@ -128,7 +128,8 @@ describe('Recorder bot: evidence recording', () => {
             .toEqual(joins.map(j => [ j.endpointId, j.name, undefined, 'unknown' ]));
 
         // Staff's first join is the one that left before the end.
-        expect(manifest.participants.map(p => [ p.joins.length, p.leaves.length ])).toEqual([ [ 1, 0 ], [ 1, 1 ], [ 1, 0 ] ]);
+        expect(manifest.participants.map(p => [ p.joins.length, p.leaves.length ]))
+            .toEqual([ [ 1, 0 ], [ 1, 1 ], [ 1, 0 ] ]);
 
         for (const { endpointId } of joins) {
             expect(manifest.files.filter(f => f.endpointId === endpointId).map(f => f.kind)

@@ -21,7 +21,7 @@ const api = createApi({ consultations, maxConsultations: config.maxConsultations
 
 const storage = { consultations, spoolDir: config.spoolDir, storageRoot: config.storageRoot };
 const retrier = new SpoolRetrier(storage);
-const sweeper = new RetentionSweeper({ ...storage, retentionMs: config.retentionMs });
+const sweeper = new RetentionSweeper({ ...storage, folderRefKey: config.apiSecret, retentionMs: config.retentionMs });
 
 // Both start with what the service left before it last stopped.
 const housekeeping = [

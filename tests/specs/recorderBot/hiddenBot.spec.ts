@@ -16,7 +16,8 @@ import {
 
 setTestProperties(__filename, {
     description: 'The recorder bot joins a consultation unseen, is never a moderator, and stops when a moderator ends \
-the meeting for everyone. Skipped unless the recorderBot.available expectation is set.',
+the consultation for everyone, with the toolbar\'s End meeting for all. Skipped unless the recorderBot.available \
+expectation is set.',
     usesBrowsers: [ 'p1', 'p2' ]
 });
 
@@ -93,7 +94,7 @@ describe('Recorder bot: hidden participant', () => {
         expect((await getHiddenView(p2)).hidden).toEqual([ { role: 'participant' } ]);
     });
 
-    it('ending the meeting for everyone stops the bot', async () => {
+    it('ending the consultation for everyone stops the bot', async () => {
         await p2.getToolbar().clickEndMeetingForAllButton();
 
         const consultation = await waitForStop(consultationId);

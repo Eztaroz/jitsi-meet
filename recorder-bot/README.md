@@ -10,8 +10,8 @@ This is a standalone package, like `tests/`. It has its own dependencies, runs o
 |---|---|
 | `src/main.ts` | The service's entry point: the control API, the spool retrier and the retention sweeper, and shutdown on `SIGTERM`. |
 | `src/api.ts` | The control API (`POST /consultations`, `GET /consultations/{id}`, `GET /health`), behind a bearer secret. |
-| `src/consultations.ts`, `src/consultation.ts` | The running consultations. Each one feeds the bot's events to its lifecycle module, carries out the module's commands, and relaunches a bot that crashed or lost its connection. |
-| `src/consultationLifecycle.ts` | The consultation lifecycle module. It is pure: it takes timestamped events and returns timeline entries and commands (start a timer, cancel a timer, stop). It owns the stop rule and the timeline, and derives the participants, tracks, verified identities, staff visits and gaps. |
+| `src/consultations.ts`, `src/consultation.ts` | The running consultations. Each one feeds the bot's events to its lifecycle module, collects the timeline entries the module returns, carries out its commands, and relaunches a bot that crashed or lost its connection. |
+| `src/consultationLifecycle.ts` | The consultation lifecycle module. It is pure: it takes timestamped events and returns timeline entries and commands (start a timer, cancel a timer, stop). It owns the stop rule and decides the timeline entries, and derives the participants, tracks, verified identities, staff visits and gaps. |
 | `src/evidence.ts` | The evidence recording on disk: track files in the spool while the consultation runs, then the remux, `timeline.json`, `manifest.json` and the move into the evidence storage root. |
 | `src/spool.ts` | Retries moving the evidence recordings left in the spool, while the storage root was unavailable, into the storage root: at start-up and then periodically. |
 | `src/retention.ts` | The retention sweeper: deletes evidence recordings older than the retention period, and stale spool folders. |

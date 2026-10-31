@@ -35,7 +35,7 @@ docker compose up -d
 
 `.env` holds the deployment's settings, including a 10-second empty-room grace and a 20-second first-join wait so that the tests do not wait long; `expectations.json` tells the tests those values. The containers write their generated configuration to `config/`. After a web rebuild, reload the page; after a change to the service, rebuild its image and run `docker compose up -d recorder-bot`.
 
-The services store evidence recordings in `evidence/`, their evidence storage root, and each keeps its spool in its own folder of `spool/`. The fourth service's storage root is `outage/evidence`, which is not there until the storage tests create it; they keep what earlier runs stored there in `outage/evidence-<time>`. The services run as root here so that they can write to these folders; delete what they wrote with `sudo` if you are not root.
+The services store evidence recordings in `evidence/`, their evidence storage root, which `evidence/.recorder-bot-storage-root` marks as such, and each keeps its spool in its own folder of `spool/`. The fourth service's storage root is `isolated/evidence`, which is not there until the storage or the retention tests create it; the storage tests keep what earlier runs stored there in `isolated/evidence-<time>`. The services run as root here so that they can write to these folders; delete what they wrote with `sudo` if you are not root. The fourth service runs without the capability to override file permissions, so that the storage tests can make its storage root unwritable; the storage and retention tests write where it writes, and expect to run as root, as in a container.
 
 ## Running the end-to-end tests
 

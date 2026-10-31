@@ -17,13 +17,13 @@
  * sweep starts by emptying the trash. So a deletion cut short, by a crash for example, is finished by the next sweep,
  * and never leaves a partial evidence recording in place.
  */
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { type Dirent } from 'node:fs';
 import { lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Consultations } from './consultations.ts';
-import { INCOMING_DIR, evidenceLocation, readManifest } from './evidence.ts';
+import { INCOMING_DIR, checkStorageRoot, evidenceLocation, readManifest } from './evidence.ts';
 import { errorCode, log } from './log.ts';
 import { CONSULTATION_FOLDER } from './spool.ts';
 
@@ -34,14 +34,16 @@ type Place = 'spool' | 'staging' | 'storage_root';
 const TRASH_DIR = '.deleting';
 
 /**
- * Names a folder in the logs without naming an HN: the start of the SHA-256 of its path relative to the storage root,
- * or to the spool.
+ * Names a folder in the logs without naming an HN: the start of the HMAC-SHA256 of its path relative to the storage
+ * root, or to the spool. It is keyed, because HNs are few enough that anyone could hash them all and look the plain
+ * hash up.
  *
  * @param {string} relative - The folder's relative path.
+ * @param {string} key - The key.
  * @returns {string}
  */
-export function folderRef(relative: string): string {
-    return createHash('sha256').update(relative).digest('hex').slice(0, 16);
+function folderRef(relative: string, key: string): string {
+    return createHmac('sha256', key).update(relative).digest('hex').slice(0, 16);
 }
 
 /**
@@ -72,6 +74,7 @@ async function lastChange(folder: string): Promise<number> {
 
 export class RetentionSweeper {
     private readonly consultations: Consultations;
+    private readonly folderRefKey: string;
     private readonly retentionMs: number;
     private readonly spoolDir: string;
     private readonly storageRoot: string;
@@ -84,17 +87,20 @@ export class RetentionSweeper {
      *
      * @param {Object} options - Options.
      * @param {Consultations} options.consultations - The consultations this service knows about.
+     * @param {string} options.folderRefKey - The key of the references to folders in the logs.
      * @param {number} options.retentionMs - The retention period, in milliseconds.
      * @param {string} options.spoolDir - The spool.
      * @param {string} options.storageRoot - The evidence storage root.
      */
-    constructor({ consultations, retentionMs, spoolDir, storageRoot }: {
+    constructor({ consultations, folderRefKey, retentionMs, spoolDir, storageRoot }: {
         consultations: Consultations;
+        folderRefKey: string;
         retentionMs: number;
         spoolDir: string;
         storageRoot: string;
     }) {
         this.consultations = consultations;
+        this.folderRefKey = folderRefKey;
         this.retentionMs = retentionMs;
         this.spoolDir = spoolDir;
         this.storageRoot = storageRoot;
@@ -109,10 +115,18 @@ export class RetentionSweeper {
         const cutoff = Date.now() - this.retentionMs;
         const staging = path.join(this.storageRoot, INCOMING_DIR);
 
-        await this.emptyTrash(this.storageRoot);
         await this.emptyTrash(this.spoolDir);
-        await this.sweepStorageRoot(cutoff);
         await this.sweepConsultationFolders(this.spoolDir, 'spool', cutoff);
+
+        try {
+            await checkStorageRoot(this.storageRoot);
+        } catch (error) {
+            log.warn('the storage root is unavailable; not sweeping it', { error: errorCode(error) });
+
+            return;
+        }
+        await this.emptyTrash(this.storageRoot);
+        await this.sweepStorageRoot(cutoff);
         if (await isRealFolder(staging)) {
             await this.sweepConsultationFolders(staging, 'staging', cutoff);
         }
@@ -149,7 +163,7 @@ export class RetentionSweeper {
                 continue;
             }
             if (!patient.isDirectory()) {
-                this.leave(patient.name, 'storage_root', 'not_a_folder');
+                this.reportLeftAlone(patient.name, 'storage_root', 'not_a_folder');
                 continue;
             }
 
@@ -179,7 +193,7 @@ export class RetentionSweeper {
         const folder = path.join(this.storageRoot, patient, entry.name);
 
         if (!entry.isDirectory()) {
-            this.leave(relative, 'storage_root', 'not_a_folder');
+            this.reportLeftAlone(relative, 'storage_root', 'not_a_folder');
 
             return false;
         }
@@ -189,12 +203,12 @@ export class RetentionSweeper {
         try {
             manifest = await readManifest(folder);
         } catch (error) {
-            this.leave(relative, 'storage_root', 'unreadable_manifest', { error: errorCode(error) });
+            this.reportLeftAlone(relative, 'storage_root', 'unreadable_manifest', { error: errorCode(error) });
 
             return false;
         }
         if (!manifest) {
-            this.leave(relative, 'storage_root', 'no_manifest');
+            this.reportLeftAlone(relative, 'storage_root', 'no_manifest');
 
             return false;
         }
@@ -202,7 +216,7 @@ export class RetentionSweeper {
         const { consultationId, room, start } = manifest;
 
         if (evidenceLocation(room, start) !== relative) {
-            this.leave(relative, 'storage_root', 'misplaced', { consultationId });
+            this.reportLeftAlone(relative, 'storage_root', 'misplaced', { consultationId });
 
             return false;
         }
@@ -231,7 +245,7 @@ export class RetentionSweeper {
                 continue;
             }
             if (!entry.isDirectory() || !CONSULTATION_FOLDER.test(id)) {
-                this.leave(relative, place, entry.isDirectory() ? 'not_a_consultation' : 'not_a_folder');
+                this.reportLeftAlone(relative, place, entry.isDirectory() ? 'not_a_consultation' : 'not_a_folder');
                 continue;
             }
             if (this.consultations.get(id)?.isActive()) {
@@ -318,14 +332,14 @@ export class RetentionSweeper {
      * @param {Object} fields - More to log.
      * @returns {void}
      */
-    private leave(relative: string, place: Place, reason: string, fields: Record<string, string> = {}) {
+    private reportLeftAlone(relative: string, place: Place, reason: string, fields: Record<string, string> = {}) {
         const key = `${place}:${relative}`;
 
         if (!this.reported.has(key)) {
             this.reported.add(key);
             log.warn('leaving alone a folder that does not match the evidence layout', {
                 ...fields,
-                folder: folderRef(relative),
+                folder: folderRef(relative, this.folderRefKey),
                 place,
                 reason
             });

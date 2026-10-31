@@ -115,6 +115,8 @@ services:
         # As Playwright recommends for Chromium in a container.
         init: true
         ipc: host
+        # Time to finalise the consultations in progress when stopped (recorder-bot/deploy/README.md, Running it).
+        stop_grace_period: 1m
         # On the host network the bot reaches the web server on localhost and JVB on the advertised 127.0.0.1.
         network_mode: host
         # Root, so that the service can write to ./evidence and ./spool, which belong to whoever checked the
@@ -165,19 +167,23 @@ services:
             - RECORDER_BOT_MAX_RELAUNCHES=0
 
     # A fourth instance, with a storage root of its own, for the storage and the retention tests. The storage tests take
-    # its storage root, ./outage/evidence, away and give it back; the service never creates it. The retention tests
-    # seed it and its spool with old and recent folders, and it sweeps them often.
-    recorder-bot-outage:
+    # its storage root, ./isolated/evidence, away and give it back, with and without its marker, and make it
+    # unwritable; the service never creates it. The retention tests seed it and its spool with old and recent folders,
+    # and it sweeps them often.
+    recorder-bot-isolated:
         extends:
             service: recorder-bot
+        # Root, but bound by file permissions, so that the storage tests can make its storage root unwritable.
+        cap_drop:
+            - DAC_OVERRIDE
         volumes:
-            - ./spool/outage:/var/lib/recorder-bot/spool
-            - ./outage:/outage
+            - ./spool/isolated:/var/lib/recorder-bot/spool
+            - ./isolated:/isolated
         environment:
-            - RECORDER_BOT_API_PORT=${RECORDER_BOT_OUTAGE_API_PORT}
-            - RECORDER_BOT_STORAGE_ROOT=/outage/evidence
-            - RECORDER_BOT_STORE_RETRY_SECONDS=${RECORDER_BOT_OUTAGE_STORE_RETRY_SECONDS}
-            - RECORDER_BOT_RETENTION_SWEEP_SECONDS=${RECORDER_BOT_OUTAGE_RETENTION_SWEEP_SECONDS}
+            - RECORDER_BOT_API_PORT=${RECORDER_BOT_ISOLATED_API_PORT}
+            - RECORDER_BOT_STORAGE_ROOT=/isolated/evidence
+            - RECORDER_BOT_STORE_RETRY_SECONDS=${RECORDER_BOT_ISOLATED_STORE_RETRY_SECONDS}
+            - RECORDER_BOT_RETENTION_SWEEP_SECONDS=${RECORDER_BOT_ISOLATED_RETENTION_SWEEP_SECONDS}
 
 networks:
     meet.jitsi:

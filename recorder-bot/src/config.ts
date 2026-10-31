@@ -1,3 +1,4 @@
+import { DEFAULT_EMPTY_ROOM_MS, DEFAULT_FIRST_JOIN_MS } from './consultationLifecycle.ts';
 import { type IRoleMarkers, parseRoleMarker } from './identity.ts';
 
 /**
@@ -146,8 +147,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         botJid: required(env, 'RECORDER_BOT_JID'),
         botPassword: required(env, 'RECORDER_BOT_PASSWORD'),
         chromiumPath: env.RECORDER_BOT_CHROMIUM_PATH?.trim() || undefined,
-        emptyRoomGraceMs: integer(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', 60) * 1000,
-        firstJoinWaitMs: integer(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', 600) * 1000,
+        emptyRoomGraceMs: integer(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', DEFAULT_EMPTY_ROOM_MS / 1000) * 1000,
+        firstJoinWaitMs: integer(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', DEFAULT_FIRST_JOIN_MS / 1000) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
         maxConsultations: integer(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),

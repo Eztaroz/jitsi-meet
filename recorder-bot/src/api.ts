@@ -7,7 +7,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
 import { AtCapacityError, type Consultations } from './consultations.ts';
-import { log } from './log.ts';
+import { errorCode, log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -135,7 +135,7 @@ export function createApi({ consultations, maxConsultations, secret }: {
 
         if (pathname === '/health' && req.method === 'GET') {
             send(res, 200, {
-                activeConsultations: consultations.running().length,
+                activeConsultations: consultations.active().length,
                 maxConsultations,
                 status: 'ok'
             });
@@ -183,7 +183,7 @@ export function createApi({ consultations, maxConsultations, secret }: {
             if (error instanceof HttpError) {
                 send(res, error.status, { error: error.message });
             } else {
-                log.error('control API request failed', { error: error instanceof Error ? error.name : 'unknown' });
+                log.error('control API request failed', { error: errorCode(error) });
                 send(res, 500, { error: 'internal error' });
             }
         });

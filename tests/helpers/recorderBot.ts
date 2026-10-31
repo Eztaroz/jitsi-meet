@@ -255,6 +255,13 @@ export interface IHiddenView {
     remote: number;
 }
 
+/** What the tests read of a participant in lib-jitsi-meet's conference. */
+interface IConferenceParticipant {
+    getId: () => string;
+    getRole: () => string;
+    isHidden: () => boolean;
+}
+
 /**
  * Reports what a participant sees of the conference's participants.
  *
@@ -266,9 +273,9 @@ export function getHiddenView(participant: Participant): Promise<IHiddenView> {
         const conference = APP.conference._room;
 
         return {
-            hidden: conference.getParticipants()
-                .filter((p: any) => p.isHidden())
-                .map((p: any) => {
+            hidden: (conference.getParticipants() as IConferenceParticipant[])
+                .filter(p => p.isHidden())
+                .map(p => {
                     return { role: p.getRole() };
                 }),
             remote: APP.store.getState()['features/base/participants'].remote.size
@@ -551,6 +558,20 @@ export async function setCameraHeight(participant: Participant, height: number):
     }, height);
 }
 
+/** The file that marks a folder as an evidence storage root (recorder-bot/deploy/README.md, Running it). */
+export const STORAGE_ROOT_MARKER = '.recorder-bot-storage-root';
+
+/**
+ * Makes a folder an evidence storage root, as an operator does: creates it if it is not there, and marks it.
+ *
+ * @param {string} root - The folder.
+ * @returns {void}
+ */
+export function makeStorageRoot(root: string): void {
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, STORAGE_ROOT_MARKER), '');
+}
+
 /**
  * Returns why the storage tests cannot run here, or undefined when they can. They take the storage root of an
  * instance of the service away and give it back, and stop and start that instance's docker container.
@@ -558,12 +579,12 @@ export async function setCameraHeight(participant: Participant, height: number):
  * @returns {string|undefined}
  */
 export function storageUnavailableReason(): string | undefined {
-    const { apiUrl, container, retrySeconds, spool, storageRoot } = config.recorderBot.outage;
+    const { apiUrl, container, retrySeconds, spool, storageRoot } = config.recorderBot.isolated;
 
     return recorderBotUnavailableReason()
         ?? (apiUrl && container && retrySeconds > 0 && spool && storageRoot ? undefined
-            : 'RECORDER_BOT_OUTAGE_API_URL, RECORDER_BOT_OUTAGE_CONTAINER, RECORDER_BOT_OUTAGE_SPOOL, '
-                + 'RECORDER_BOT_OUTAGE_STORAGE_ROOT and RECORDER_BOT_OUTAGE_STORE_RETRY_SECONDS are not set');
+            : 'RECORDER_BOT_ISOLATED_API_URL, RECORDER_BOT_ISOLATED_CONTAINER, RECORDER_BOT_ISOLATED_SPOOL, '
+                + 'RECORDER_BOT_ISOLATED_STORAGE_ROOT and RECORDER_BOT_ISOLATED_STORE_RETRY_SECONDS are not set');
 }
 
 /**
@@ -573,11 +594,11 @@ export function storageUnavailableReason(): string | undefined {
  * @returns {string|undefined}
  */
 export function retentionUnavailableReason(): string | undefined {
-    const { retentionDays, sweepSeconds } = config.recorderBot.outage;
+    const { retentionDays, sweepSeconds } = config.recorderBot.isolated;
 
     return storageUnavailableReason()
         ?? (retentionDays > 0 && sweepSeconds > 0 ? undefined
-            : 'RECORDER_BOT_OUTAGE_RETENTION_DAYS and RECORDER_BOT_OUTAGE_RETENTION_SWEEP_SECONDS are not set');
+            : 'RECORDER_BOT_ISOLATED_RETENTION_DAYS and RECORDER_BOT_ISOLATED_RETENTION_SWEEP_SECONDS are not set');
 }
 
 /**
@@ -623,9 +644,9 @@ export function killBotBrowser(consultationId: string, container = config.record
  * @returns {Promise<string[]>}
  */
 export function getHiddenIds(participant: Participant): Promise<string[]> {
-    return participant.execute(() => APP.conference._room.getParticipants()
-        .filter((p: any) => p.isHidden())
-        .map((p: any) => p.getId()));
+    return participant.execute(() => (APP.conference._room.getParticipants() as IConferenceParticipant[])
+        .filter(p => p.isHidden())
+        .map(p => p.getId()));
 }
 
 /**

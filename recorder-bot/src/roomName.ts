@@ -1,8 +1,9 @@
 /**
  * Derives the conference room from a patient's HN with exactly the normalisation jitsi-meet applies to the room in
- * its URL (`getBackendSafeRoomName` in `react/features/base/util/uri.ts`): decode, NFKC, lower-case, URL-encode, then
- * lower-case again. The bot and the patient's link (`<jitsi url>/<encodeURIComponent(HN)>`) then always meet in the
- * same room, whatever characters the HN contains.
+ * the patient's link, `<jitsi url>/<encodeURIComponent(HN)>` (`getBackendSafeRoomName` in
+ * `react/features/base/util/uri.ts`): it decodes the link's segment, which gives back the HN itself, then applies
+ * NFKC, lower-case, URL-encode, then lower-case again. The bot and the patient then always meet in the same room,
+ * whatever characters the HN contains, "%" included.
  *
  * The result is also safe to use as a single path segment, so evidence folders use it too.
  *
@@ -10,13 +11,5 @@
  * @returns {string}
  */
 export function roomNameFromHn(hn: string): string {
-    let room = hn;
-
-    try {
-        room = decodeURIComponent(room);
-    } catch {
-        // Not an encoded string; jitsi-meet carries on with it as it is.
-    }
-
-    return encodeURIComponent(room.normalize('NFKC').toLowerCase()).toLowerCase();
+    return encodeURIComponent(hn.normalize('NFKC').toLowerCase()).toLowerCase();
 }

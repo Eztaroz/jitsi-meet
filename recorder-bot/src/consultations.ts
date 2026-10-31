@@ -32,15 +32,15 @@ export class Consultations {
      */
     start(hn: string): { consultation: Consultation; created: boolean; } {
         const room = roomNameFromHn(hn);
-        const running = this.running();
-        const existing = running.find(c => c.room === room);
+        const existing = this.running().find(c => c.room === room);
 
         if (existing) {
             log.info('consultation already running', { consultationId: existing.id });
 
             return { consultation: existing, created: false };
         }
-        if (running.length >= this.config.maxConsultations) {
+        // A consultation still finalising counts: its browser may still be closing, and its files are remuxed.
+        if (this.active().length >= this.config.maxConsultations) {
             log.warn('at capacity; consultation refused', { maxConsultations: this.config.maxConsultations });
             throw new AtCapacityError('at capacity');
         }

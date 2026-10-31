@@ -12,7 +12,7 @@ import {
 } from '../../helpers/recorderBot';
 
 setTestProperties(__filename, {
-    description: 'A patient whose HN has upper-case letters and a "/" opens their link and lands in the room the \
+    description: 'A patient whose HN has upper-case letters, "/" and "%" opens their link and lands in the room the \
 recorder bot records. Skipped unless the recorderBot.available expectation is set.',
     usesBrowsers: [ 'p1' ]
 });
@@ -30,7 +30,8 @@ describe('Recorder bot: HN room', () => {
             return;
         }
 
-        hn = `AB/${ctx.roomName}/Cd`;
+        // The "%2F" is part of the HN, not an encoded "/".
+        hn = `AB/${ctx.roomName}/Cd%2F1`;
         p1 = await joinMuc({ name: 'p1' }, { roomName: patientLinkRoom(hn) });
     });
 
@@ -48,7 +49,7 @@ describe('Recorder bot: HN room', () => {
         await waitForHiddenParticipant(p1);
         expect((await getHiddenView(p1)).hidden.length).toBe(1);
 
-        // Ending the meeting reaches the room too.
+        // Ending the consultation for everyone reaches the room too.
         await p1.getToolbar().clickEndMeetingForAllButton();
         expect((await waitForStop(consultationId)).stopReason).toBe('room_destroyed');
     });

@@ -23,13 +23,20 @@ import type {
 } from './consultationLifecycle.ts';
 import { errorCode, log } from './log.ts';
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
 
 /**
  * Where an evidence recording is copied to first when the spool and the storage root are on different filesystems.
  * It is inside the storage root, so that the last step, a rename, is atomic.
  */
 export const INCOMING_DIR = '.incoming';
+
+/**
+ * The file that marks the evidence storage root. The operator puts it in the storage root, on the share itself: a
+ * share that is not mounted leaves its empty mount point, which has no marker, and the evidence stays in the spool
+ * rather than land on the local disk.
+ */
+export const STORAGE_ROOT_MARKER = '.recorder-bot-storage-root';
 
 const MANIFEST = 'manifest.json';
 const RAW_DIR = 'raw';
@@ -100,7 +107,7 @@ async function sizeOf(file: string): Promise<number> {
  */
 async function durationOf(file: string): Promise<number | null> {
     try {
-        const { stdout } = await run('ffprobe', [
+        const { stdout } = await execFileAsync('ffprobe', [
             '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file
         ]);
         const duration = Number(stdout.trim());
@@ -171,6 +178,24 @@ function exists(file: string): Promise<boolean> {
 }
 
 /**
+ * Checks that the storage root is available: a directory, with the marker file in it.
+ *
+ * @param {string} storageRoot - The evidence storage root.
+ * @returns {Promise<void>}
+ * @throws {Error} When it is not, with a code that says why.
+ */
+export async function checkStorageRoot(storageRoot: string): Promise<void> {
+    // Never create the storage root itself: if it is a mount point that is not mounted, the evidence would land on
+    // the local disk underneath.
+    if (!(await stat(storageRoot)).isDirectory()) {
+        throw Object.assign(new Error('the storage root is not a directory'), { code: 'ENOTDIR' });
+    }
+    if (!await exists(path.join(storageRoot, STORAGE_ROOT_MARKER))) {
+        throw Object.assign(new Error('the storage root has no marker file'), { code: 'NO_STORAGE_ROOT_MARKER' });
+    }
+}
+
+/**
  * Moves a finalised folder to its destination in the storage root. When the destination is on another filesystem,
  * the folder is copied into the storage root's staging folder first, then renamed, so that the destination never
  * holds a partial copy; a failed copy is removed.
@@ -227,11 +252,7 @@ async function moveFolder(folder: string, storageRoot: string, destination: stri
 export async function moveIntoStorage(folder: string, storageRoot: string, location: string): Promise<void> {
     const destination = path.join(storageRoot, location);
 
-    // Never create the storage root itself: if it is a mount point that is not mounted, the evidence would land on
-    // the local disk underneath.
-    if (!(await stat(storageRoot)).isDirectory()) {
-        throw Object.assign(new Error('the storage root is not a directory'), { code: 'ENOTDIR' });
-    }
+    await checkStorageRoot(storageRoot);
 
     // The patient's folder, when this attempt creates it.
     const created = await mkdir(path.dirname(destination), { recursive: true });
@@ -384,7 +405,7 @@ export class EvidenceRecording {
         }
 
         try {
-            await run('ffmpeg', [ '-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-c', 'copy', final ]);
+            await execFileAsync('ffmpeg', [ '-hide_banner', '-loglevel', 'error', '-y', '-i', raw, '-c', 'copy', final ]);
         } catch (error) {
             // Keep the media as it was recorded rather than lose it.
             log.warn('could not remux a file; keeping it as recorded', {

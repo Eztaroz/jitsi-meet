@@ -1,6 +1,6 @@
 # Recorder bot: operator guide
 
-The recorder bot records patient consultations as evidence. The hospital's room-creation system asks the recorder bot service to record a patient's consultation by HN; the service starts a headless Chromium for that consultation, and the bot joins the patient's room as a hidden participant. Nobody in the call sees the bot. The bot is never a moderator. It leaves when staff end the meeting for everyone.
+The recorder bot records patient consultations as evidence. The hospital's room-creation system asks the recorder bot service to record a patient's consultation by HN; the service starts a headless Chromium for that consultation, and the bot joins the patient's room as a hidden participant. Nobody in the consultation sees the bot. The bot is never a moderator. It leaves when staff end the consultation for everyone, with the toolbar's End meeting for all.
 
 This guide covers what the Jitsi deployment needs and how to run the service. The decisions behind it are in `docs/adr/` (0001 to 0005), and the words in `GLOSSARY.md`.
 
@@ -159,7 +159,15 @@ The image is based on Playwright's (Chromium and Node.js) and adds ffmpeg.
 
 `docker-compose.recorder-bot.yml` adds the service to a docker-jitsi-meet deployment. It reads the bot account and the public URL from that deployment's `.env`, and binds the control API to `127.0.0.1` unless `RECORDER_BOT_API_BIND` says otherwise.
 
-It mounts the evidence storage root, `RECORDER_BOT_STORAGE_ROOT`, at the same path inside the container, and keeps the spool in the named volume `recorder-bot-spool`. The service runs as uid 1001, which must be able to write to the storage root.
+It mounts the evidence storage root, `RECORDER_BOT_STORAGE_ROOT`, at the same path inside the container, and keeps the spool in the named volume `recorder-bot-spool`. The service runs as uid 1001, which must be able to write to the storage root. The mount propagates the host's mounts, so that the service sees the storage root's share once it is mounted, even when it is mounted, or mounted again, after the service started.
+
+The service stores evidence recordings only in a storage root that holds the marker file `.recorder-bot-storage-root`, so that it never writes to the local disk under a mount point whose share is not mounted. Create the marker once, on the share itself, while it is mounted:
+
+```bash
+touch "$RECORDER_BOT_STORAGE_ROOT/.recorder-bot-storage-root"
+```
+
+When it is stopped, the service stops every consultation in progress, with stop reason `shutdown`, and finalises it. The compose file gives it a minute for that (`stop_grace_period`); a consultation it could not finalise in time stays in the spool, never finalised (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)).
 
 The service's network must reach:
 
@@ -175,7 +183,7 @@ The prototype measured, on a shared 4-vCPU host without GPU:
 - about one CPU core per recorded 720p video track, since the bot re-encodes each one;
 - about 0.4 GB of RAM per pair of participants recorded.
 
-A consultation with a patient and one staff member records two video tracks, so it needs about two cores. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly.
+A consultation with a patient and one staff member records two video tracks, so it needs about two cores. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
 
 Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
 
@@ -219,7 +227,7 @@ Every request needs the bearer secret; without it the service answers `401`.
 |---|---|
 | `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` for a new consultation; `200` and the same for the consultation already running in that HN's room; `503` when the service is at its limit |
 | `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, `relaunches` (how many times its bot was relaunched), and once stored `evidenceLocation` |
-| `GET /health` | `200` and `{ "status": "ok", "activeConsultations", "maxConsultations" }`, where `activeConsultations` counts the consultations that have not stopped |
+| `GET /health` | `200` and `{ "status": "ok", "activeConsultations", "maxConsultations" }`, where `activeConsultations` counts the consultations that have not reached a final status, finalising ones included |
 
 The room-creation system can repeat a `POST` safely, for example after a timeout: while a consultation runs in the HN's room, every `POST` for that HN returns it, and no second bot joins. Once it has stopped, the next `POST` starts a new consultation. A `503` means the consultation is not being recorded; the room-creation system must retry or alert someone, never carry on silently.
 
@@ -240,7 +248,7 @@ A consultation's `status` goes:
 
 | Stop reason | When |
 |---|---|
-| `room_destroyed` | Staff ended the meeting for everyone. The bot stops at once, without leaving first |
+| `room_destroyed` | Staff ended the consultation for everyone, with the toolbar's End meeting for all. The bot stops at once, without leaving first |
 | `no_humans_for_grace` | Every human left, and nobody came back within `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` |
 | `no_one_joined` | Nobody joined within `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` |
 | `kicked` | A moderator removed the bot |
@@ -284,9 +292,9 @@ While a consultation runs, each track is written to the spool in one-second chun
 
 ### When the storage root is unavailable
 
-When the storage root is unavailable as a consultation ends, for example because its share is not mounted or the file server is down, the finalised folder stays in the spool and the consultation is `spooled`, with `error` `store_failed: <code>`. The service retries every spooled folder when it starts and then every `RECORDER_BOT_STORE_RETRY_SECONDS`. Once the move succeeds, the consultation is `stored` and `evidenceLocation` says where the evidence recording is.
+When the storage root is unavailable as a consultation ends, for example because its share is not mounted or the file server is down, the finalised folder stays in the spool and the consultation is `spooled`, with `error` `store_failed: <code>`. The code is `NO_STORAGE_ROOT_MARKER` when the storage root is there but has no marker file (see [Running it](#running-it)), as an unmounted mount point has none. The service retries every spooled folder when it starts and then every `RECORDER_BOT_STORE_RETRY_SECONDS`. Once the move succeeds, the consultation is `stored` and `evidenceLocation` says where the evidence recording is.
 
-A failed attempt leaves nothing in the storage root: its partial copy in `.incoming` is removed, and so is the patient's folder when the attempt created it. The service never creates the storage root itself, so that evidence never lands on the local disk under a share that is not mounted. Keep the spool on a persistent volume with room for the evidence recordings of the longest outage of the storage root you expect.
+A failed attempt leaves nothing in the storage root: its partial copy in `.incoming` is removed, and so is the patient's folder when the attempt created it. The service never creates the storage root itself, so that evidence never lands on the local disk under a share that is not mounted. Keep the spool on a persistent volume with room for the evidence recordings of the longest time the storage root may be unavailable.
 
 The logs name each spooled evidence recording by its consultation id: `could not move a spooled evidence recording to the storage root; will retry` at each failed attempt, with the error code, and `spooled evidence recording stored` once it is moved.
 
@@ -297,16 +305,16 @@ After a restart, the control API no longer knows earlier consultations; their sp
 ADR 0003 keeps evidence recordings for three months, then deletes them. The service does that itself: when it starts, and then every `RECORDER_BOT_RETENTION_SWEEP_SECONDS`, it deletes
 
 - every evidence recording in the storage root whose consultation start is older than `RECORDER_BOT_RETENTION_DAYS`, and the patient's folder once it is empty;
-- every consultation folder in the spool, and in the storage root's `.incoming`, in which nothing has changed for longer than that: what a crash or an outage of the storage root left behind.
+- every consultation folder in the spool, and in the storage root's `.incoming`, in which nothing has changed for longer than that: what a crash, or a storage root unavailable for that long, left behind.
 
 It deletes only what matches the evidence layout: a `<backend-safe HN>/<consultation start>/` folder whose `manifest.json` names that same place, or a folder named after a consultation id in the spool. It never deletes the folder of a consultation still in progress, and never follows a symbolic link. Every other folder or file it leaves alone, and logs once after each start, as `leaving alone a folder that does not match the evidence layout`, with a `reason` and a `folder`. It ignores names that start with `.`, such as a file server's snapshots.
 
 To delete a folder, the service first renames it into `.deleting` next to it, in the storage root or the spool, then deletes it there. A deletion cut short, by a crash for example, is finished by the next sweep; leave `.deleting` alone.
 
-The logs name each deleted folder by its consultation id, with `place` `storage_root`, `spool` or `staging`, and never by HN. The `folder` of a folder left alone is the first 16 hexadecimal digits of the SHA-256 of its path relative to the storage root, or to the spool, so that the log names no HN. To find it, from the storage root:
+The logs name each deleted folder by its consultation id, with `place` `storage_root`, `spool` or `staging`, and never by HN. The `folder` of a folder left alone is the first 16 hexadecimal digits of the HMAC-SHA256 of its path relative to the storage root, or to the spool, keyed with `RECORDER_BOT_API_SECRET`, so that the log names no HN, and nobody without the secret can find the HN by hashing every HN. To find it, from the storage root, with the secret in `RECORDER_BOT_API_SECRET`:
 
 ```bash
-find . -mindepth 1 -maxdepth 2 -printf '%P\n' | while read -r p; do printf '%s %s\n' "$(printf '%s' "$p" | sha256sum | cut -c1-16)" "$p"; done
+find . -mindepth 1 -maxdepth 2 -printf '%P\n' | while read -r p; do printf '%s %s\n' "$(printf '%s' "$p" | openssl dgst -sha256 -hmac "$RECORDER_BOT_API_SECRET" -r | cut -c1-16)" "$p"; done
 ```
 
 When several services share one storage root, each of them sweeps it; that is safe.

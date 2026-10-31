@@ -204,7 +204,7 @@ export class Consultation {
      * @returns {Promise<void>}
      */
     shutdown(): Promise<void> {
-        this.send({ type: 'shutdown' });
+        this.feed({ type: 'shutdown' });
 
         return this.done;
     }
@@ -239,7 +239,8 @@ export class Consultation {
             }
         }, error => {
             if (isCurrent()) {
-                this.interrupt(`launch_failed: ${error instanceof Error ? error.message : String(error)}`);
+                // By its code only: Playwright's messages quote what the page threw, which may name the room.
+                this.interrupt(`launch_failed: ${errorCode(error)}`);
             }
         });
     }
@@ -265,7 +266,7 @@ export class Consultation {
         }
         if (!this.interrupted) {
             this.interrupted = true;
-            this.send({ type: 'bot_interrupted' });
+            this.feed({ type: 'bot_interrupted' });
         }
 
         if (this.relaunches >= this.config.maxRelaunches) {
@@ -275,7 +276,7 @@ export class Consultation {
                 consultationId: this.id,
                 relaunches: this.relaunches
             });
-            this.send({ type: 'bot_failed' });
+            this.feed({ type: 'bot_failed' });
 
             return;
         }
@@ -310,7 +311,7 @@ export class Consultation {
                 // The room is not running, so nobody is in it: the relaunched bot knows that much.
                 this.resume();
             }
-            this.send({ type: 'waiting_for_host' });
+            this.feed({ type: 'waiting_for_host' });
             break;
         case 'joined':
             this.botJoined = true;
@@ -321,7 +322,7 @@ export class Consultation {
                 this.resume();
             } else {
                 log.info('bot joined', { consultationId: this.id });
-                this.send({ meetingId: event.meetingId, type: 'bot_joined' });
+                this.feed({ meetingId: event.meetingId, type: 'bot_joined' });
             }
             break;
         case 'meeting_id':
@@ -332,7 +333,7 @@ export class Consultation {
                 this.humanJoined = true;
                 this.updateStatus();
             }
-            this.send({
+            this.feed({
                 displayName: event.displayName,
                 endpointId: event.endpointId,
                 hidden: event.hidden,
@@ -343,20 +344,20 @@ export class Consultation {
             });
             break;
         case 'participant_left':
-            this.send({ endpointId: event.endpointId, type: 'participant_left' });
+            this.feed({ endpointId: event.endpointId, type: 'participant_left' });
             break;
         case 'track_started': {
             const file = this.evidence.newFile(event.endpointId, event.kind);
 
             this.files.set(recorderKey(launch, event.recorderId), file);
-            this.send({ endpointId: event.endpointId, file, kind: event.kind, type: 'track_started' });
+            this.feed({ endpointId: event.endpointId, file, kind: event.kind, type: 'track_started' });
             break;
         }
         case 'track_stopped': {
             const file = this.files.get(recorderKey(launch, event.recorderId));
 
             if (file) {
-                this.send({ file, type: 'track_stopped' });
+                this.feed({ file, type: 'track_stopped' });
             }
             break;
         }
@@ -364,7 +365,7 @@ export class Consultation {
             const file = this.files.get(recorderKey(launch, event.recorderId));
 
             if (file) {
-                this.send({ file, height: event.height, type: 'video_resolution', width: event.width });
+                this.feed({ file, height: event.height, type: 'video_resolution', width: event.width });
             }
             break;
         }
@@ -376,10 +377,10 @@ export class Consultation {
             });
             break;
         case 'room_destroyed':
-            this.send({ type: 'room_destroyed' });
+            this.feed({ type: 'room_destroyed' });
             break;
         case 'kicked':
-            this.send({ type: 'kicked' });
+            this.feed({ type: 'kicked' });
             break;
         case 'connection_failed':
         case 'conference_failed':
@@ -397,7 +398,7 @@ export class Consultation {
     private resume() {
         log.info('bot resumed', { consultationId: this.id, relaunches: this.relaunches });
         this.interrupted = false;
-        this.send({ type: 'bot_resumed' });
+        this.feed({ type: 'bot_resumed' });
     }
 
     /**
@@ -449,7 +450,7 @@ export class Consultation {
      * @param {EventInput} event - The event.
      * @returns {void}
      */
-    private send(event: EventInput) {
+    private feed(event: EventInput) {
         if (!this.isActive()) {
             return;
         }
@@ -479,7 +480,7 @@ export class Consultation {
             clearTimeout(this.timers.get(command.timer));
             this.timers.set(command.timer, setTimeout(() => {
                 this.timers.delete(command.timer);
-                this.send({ timer: command.timer, type: 'timer_fired' });
+                this.feed({ timer: command.timer, type: 'timer_fired' });
             }, command.ms));
             break;
         case 'cancel_timer':

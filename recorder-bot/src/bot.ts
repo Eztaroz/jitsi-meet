@@ -47,11 +47,6 @@ export interface IBotParams {
 export interface IBot {
 
     /**
-     * Resolves when the browser has gone, whether it was closed or it crashed.
-     */
-    exited: Promise<void>;
-
-    /**
      * Stops the bot and closes its browser. The page first closes every recorder and delivers their last chunks.
      *
      * @param {Object} options - Options.
@@ -135,7 +130,6 @@ export async function launchBot(config: IConfig, params: IBotParams, callbacks: 
         });
 
         return {
-            exited,
             async stop({ leave }) {
                 if (stopping) {
                     return exited;

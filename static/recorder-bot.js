@@ -119,7 +119,7 @@
                     .then(() => toBase64(data))
                     .then(base64 => window.recorderBotChunk(recorderId, base64))
                     .catch(error => emit('recorder_error', {
-                        error: String(error),
+                        error: String(error?.name || error),
                         recorderId
                     }));
             }

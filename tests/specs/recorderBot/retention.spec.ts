@@ -1,17 +1,17 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { setTestProperties } from '../../helpers/TestProperties';
 import { config } from '../../helpers/TestsConfig';
-import { docker, retentionUnavailableReason } from '../../helpers/recorderBot';
+import { docker, makeStorageRoot, retentionUnavailableReason } from '../../helpers/recorderBot';
 
 setTestProperties(__filename, {
     description: 'The retention sweeper deletes the evidence recordings whose consultation started longer ago than \
 the retention period, and keeps the recent ones. It deletes the spool folders and staging leftovers in which nothing \
 has changed for longer than that. It leaves alone, and logs, folders that do not match the evidence layout, and never \
 deletes what a symbolic link in the storage root points to. Its logs name what it deletes by consultation id, never \
-by HN. Skipped unless the recorderBot.available expectation and the RECORDER_BOT_OUTAGE_* variables are set.',
+by HN. Skipped unless the recorderBot.available expectation and the RECORDER_BOT_ISOLATED_* variables are set.',
     usesBrowsers: [ 'p1' ]
 });
 
@@ -63,7 +63,13 @@ async function waitFor(condition: () => boolean, timeout: number, description: s
 }
 
 describe('Recorder bot: retention', () => {
-    const { container = '', retentionDays, spool = '', storageRoot: root = '', sweepSeconds } = config.recorderBot.outage;
+    const {
+        container = '',
+        retentionDays,
+        spool = '',
+        storageRoot: root = '',
+        sweepSeconds
+    } = config.recorderBot.isolated;
     const run = `${Date.now()}`;
     const seededAt = new Date();
     const old = new Date(seededAt.getTime() - (retentionDays + 1) * DAY_MS);
@@ -155,7 +161,7 @@ describe('Recorder bot: retention', () => {
 
             return;
         }
-        fs.mkdirSync(root, { recursive: true });
+        makeStorageRoot(root);
 
         oldEvidence = seedEvidence('OLD', old);
         recentEvidence = seedEvidence('RECENT', recent);
@@ -225,7 +231,12 @@ describe('Recorder bot: retention', () => {
             });
         const deleted = lines.filter(l => l.message === 'deleted a folder older than the retention period');
         const left = lines.filter(l => l.message === 'leaving alone a folder that does not match the evidence layout');
-        const ref = (relative: string) => createHash('sha256').update(relative).digest('hex').slice(0, 16);
+        // The service keys the references with its control API's bearer secret (recorder-bot/deploy/README.md,
+        // Retention).
+        const ref = (relative: string) => createHmac('sha256', config.recorderBot.apiSecret ?? '')
+            .update(relative)
+            .digest('hex')
+            .slice(0, 16);
 
         expect(deleted.map(l => [ l.consultationId, l.place ]).sort()).toEqual([
             [ oldEvidence.consultationId, 'storage_root' ],

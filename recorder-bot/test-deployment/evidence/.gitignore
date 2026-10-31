@@ -1,3 +1,5 @@
 # Written by the recorder bot service while the test deployment runs.
 *
 !.gitignore
+# Marks this folder as the storage root, without which the service would not store here.
+!.recorder-bot-storage-root
