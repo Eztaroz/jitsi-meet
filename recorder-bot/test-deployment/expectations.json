@@ -1,6 +1,9 @@
 {
-    // The test deployment runs the recorder bot service.
     "recorderBot": {
-        "available": true
+        // The test deployment runs the recorder bot service.
+        "available": true,
+        // Short timers, so that the tests do not wait long. They must match .env.
+        "emptyRoomGraceSeconds": 10,
+        "firstJoinWaitSeconds": 20
     }
 }

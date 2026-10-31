@@ -58,7 +58,9 @@ export class Consultation {
     private readonly lifecycle: IConsultationLifecycle;
     private readonly timers = new Map<Timer, ReturnType<typeof setTimeout>>();
     private bot?: IBot;
+    private botJoined = false;
     private error?: string;
+    private humanJoined = false;
     private status: ConsultationStatus = 'starting';
     private stopReason?: StopReason;
     private stoppedAt?: Date;
@@ -74,7 +76,10 @@ export class Consultation {
         this.hn = hn;
         this.room = roomNameFromHn(hn);
         this.config = config;
-        this.lifecycle = createConsultationLifecycle();
+        this.lifecycle = createConsultationLifecycle({
+            emptyRoomMs: config.emptyRoomGraceMs,
+            firstJoinMs: config.firstJoinWaitMs
+        });
         this.done = new Promise(resolve => {
             this.resolveDone = resolve;
         });
@@ -150,12 +155,15 @@ export class Consultation {
             break;
         case 'joined':
             log.info('bot joined', { consultationId: this.id });
-            if (this.status === 'starting') {
-                this.status = 'recording';
-            }
+            this.botJoined = true;
+            this.updateStatus();
             this.send({ meetingId: event.meetingId, type: 'bot_joined' });
             break;
         case 'participant_joined':
+            if (!event.hidden) {
+                this.humanJoined = true;
+                this.updateStatus();
+            }
             this.send({
                 displayName: event.displayName,
                 endpointId: event.endpointId,
@@ -178,6 +186,20 @@ export class Consultation {
         case 'disconnected':
             this.fail(`${event.type}: ${event.error}`);
             break;
+        }
+    }
+
+    /**
+     * Moves a consultation that has not stopped to `waiting_for_participants` once the bot is in the room, and to
+     * `recording` once a human has joined too. It stays `recording` while the room is empty within the grace.
+     *
+     * @returns {void}
+     */
+    private updateStatus() {
+        if (this.status === 'starting' || this.status === 'waiting_for_participants') {
+            if (this.botJoined) {
+                this.status = this.humanJoined ? 'recording' : 'waiting_for_participants';
+            }
         }
     }
 

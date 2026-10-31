@@ -66,7 +66,11 @@ const defaultExpectations = {
     recorderBot: {
         // The recorder bot service (recorder-bot/) runs against this deployment, and RECORDER_BOT_API_URL and
         // RECORDER_BOT_API_SECRET reach its control API. The specs/recorderBot tests are skipped otherwise.
-        available: false
+        available: false,
+        // The service's RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS: how long the bot stays once every human has left.
+        emptyRoomGraceSeconds: 60,
+        // The service's RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS: how long the bot waits for anyone to join.
+        firstJoinWaitSeconds: 600
     },
     // We can create conferences under any tenant.
     useTenant: true

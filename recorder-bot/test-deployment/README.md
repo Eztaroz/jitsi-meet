@@ -30,7 +30,7 @@ Start the deployment from this directory:
 docker compose up -d
 ```
 
-`.env` holds the deployment's settings; the containers write their generated configuration to `config/`. After a web rebuild, reload the page; after a change to the service, rebuild its image and run `docker compose up -d recorder-bot`.
+`.env` holds the deployment's settings, including a 10-second empty-room grace and a 20-second first-join wait so that the tests do not wait long; `expectations.json` tells the tests those values. The containers write their generated configuration to `config/`. After a web rebuild, reload the page; after a change to the service, rebuild its image and run `docker compose up -d recorder-bot`.
 
 ## Running the end-to-end tests
 

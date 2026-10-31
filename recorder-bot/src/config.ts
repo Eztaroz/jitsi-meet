@@ -20,6 +20,12 @@ export interface IConfig {
     /** The Chromium binary to run; Playwright's own when unset. */
     chromiumPath?: string;
 
+    /** How long the bot stays in a room every human has left, in milliseconds (ADR 0003). */
+    emptyRoomGraceMs: number;
+
+    /** How long the bot waits for the first human to join, in milliseconds (ADR 0003). */
+    firstJoinWaitMs: number;
+
     /** Whether to accept the Jitsi web server's certificate without checking it. For local test deployments. */
     ignoreCertificateErrors: boolean;
 
@@ -95,6 +101,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         botJid: required(env, 'RECORDER_BOT_JID'),
         botPassword: required(env, 'RECORDER_BOT_PASSWORD'),
         chromiumPath: env.RECORDER_BOT_CHROMIUM_PATH?.trim() || undefined,
+        emptyRoomGraceMs: positiveInteger(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', 60) * 1000,
+        firstJoinWaitMs: positiveInteger(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', 600) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
         maxHeight: positiveInteger(env, 'RECORDER_BOT_MAX_HEIGHT', 720)

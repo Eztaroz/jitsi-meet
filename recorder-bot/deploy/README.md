@@ -146,6 +146,8 @@ Run one service per deployment. Each consultation runs in its own browser proces
 | `RECORDER_BOT_JID` | required | The bot account, `recorder-bot@recorder.meet.example.org` |
 | `RECORDER_BOT_PASSWORD` | required | The bot account's password |
 | `RECORDER_BOT_JITSI_URL` | required | The Jitsi web server, `https://meet.example.org` |
+| `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
+| `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join |
 | `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
 | `RECORDER_BOT_CHROMIUM_PATH` | Playwright's | A Chromium binary to run instead |
 | `RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS` | `false` | Accept any certificate from the web server. Only for test deployments |
@@ -162,11 +164,20 @@ Every request needs the bearer secret; without it the service answers `401`.
 
 The consultation id is an opaque UUID. The service's logs name consultations by this id, never by HN. The room name is the HN normalised as jitsi-meet normalises a URL room name: NFKC, lower-case, URL-encoded, lower-case again.
 
-A consultation's `status` goes `starting`, then `recording` once the bot is in the room, then `finalising` and a final status once it has stopped. `stopReason` says why it stopped:
+A consultation's `status` goes:
+
+1. `starting` while the bot launches and joins;
+2. `waiting_for_participants` once the bot is in the room, until the first human joins;
+3. `recording` from then on, including while the room is empty within the grace;
+4. `finalising`, then a final status, once it has stopped.
+
+`stopReason` says why it stopped:
 
 | Stop reason | When |
 |---|---|
 | `room_destroyed` | Staff ended the meeting for everyone. The bot stops at once, without leaving first |
+| `no_humans_for_grace` | Every human left, and nobody came back within `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` |
+| `no_one_joined` | Nobody joined within `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` |
 | `kicked` | A moderator removed the bot |
 | `shutdown` | The service was stopped |
 
