@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { Participant } from './Participant';
 import { config } from './TestsConfig';
 import { expectations } from './expectations';
@@ -11,6 +15,9 @@ import { expectations } from './expectations';
 export interface IConsultation {
     consultationId: string;
     error?: string;
+
+    /** Where the evidence recording is, relative to the evidence storage root, once it is stored. */
+    evidenceLocation?: string;
     startedAt: string;
     status: string;
     stopReason?: string;
@@ -34,14 +41,25 @@ export function recorderBotUnavailableReason(): string | undefined {
 }
 
 /**
+ * Returns why the evidence tests cannot run here, or undefined when they can. They also need the evidence storage
+ * root, where they read the stored evidence recordings.
+ *
+ * @returns {string|undefined}
+ */
+export function evidenceUnavailableReason(): string | undefined {
+    return recorderBotUnavailableReason()
+        ?? (config.recorderBot.storageRoot ? undefined : 'RECORDER_BOT_STORAGE_ROOT is not set');
+}
+
+/**
  * Calls the control API.
  *
- * @param {string} path - The path, starting with "/".
+ * @param {string} route - The path, starting with "/".
  * @param {RequestInit} init - Request options.
  * @returns {Promise<Response>}
  */
-function callApi(path: string, init: RequestInit = {}): Promise<Response> {
-    return fetch(`${config.recorderBot.apiUrl}${path}`, {
+function callApi(route: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(`${config.recorderBot.apiUrl}${route}`, {
         ...init,
         headers: {
             'Authorization': `Bearer ${config.recorderBot.apiSecret}`,
@@ -265,4 +283,134 @@ export async function waitForRecordingLabel(participant: Participant, consultati
         timeout: 5_000,
         timeoutMsg: `${participant.name} does not show the recording label`
     });
+}
+
+/**
+ * Waits until the consultation's evidence recording is in the evidence storage root.
+ *
+ * @param {string} consultationId - The consultation.
+ * @param {number} timeout - How long to wait, in milliseconds.
+ * @returns {Promise<IConsultation>}
+ */
+export function waitForEvidence(consultationId: string, timeout = 30_000): Promise<IConsultation> {
+    return waitForConsultation(consultationId, c => [ 'stored', 'spooled', 'failed' ].includes(c.status), {
+        description: 'the evidence recording to be stored',
+        timeout
+    }).then(consultation => {
+        if (consultation.status !== 'stored' || !consultation.evidenceLocation) {
+            throw new Error(`The evidence recording was not stored: ${JSON.stringify(consultation)}`);
+        }
+
+        return consultation;
+    });
+}
+
+/** One media file of an evidence recording, as its manifest lists it. */
+export interface IEvidenceFile {
+    bytes: number;
+    duration: number | null;
+    endpointId: string;
+    kind: 'audio' | 'video';
+    name: string;
+    start: string;
+    stop: string;
+}
+
+/** An evidence recording's manifest.json. */
+export interface IManifest {
+    consultationId: string;
+    end: string;
+    files: IEvidenceFile[];
+    gaps: Array<{ end: string; start: string; }>;
+    hn: string;
+    meetingId?: string;
+    participants: Array<{ displayName?: string; endpointId: string; joins: string[]; leaves: string[]; }>;
+    room: string;
+    staffVisits: unknown[];
+    start: string;
+    stopReason: string;
+}
+
+/** One entry of an evidence recording's timeline.json. */
+export interface ITimelineEntry {
+    [key: string]: unknown;
+    at: string;
+    type: string;
+}
+
+/**
+ * Returns the path of a file in a stored evidence recording.
+ *
+ * @param {string} location - The evidence location the control API reported.
+ * @param {string} name - The file's name.
+ * @returns {string}
+ */
+export function evidencePath(location: string, name = ''): string {
+    return path.resolve(config.recorderBot.storageRoot ?? '', location, name);
+}
+
+/**
+ * Reads a JSON file of a stored evidence recording.
+ *
+ * @param {string} location - The evidence location the control API reported.
+ * @param {string} name - The file's name.
+ * @returns {T}
+ */
+export function readEvidenceJson<T>(location: string, name: 'manifest.json' | 'timeline.json'): T {
+    return JSON.parse(fs.readFileSync(evidencePath(location, name), 'utf8')) as T;
+}
+
+/** What playing a media file all the way through shows. */
+export interface IPlayback {
+
+    /** The container's duration, in seconds. */
+    duration: number;
+
+    /** The heights of the decoded video frames, in order, without repeats. Empty for audio. */
+    heights: number[];
+}
+
+/**
+ * Plays a media file through with ffmpeg and ffprobe: decodes every frame, failing on any decoding error, and reads
+ * its duration and frame sizes.
+ *
+ * @param {string} file - The file.
+ * @returns {IPlayback}
+ */
+export function playMedia(file: string): IPlayback {
+    // -xerror: stop with a failure at the first decoding error.
+    execFileSync('ffmpeg', [ '-v', 'error', '-xerror', '-i', file, '-f', 'null', '-' ], { stdio: 'pipe' });
+
+    const probe = (args: string[]) =>
+        execFileSync('ffprobe', [ '-v', 'error', ...args, '-of', 'csv=p=0', file ], { encoding: 'utf8' }).trim();
+    const heights: number[] = [];
+
+    for (const line of probe([ '-select_streams', 'v:0', '-show_entries', 'frame=height' ]).split('\n')) {
+        const height = Number(line);
+
+        if (line && height !== heights[heights.length - 1]) {
+            heights.push(height);
+        }
+    }
+
+    return {
+        duration: Number(probe([ '-show_entries', 'format=duration' ])),
+        heights
+    };
+}
+
+/**
+ * Changes the resolution a participant's camera captures at, which changes the resolution the bot receives.
+ *
+ * @param {Participant} participant - The participant.
+ * @param {number} height - The new height; the width follows at 16:9.
+ * @returns {Promise<void>}
+ */
+export async function setCameraHeight(participant: Participant, height: number): Promise<void> {
+    await participant.execute(async h => {
+        const track = APP.store.getState()['features/base/tracks']
+            .find(t => t.local && t.mediaType === 'video')?.jitsiTrack.getTrack();
+
+        await track?.applyConstraints({ height: h, width: Math.round(h * 16 / 9) });
+    }, height);
 }

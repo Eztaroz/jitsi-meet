@@ -30,3 +30,20 @@ export const log = {
     info: (message: string, fields?: ILogFields) => write('info', message, fields),
     warn: (message: string, fields?: ILogFields) => write('warn', message, fields)
 };
+
+/**
+ * Describes an error for the logs by its code or name only. Messages of filesystem errors name paths, and evidence
+ * paths hold the room name, which is the patient's HN.
+ *
+ * @param {unknown} error - The error.
+ * @returns {string}
+ */
+export function errorCode(error: unknown): string {
+    const code = (error as { code?: unknown; } | undefined)?.code;
+
+    if (typeof code === 'string' || typeof code === 'number') {
+        return String(code);
+    }
+
+    return error instanceof Error ? error.name : 'unknown';
+}

@@ -2,15 +2,23 @@
 
 /**
  * The in-page half of the recorder bot. The recorder bot service (recorder-bot/) loads static/recorder-bot.html in
- * headless Chromium, exposes window.recorderBotEvent() to receive what happens in the conference, then calls
- * window.recorderBot.start() with the consultation's parameters.
+ * headless Chromium, exposes window.recorderBotEvent() to receive what happens in the conference and
+ * window.recorderBotChunk() to receive the recordings, then calls window.recorderBot.start() with the consultation's
+ * parameters.
  *
- * This page only joins and reports. The service decides when to stop (the consultation lifecycle module) and tells
- * the page with window.recorderBot.stop().
+ * This page joins, records each remote track with its own MediaRecorder, and reports. The service decides when to
+ * stop (the consultation lifecycle module) and tells the page with window.recorderBot.stop().
  */
 (function() {
     const JIBRI_FEATURE = 'http://jitsi.org/protocol/jibri';
     const LEAVE_TIMEOUT_MS = 3000;
+
+    // Each recorder hands over a chunk every second, so a crash loses at most about a second of each track.
+    const CHUNK_MS = 1000;
+    const AUDIO_RECORDER_OPTIONS = { audioBitsPerSecond: 64000,
+        mimeType: 'audio/webm;codecs=opus' };
+    const VIDEO_RECORDER_OPTIONS = { mimeType: 'video/webm;codecs=vp8',
+        videoBitsPerSecond: 1500000 };
 
     // How long after a participant joins the bot sends its presence again (ADR 0004).
     const PRESENCE_RESEND_MS = 2000;
@@ -18,17 +26,139 @@
     let connection;
     let conference;
     let stopping = false;
+    let recorderCount = 0;
+
+    /** The recorder of each remote track that is being recorded. */
+    const recorders = new Map();
+
+    /** Every recorder's promise that its last chunk has been delivered. */
+    const delivered = new Set();
 
     /**
      * Reports an event to the recorder bot service.
      *
      * @param {string} type - The event type.
      * @param {Object} data - Event data.
-     * @returns {void}
+     * @returns {Promise<void>} Settles once the service has handled the event.
      */
     function emit(type, data = {}) {
-        window.recorderBotEvent({ type,
+        return window.recorderBotEvent({ type,
             ...data });
+    }
+
+    /**
+     * Reads a blob as base64, the form in which a chunk crosses over to the service.
+     *
+     * @param {Blob} blob - The blob.
+     * @returns {Promise<string>}
+     */
+    function toBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+
+            reader.onload = () => resolve(reader.result.slice(reader.result.indexOf(',') + 1));
+            reader.onerror = () => reject(reader.error);
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    /**
+     * Starts recording a remote track.
+     *
+     * @param {JitsiRemoteTrack} track - The track.
+     * @returns {void}
+     */
+    function startRecording(track) {
+        const kind = track.getType();
+        const recorderId = `r${++recorderCount}`;
+        const stream = new MediaStream([ track.getTrack() ]);
+
+        // Chromium delivers no remote audio to a recorder unless the track also plays in a media element; muted,
+        // since there is nothing to play it on. A video element reports the resolution the video arrives at.
+        const element = document.createElement(kind);
+
+        element.muted = true;
+        element.autoplay = true;
+        element.srcObject = stream;
+        if (kind === 'video') {
+            let size;
+
+            element.playsInline = true;
+            element.addEventListener('resize', () => {
+                const { videoHeight: height, videoWidth: width } = element;
+
+                if (size !== `${width}x${height}`) {
+                    size = `${width}x${height}`;
+                    emit('video_resolution', {
+                        height,
+                        recorderId,
+                        width
+                    });
+                }
+            });
+        }
+        document.body.appendChild(element);
+        element.play().catch(() => undefined);
+
+        const recorder = new MediaRecorder(stream, kind === 'audio' ? AUDIO_RECORDER_OPTIONS : VIDEO_RECORDER_OPTIONS);
+
+        // Chunks are delivered one after the other, after the service has named the track's file.
+        let chain = emit('track_started', {
+            endpointId: track.getParticipantId(),
+            kind,
+            recorderId
+        });
+
+        recorder.ondataavailable = ({ data }) => {
+            if (data.size) {
+                chain = chain
+                    .then(() => toBase64(data))
+                    .then(base64 => window.recorderBotChunk(recorderId, base64))
+                    .catch(error => emit('recorder_error', {
+                        error: String(error),
+                        recorderId
+                    }));
+            }
+        };
+        recorder.onerror = event => emit('recorder_error', {
+            error: String(event.error?.name || event.error),
+            recorderId
+        });
+
+        // The last chunk comes just before the recorder stops; it is delivered once the chain has caught up.
+        const done = new Promise(resolve => {
+            recorder.onstop = resolve;
+        }).then(() => chain);
+
+        delivered.add(done);
+        recorder.start(CHUNK_MS);
+        recorders.set(track, {
+            element,
+            recorder,
+            recorderId
+        });
+    }
+
+    /**
+     * Stops recording a track.
+     *
+     * @param {JitsiRemoteTrack} track - The track.
+     * @returns {Object|undefined} The track's recorder, if it was recorded.
+     */
+    function stopRecording(track) {
+        const state = recorders.get(track);
+
+        if (!state) {
+            return undefined;
+        }
+        recorders.delete(track);
+        if (state.recorder.state !== 'inactive') {
+            state.recorder.stop();
+        }
+        state.element.srcObject = null;
+        state.element.remove();
+
+        return state;
     }
 
     /**
@@ -92,6 +222,11 @@
             });
             emit('joined', { meetingId: conference.getMeetingUniqueId() });
         });
+
+        // The meeting id usually arrives just after the join.
+        conference.on(events.CONFERENCE_UNIQUE_ID_SET, () => {
+            emit('meeting_id', { meetingId: conference.getMeetingUniqueId() });
+        });
         conference.on(events.USER_JOINED, (id, user) => {
             emit('participant_joined', participant(id, user));
 
@@ -104,6 +239,18 @@
             }, PRESENCE_RESEND_MS);
         });
         conference.on(events.USER_LEFT, id => emit('participant_left', { endpointId: id }));
+        conference.on(events.TRACK_ADDED, track => {
+            if (!track.isLocal() && !stopping) {
+                startRecording(track);
+            }
+        });
+        conference.on(events.TRACK_REMOVED, track => {
+            const state = stopRecording(track);
+
+            if (state && !stopping) {
+                emit('track_stopped', { recorderId: state.recorderId });
+            }
+        });
         conference.on(events.KICKED, () => emit('kicked'));
         conference.on(events.CONFERENCE_FAILED, error => {
             if (error === JitsiMeetJS.errors.conference.CONFERENCE_DESTROYED) {
@@ -165,7 +312,7 @@
         },
 
         /**
-         * Leaves the conference and disconnects.
+         * Closes every recorder and delivers its last chunks, then leaves the conference and disconnects.
          *
          * @param {Object} options - Options.
          * @param {boolean} options.leave - Whether to leave the conference first. Not worth waiting for when the
@@ -174,6 +321,10 @@
          */
         async stop({ leave }) {
             stopping = true;
+            for (const track of [ ...recorders.keys() ]) {
+                stopRecording(track);
+            }
+            await Promise.all(delivered);
             if (leave && conference) {
                 await Promise.race([
                     conference.leave().catch(() => undefined),

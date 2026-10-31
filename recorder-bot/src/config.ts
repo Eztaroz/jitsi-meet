@@ -34,6 +34,15 @@ export interface IConfig {
 
     /** The highest video resolution the bot asks for. */
     maxHeight: number;
+
+    /**
+     * Where consultations are recorded while they run and finalised, before they move to the storage root. It must
+     * be on persistent local storage.
+     */
+    spoolDir: string;
+
+    /** The evidence storage root: where finalised evidence recordings are kept. */
+    storageRoot: string;
 }
 
 /**
@@ -105,6 +114,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         firstJoinWaitMs: positiveInteger(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', 600) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
-        maxHeight: positiveInteger(env, 'RECORDER_BOT_MAX_HEIGHT', 720)
+        maxHeight: positiveInteger(env, 'RECORDER_BOT_MAX_HEIGHT', 720),
+        spoolDir: required(env, 'RECORDER_BOT_SPOOL_DIR'),
+        storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT')
     };
 }

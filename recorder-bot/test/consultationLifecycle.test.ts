@@ -65,7 +65,9 @@ function consultation(options?: ILifecycleOptions) {
     return {
         commands,
         send,
+        participants: () => lifecycle.participants(),
         staffVisits: () => lifecycle.staffVisits(),
+        tracks: () => lifecycle.tracks(),
         get stop() {
             const entry = timeline.find(e => e.type === 'stopped');
 
@@ -515,6 +517,118 @@ describe('timeline', () => {
             { at: at(9_000), type: 'track_stopped', file: '01-patient1-audio.webm' },
             { at: at(9_000), type: 'participant_left', endpointId: 'patient1' },
             { at: at(10_000), type: 'stopped', reason: 'room_destroyed' }
+        ]);
+    });
+});
+
+describe('tracks', () => {
+    test('a change of video resolution is recorded against its file', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'track_started', endpointId: 'patient1', kind: 'video', file: '01-patient1-video.webm' });
+        mock.timers.tick(3_000);
+        c.send({ type: 'video_resolution', file: '01-patient1-video.webm', width: 320, height: 180 });
+
+        assert.deepEqual(c.timeline.filter(e => e.type === 'video_resolution'), [
+            { at: at(3_000), type: 'video_resolution', file: '01-patient1-video.webm', width: 320, height: 180 }
+        ]);
+    });
+
+    test('a track still open at the stop ends at the stop time, before the stop entry', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'track_started', endpointId: 'patient1', kind: 'audio', file: '01-patient1-audio.webm' });
+        c.send({ type: 'track_started', endpointId: 'patient1', kind: 'video', file: '02-patient1-video.webm' });
+        mock.timers.tick(4_000);
+        c.send({ type: 'track_stopped', file: '01-patient1-audio.webm' });
+        mock.timers.tick(6_000);
+        c.send({ type: 'room_destroyed' });
+
+        assert.deepEqual(c.timeline.slice(-3), [
+            { at: at(4_000), type: 'track_stopped', file: '01-patient1-audio.webm' },
+            { at: at(10_000), type: 'track_stopped', file: '02-patient1-video.webm' },
+            { at: at(10_000), type: 'stopped', reason: 'room_destroyed' }
+        ]);
+    });
+});
+
+describe('track list', () => {
+    test('lists each track with its start and stop; one still open at the stop ends at the stop time', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        mock.timers.tick(1_000);
+        c.send({ type: 'track_started', endpointId: 'patient1', kind: 'audio', file: '01-patient1-audio.webm' });
+        mock.timers.tick(1_000);
+        c.send({ type: 'track_started', endpointId: 'patient1', kind: 'video', file: '02-patient1-video.webm' });
+        mock.timers.tick(5_000);
+        c.send({ type: 'track_stopped', file: '02-patient1-video.webm' });
+        mock.timers.tick(3_000);
+        c.send({ type: 'shutdown' });
+
+        assert.deepEqual(c.tracks(), [
+            { endpointId: 'patient1', file: '01-patient1-audio.webm', kind: 'audio', start: at(1_000), stop: at(10_000) },
+            { endpointId: 'patient1', file: '02-patient1-video.webm', kind: 'video', start: at(2_000), stop: at(7_000) }
+        ]);
+    });
+
+    test('a track still in progress has no stop', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'track_started', endpointId: 'patient1', kind: 'audio', file: '01-patient1-audio.webm' });
+
+        assert.deepEqual(c.tracks(), [
+            { endpointId: 'patient1', file: '01-patient1-audio.webm', kind: 'audio', start: at(0), stop: undefined }
+        ]);
+    });
+});
+
+describe('participants', () => {
+    test('lists each endpoint with its joins and leaves, in the order they first joined', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient', displayName: 'P' });
+        mock.timers.tick(2_000);
+        c.send({ type: 'participant_joined', endpointId: 'staff1', role: 'unknown', displayName: 'S' });
+        mock.timers.tick(3_000);
+        c.send({ type: 'participant_left', endpointId: 'staff1' });
+        mock.timers.tick(1_000);
+        c.send({ type: 'participant_joined', endpointId: 'other1', role: 'unknown', hidden: true });
+        c.send({ type: 'room_destroyed' });
+
+        assert.deepEqual(c.participants(), [
+            {
+                endpointId: 'patient1',
+                displayName: 'P',
+                identity: undefined,
+                role: 'patient',
+                joins: [ at(0) ],
+                leaves: []
+            },
+            {
+                endpointId: 'staff1',
+                displayName: 'S',
+                identity: undefined,
+                role: 'unknown',
+                joins: [ at(2_000) ],
+                leaves: [ at(5_000) ]
+            },
+            {
+                endpointId: 'other1',
+                displayName: undefined,
+                hidden: true,
+                identity: undefined,
+                role: 'unknown',
+                joins: [ at(6_000) ],
+                leaves: []
+            }
         ]);
     });
 });

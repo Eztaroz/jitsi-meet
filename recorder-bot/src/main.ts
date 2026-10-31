@@ -1,12 +1,18 @@
 /**
  * The recorder bot service: runs the control API and records each consultation it is asked to.
  */
+import { mkdirSync } from 'node:fs';
+
 import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
 import { Consultations } from './consultations.ts';
 import { log } from './log.ts';
 
 const config = loadConfig();
+
+// The spool is local; the storage root is not created here (see moveIntoStorage).
+mkdirSync(config.spoolDir, { recursive: true });
+
 const consultations = new Consultations(config);
 const api = createApi({ consultations, secret: config.apiSecret });
 

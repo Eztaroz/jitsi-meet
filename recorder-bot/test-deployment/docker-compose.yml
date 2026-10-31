@@ -117,6 +117,12 @@ services:
         ipc: host
         # On the host network the bot reaches the web server on localhost and JVB on the advertised 127.0.0.1.
         network_mode: host
+        # Root, so that the service can write to ./evidence and ./spool, which belong to whoever checked the
+        # repository out. The tests read the evidence recordings in ./evidence.
+        user: root
+        volumes:
+            - ./evidence:/evidence
+            - ./spool:/var/lib/recorder-bot/spool
         environment:
             - RECORDER_BOT_API_PORT
             - RECORDER_BOT_API_SECRET
@@ -126,6 +132,7 @@ services:
             - RECORDER_BOT_PASSWORD=${JIBRI_RECORDER_PASSWORD}
             - RECORDER_BOT_JITSI_URL=https://localhost:${HTTPS_PORT}
             - RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS=true
+            - RECORDER_BOT_STORAGE_ROOT=/evidence
         depends_on:
             - web
 

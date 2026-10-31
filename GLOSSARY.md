@@ -45,3 +45,11 @@ _Avoid_: Video, recording file
 **Timeline**:
 The time-ordered record of joins, leaves and tracks within a consultation, including each staff visit.
 _Avoid_: Log, history
+
+**Evidence storage root**:
+The file storage the hospital provides, where evidence recordings are kept, one folder per consultation under the patient's HN.
+_Avoid_: Archive, bucket, upload
+
+**Spool**:
+The recorder bot service's own local storage, where a consultation is recorded and finalised before its evidence recording moves to the evidence storage root.
+_Avoid_: Cache, temp folder

@@ -17,6 +17,11 @@ RUN --mount=type=secret,id=npm_ca,required=false \
     && npm cache clean --force
 COPY src ./src
 
+# The spool, where consultations are recorded and finalised before they move to the evidence storage root. Mount a
+# volume here so that it outlives the container.
+RUN mkdir -p /var/lib/recorder-bot/spool && chown pwuser:pwuser /var/lib/recorder-bot/spool
+ENV RECORDER_BOT_SPOOL_DIR=/var/lib/recorder-bot/spool
+
 USER pwuser
 ENV NODE_ENV=production
 EXPOSE 8090

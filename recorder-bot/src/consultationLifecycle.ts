@@ -1,5 +1,6 @@
 /**
- * The consultation lifecycle module: owns the stop rule and the timeline of one consultation.
+ * The consultation lifecycle module: owns the stop rule and the timeline of one consultation, and summarises its
+ * participants, tracks and staff visits for the manifest.
  *
  * It is pure. It takes timestamped events and returns timeline entries and commands. It does no I/O and has no
  * timers of its own: the caller runs the timers it asks for and reports back with a `timer_fired` event.
@@ -32,6 +33,9 @@ export type LifecycleEvent = { at: Date; } & (
     | { endpointId: string; type: 'participant_left'; }
     | { endpointId: string; file: string; kind: TrackKind; type: 'track_started'; }
     | { file: string; type: 'track_stopped'; }
+
+    /** The resolution a video track is received at changed. */
+    | { file: string; height: number; type: 'video_resolution'; width: number; }
     | { type: 'room_destroyed'; }
     | { type: 'kicked'; }
 
@@ -60,6 +64,7 @@ export type TimelineEntry = { at: Date; } & (
     | { endpointId: string; type: 'participant_left'; }
     | { endpointId: string; file: string; kind: TrackKind; type: 'track_started'; }
     | { file: string; type: 'track_stopped'; }
+    | { file: string; height: number; type: 'video_resolution'; width: number; }
     | { type: 'bot_interrupted'; }
     | { type: 'bot_resumed'; }
 
@@ -76,6 +81,28 @@ export interface IStaffVisit {
     endpointId: string;
     identity?: IIdentity;
     start: Date;
+}
+
+/** A participant as the consultation saw it. A rejoin is a new endpoint, so a new participant. */
+export interface IParticipant {
+    displayName?: string;
+    endpointId: string;
+    hidden?: true;
+    identity?: IIdentity;
+    joins: Date[];
+    leaves: Date[];
+    role: Role;
+}
+
+/** One recorded track: one file. */
+export interface ITrack {
+    endpointId: string;
+    file: string;
+    kind: TrackKind;
+    start: Date;
+
+    /** When the track stopped; undefined while it is still recorded. A track open at the stop ends then. */
+    stop?: Date;
 }
 
 export interface ILifecycleOptions {
@@ -103,12 +130,26 @@ export interface IConsultationLifecycle {
     handle: (event: LifecycleEvent) => ILifecycleResult;
 
     /**
+     * Returns the participants so far, in the order they first joined, with when they joined and left.
+     *
+     * @returns {IParticipant[]}
+     */
+    participants: () => IParticipant[];
+
+    /**
      * Returns the staff visits so far, in the order they started. A visit still open when the consultation stopped
      * ends at the stop time.
      *
      * @returns {IStaffVisit[]}
      */
     staffVisits: () => IStaffVisit[];
+
+    /**
+     * Returns the tracks so far, in the order they started.
+     *
+     * @returns {ITrack[]}
+     */
+    tracks: () => ITrack[];
 }
 
 export const DEFAULT_FIRST_JOIN_MS = 10 * 60 * 1000;
@@ -142,6 +183,9 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
     const visits: IStaffVisit[] = [];
     const openVisits = new Map<string, IStaffVisit>();
     const activeTimers = new Set<Timer>();
+    const tracks: ITrack[] = [];
+    const openTracks = new Map<string, ITrack>();
+    const participants = new Map<string, IParticipant>();
 
     /**
      * Returns the command that starts a timer, and remembers it as active.
@@ -184,7 +228,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
     }
 
     /**
-     * Stops the consultation: cancels the running timers and records why.
+     * Stops the consultation: cancels the running timers, ends the open visits, gap and tracks, and records why.
      *
      * @param {Date} at - When.
      * @param {StopReason} reason - Why.
@@ -198,8 +242,16 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
         }
         openVisits.clear();
 
+        const trackStops: TimelineEntry[] = [ ...openTracks.values() ].map(track => {
+            track.stop = at;
+
+            return { at, file: track.file, type: 'track_stopped' };
+        });
+
+        openTracks.clear();
+
         return {
-            entries: [ ...closeGap(at), { at, reason, type: 'stopped' } ],
+            entries: [ ...closeGap(at), ...trackStops, { at, reason, type: 'stopped' } ],
             commands: [
                 ...[ ...activeTimers ].flatMap(cancelTimer),
                 { reason, type: 'stop' }
@@ -221,6 +273,21 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                 };
             case 'participant_joined': {
                 const { at, displayName, endpointId, identity, role } = event;
+                let participant = participants.get(endpointId);
+
+                if (!participant) {
+                    participant = {
+                        displayName,
+                        endpointId,
+                        ...event.hidden ? { hidden: true } as const : {},
+                        identity,
+                        joins: [],
+                        leaves: [],
+                        role
+                    };
+                    participants.set(endpointId, participant);
+                }
+                participant.joins.push(at);
 
                 if (event.hidden) {
                     hidden.add(endpointId);
@@ -250,6 +317,8 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             case 'participant_left': {
                 const { at, endpointId } = event;
 
+                participants.get(endpointId)?.leaves.push(at);
+
                 if (hidden.delete(endpointId)) {
                     return { entries: [ { at, endpointId, type: 'participant_left' } ], commands: [] };
                 }
@@ -270,11 +339,29 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             }
             case 'track_started': {
                 const { at, endpointId, file, kind } = event;
+                const track = { endpointId, file, kind, start: at, stop: undefined };
+
+                tracks.push(track);
+                openTracks.set(file, track);
 
                 return { entries: [ { at, endpointId, file, kind, type: 'track_started' } ], commands: [] };
             }
-            case 'track_stopped':
+            case 'track_stopped': {
+                const track = openTracks.get(event.file);
+
+                if (track) {
+                    track.stop = event.at;
+                    openTracks.delete(event.file);
+                }
+
+
                 return { entries: [ { at: event.at, file: event.file, type: 'track_stopped' } ], commands: [] };
+            }
+            case 'video_resolution': {
+                const { at, file, height, width } = event;
+
+                return { entries: [ { at, file, height, type: 'video_resolution', width } ], commands: [] };
+            }
             case 'bot_interrupted':
                 interruptedAt ??= event.at;
 
@@ -296,8 +383,16 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             }
         },
 
+        participants() {
+            return [ ...participants.values() ].map(p => ({ ...p, joins: [ ...p.joins ], leaves: [ ...p.leaves ] }));
+        },
+
         staffVisits() {
             return visits.map(visit => ({ ...visit }));
+        },
+
+        tracks() {
+            return tracks.map(track => ({ ...track }));
         }
     };
 }

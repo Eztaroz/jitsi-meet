@@ -11,10 +11,12 @@ import {
     type LifecycleCommand,
     type LifecycleEvent,
     type StopReason,
+    type TimelineEntry,
     type Timer,
     createConsultationLifecycle
 } from './consultationLifecycle.ts';
-import { log } from './log.ts';
+import { EvidenceRecording, evidenceLocation } from './evidence.ts';
+import { errorCode, log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
 
 export type ConsultationStatus =
@@ -30,6 +32,9 @@ export type ConsultationStatus =
 export interface IConsultationSnapshot {
     consultationId: string;
     error?: string;
+
+    /** Where the evidence recording is, relative to the evidence storage root, once it is stored. */
+    evidenceLocation?: string;
     hn: string;
     room: string;
     startedAt: string;
@@ -55,11 +60,21 @@ export class Consultation {
     readonly done: Promise<void>;
 
     private readonly config: IConfig;
+    private readonly evidence: EvidenceRecording;
     private readonly lifecycle: IConsultationLifecycle;
+    private readonly timeline: TimelineEntry[] = [];
     private readonly timers = new Map<Timer, ReturnType<typeof setTimeout>>();
+
+    /** The file of each of the page's recorders. */
+    private readonly files = new Map<string, string>();
+
+    /** Files a chunk could not be written to, so that each is logged once. */
+    private readonly failedFiles = new Set<string>();
     private bot?: IBot;
     private botJoined = false;
     private error?: string;
+    private evidenceLocation?: string;
+    private meetingId?: string;
     private humanJoined = false;
     private status: ConsultationStatus = 'starting';
     private stopReason?: StopReason;
@@ -79,6 +94,11 @@ export class Consultation {
         this.lifecycle = createConsultationLifecycle({
             emptyRoomMs: config.emptyRoomGraceMs,
             firstJoinMs: config.firstJoinWaitMs
+        });
+        this.evidence = new EvidenceRecording({
+            consultationId: this.id,
+            spoolDir: config.spoolDir,
+            storageRoot: config.storageRoot
         });
         this.done = new Promise(resolve => {
             this.resolveDone = resolve;
@@ -103,6 +123,7 @@ export class Consultation {
         return {
             consultationId: this.id,
             error: this.error,
+            evidenceLocation: this.evidenceLocation,
             hn: this.hn,
             room: this.room,
             startedAt: this.startedAt.toISOString(),
@@ -119,10 +140,11 @@ export class Consultation {
      */
     start() {
         log.info('consultation starting', { consultationId: this.id });
-        launchBot(this.config, { consultationId: this.id, room: this.room }, {
+        this.evidence.open().then(() => launchBot(this.config, { consultationId: this.id, room: this.room }, {
+            onChunk: (recorderId, data) => this.onChunk(recorderId, data),
             onCrash: reason => this.fail(reason),
             onEvent: event => this.onPageEvent(event)
-        }).then(bot => {
+        })).then(bot => {
             this.bot = bot;
             if (!this.isActive() || this.status === 'finalising') {
                 // It ended while the browser was starting.
@@ -156,8 +178,12 @@ export class Consultation {
         case 'joined':
             log.info('bot joined', { consultationId: this.id });
             this.botJoined = true;
+            this.meetingId ??= event.meetingId;
             this.updateStatus();
             this.send({ meetingId: event.meetingId, type: 'bot_joined' });
+            break;
+        case 'meeting_id':
+            this.meetingId ??= event.meetingId;
             break;
         case 'participant_joined':
             if (!event.hidden) {
@@ -175,6 +201,36 @@ export class Consultation {
         case 'participant_left':
             this.send({ endpointId: event.endpointId, type: 'participant_left' });
             break;
+        case 'track_started': {
+            const file = this.evidence.newFile(event.endpointId, event.kind);
+
+            this.files.set(event.recorderId, file);
+            this.send({ endpointId: event.endpointId, file, kind: event.kind, type: 'track_started' });
+            break;
+        }
+        case 'track_stopped': {
+            const file = this.files.get(event.recorderId);
+
+            if (file) {
+                this.send({ file, type: 'track_stopped' });
+            }
+            break;
+        }
+        case 'video_resolution': {
+            const file = this.files.get(event.recorderId);
+
+            if (file) {
+                this.send({ file, height: event.height, type: 'video_resolution', width: event.width });
+            }
+            break;
+        }
+        case 'recorder_error':
+            log.warn('recorder error', {
+                consultationId: this.id,
+                error: event.error,
+                file: this.files.get(event.recorderId)
+            });
+            break;
         case 'room_destroyed':
             this.send({ type: 'room_destroyed' });
             break;
@@ -186,6 +242,35 @@ export class Consultation {
         case 'disconnected':
             this.fail(`${event.type}: ${event.error}`);
             break;
+        }
+    }
+
+    /**
+     * Appends a recorder's chunk to its file in the spool.
+     *
+     * @param {string} recorderId - The page's recorder.
+     * @param {Buffer} data - The chunk.
+     * @returns {Promise<void>}
+     */
+    private async onChunk(recorderId: string, data: Buffer) {
+        const file = this.files.get(recorderId);
+
+        if (!file) {
+            log.warn('chunk for an unknown recorder', { consultationId: this.id });
+
+            return;
+        }
+        try {
+            await this.evidence.append(file, data);
+        } catch (error) {
+            if (!this.failedFiles.has(file)) {
+                this.failedFiles.add(file);
+                log.error('could not write to a file in the spool', {
+                    consultationId: this.id,
+                    error: errorCode(error),
+                    file
+                });
+            }
         }
     }
 
@@ -216,6 +301,7 @@ export class Consultation {
 
         const { commands, entries } = this.lifecycle.handle({ ...event, at: new Date() } as LifecycleEvent);
 
+        this.timeline.push(...entries);
         for (const entry of entries) {
             if (entry.type === 'stopped') {
                 this.stoppedAt = entry.at;
@@ -252,7 +338,8 @@ export class Consultation {
     }
 
     /**
-     * Stops the bot after the lifecycle module decided the consultation is over.
+     * Stops the bot after the lifecycle module decided the consultation is over, finalises the evidence recording
+     * and moves it into the storage root.
      *
      * @param {StopReason} reason - Why.
      * @returns {Promise<void>}
@@ -265,6 +352,47 @@ export class Consultation {
         // When the room is gone, leaving would only wait for a timeout.
         await this.bot?.stop({ leave: reason !== 'room_destroyed' && reason !== 'kicked' });
 
+        try {
+            await this.evidence.finalise({
+                consultationId: this.id,
+                end: this.stoppedAt ?? new Date(),
+                hn: this.hn,
+                meetingId: this.meetingId,
+                participants: this.lifecycle.participants(),
+                room: this.room,
+                staffVisits: this.lifecycle.staffVisits(),
+                start: this.startedAt,
+                stopReason: reason,
+                timeline: this.timeline,
+                tracks: this.lifecycle.tracks()
+            });
+        } catch (error) {
+            this.error = `finalise_failed: ${errorCode(error)}`;
+            log.error('could not finalise the evidence recording; it stays in the spool', {
+                consultationId: this.id,
+                error: errorCode(error)
+            });
+            this.settle('failed');
+
+            return;
+        }
+
+        const location = evidenceLocation(this.room, this.startedAt);
+
+        try {
+            await this.evidence.store(location);
+        } catch (error) {
+            this.error = `store_failed: ${errorCode(error)}`;
+            log.error('could not move the evidence recording to the storage root; it stays in the spool', {
+                consultationId: this.id,
+                error: errorCode(error)
+            });
+            this.settle('spooled');
+
+            return;
+        }
+        this.evidenceLocation = location;
+        log.info('evidence recording stored', { consultationId: this.id, files: this.lifecycle.tracks().length });
         this.settle('stored');
     }
 

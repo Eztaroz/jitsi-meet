@@ -32,9 +32,11 @@ docker compose up -d
 
 `.env` holds the deployment's settings, including a 10-second empty-room grace and a 20-second first-join wait so that the tests do not wait long; `expectations.json` tells the tests those values. The containers write their generated configuration to `config/`. After a web rebuild, reload the page; after a change to the service, rebuild its image and run `docker compose up -d recorder-bot`.
 
+The service stores evidence recordings in `evidence/`, its evidence storage root, and keeps its spool in `spool/`. It runs as root here so that it can write to both; delete what it wrote with `sudo` if you are not root.
+
 ## Running the end-to-end tests
 
-The WebdriverIO suite's `specs/recorderBot` tests run against this deployment. `tests.env` points the suite at it and sets the `recorderBot.available` expectation through `expectations.json`. From `tests/`:
+The WebdriverIO suite's `specs/recorderBot` tests run against this deployment. `tests.env` points the suite at it, sets the `recorderBot.available` expectation through `expectations.json`, and gives the evidence tests the storage root. Those tests play the stored files with `ffmpeg` and `ffprobe`, which must be on `PATH`. From `tests/`:
 
 ```bash
 set -a; . ../recorder-bot/test-deployment/tests.env; set +a

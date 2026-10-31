@@ -60,7 +60,9 @@ export const config = {
         /** The bearer secret of the recorder bot service's control API. */
         apiSecret: process.env.RECORDER_BOT_API_SECRET?.trim(),
         /** The recorder bot service's control API, e.g. http://localhost:8090. */
-        apiUrl: process.env.RECORDER_BOT_API_URL?.trim()?.replace(/\/+$/, '')
+        apiUrl: process.env.RECORDER_BOT_API_URL?.trim()?.replace(/\/+$/, ''),
+        /** The service's evidence storage root as this machine sees it, absolute or relative to tests/. */
+        storageRoot: process.env.RECORDER_BOT_STORAGE_ROOT?.trim()
     },
     roomName: {
         /** Optional fixed room name that overrides the generated one entirely. */
