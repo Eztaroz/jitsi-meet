@@ -56,6 +56,12 @@ export const config = {
         })(),
         privateKeyPath: process.env.JWT_PRIVATE_KEY_PATH?.trim()
     },
+    recorderBot: {
+        /** The bearer secret of the recorder bot service's control API. */
+        apiSecret: process.env.RECORDER_BOT_API_SECRET?.trim(),
+        /** The recorder bot service's control API, e.g. http://localhost:8090. */
+        apiUrl: process.env.RECORDER_BOT_API_URL?.trim()?.replace(/\/+$/, '')
+    },
     roomName: {
         /** Optional fixed room name that overrides the generated one entirely. */
         name: process.env.ROOM_NAME?.trim(),

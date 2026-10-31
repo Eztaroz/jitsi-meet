@@ -34,6 +34,9 @@ export type LifecycleEvent = { at: Date; } & (
     | { file: string; type: 'track_stopped'; }
     | { type: 'room_destroyed'; }
     | { type: 'kicked'; }
+
+    /** The recorder bot service is shutting down. */
+    | { type: 'shutdown'; }
     | { type: 'bot_interrupted'; }
     | { type: 'bot_resumed'; }
     | { timer: Timer; type: 'timer_fired'; }
@@ -282,6 +285,8 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                 return stop(event.at, 'room_destroyed');
             case 'kicked':
                 return stop(event.at, 'kicked');
+            case 'shutdown':
+                return stop(event.at, 'shutdown');
             case 'timer_fired':
                 if (!activeTimers.delete(event.timer)) {
                     return nothing();

@@ -230,6 +230,17 @@ describe('immediate stops', () => {
         assert.deepEqual(c.stop, { at: at(10_000), reason: 'kicked' });
     });
 
+    test('a service shutdown stops at once with shutdown', () => {
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        mock.timers.tick(10_000);
+        c.send({ type: 'shutdown' });
+
+        assert.deepEqual(c.stop, { at: at(10_000), reason: 'shutdown' });
+    });
+
     test('a stop cancels the running timers', () => {
         const c = consultation({ firstJoinMs: 600_000 });
 

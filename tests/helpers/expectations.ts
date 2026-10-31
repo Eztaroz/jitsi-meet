@@ -63,6 +63,11 @@ const defaultExpectations = {
             turn: true
         }
     },
+    recorderBot: {
+        // The recorder bot service (recorder-bot/) runs against this deployment, and RECORDER_BOT_API_URL and
+        // RECORDER_BOT_API_SECRET reach its control API. The specs/recorderBot tests are skipped otherwise.
+        available: false
+    },
     // We can create conferences under any tenant.
     useTenant: true
 };

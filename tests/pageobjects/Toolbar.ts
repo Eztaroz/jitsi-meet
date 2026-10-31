@@ -12,6 +12,7 @@ const CHAT = 'Open chat';
 const CLOSE_CHAT = 'Close chat';
 const CLOSE_PARTICIPANTS_PANE = 'Close participants pane';
 const DESKTOP = 'Start sharing your screen';
+const END_MEETING_FOR_ALL = 'End meeting for all';
 const HANGUP = 'Leave the meeting';
 const OVERFLOW_MENU = 'More actions menu';
 const OVERFLOW = 'More actions';
@@ -466,6 +467,20 @@ export default class Toolbar extends BasePageObject {
         await this.participant.log('Clicking on: Hangup Button');
 
         return this.getButton(HANGUP).click();
+    }
+
+    /**
+     * Ends the conference for everyone, from the hangup menu that moderators get.
+     */
+    async clickEndMeetingForAllButton(): Promise<void> {
+        await this.participant.log('Clicking on: End meeting for all');
+        await this.getButton(HANGUP).click();
+
+        const endMeetingForAll = this.getButton(END_MEETING_FOR_ALL);
+
+        await endMeetingForAll.waitForDisplayed();
+
+        return endMeetingForAll.click();
     }
 
     /**

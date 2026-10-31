@@ -192,8 +192,12 @@ function generateCapabilitiesFromSpecs(): { capabilities: Record<string, any>; e
                         } : {}),
                         'goog:chromeOptions': {
                             args: chromeArgs,
-                            prefs: chromePreferences
+                            prefs: chromePreferences,
+                            ...(process.env.CHROME_BINARY ? { binary: process.env.CHROME_BINARY } : {})
                         },
+                        ...(process.env.CHROMEDRIVER_BINARY ? {
+                            'wdio:chromedriverOptions': { binary: process.env.CHROMEDRIVER_BINARY }
+                        } : {}),
                         'wdio:exclude': Array.from(browserExclusions[browser] || [])
                     }
                 }

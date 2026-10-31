@@ -1,0 +1,6 @@
+{
+    // The test deployment runs the recorder bot service.
+    "recorderBot": {
+        "available": true
+    }
+}

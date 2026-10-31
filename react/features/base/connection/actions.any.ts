@@ -9,8 +9,7 @@ import { isEmbedded } from '../util/embedUtils';
 import { parseURLParams } from '../util/parseURLParams';
 import {
     appendURLParam,
-    getBackendSafeRoomName,
-    getNormalizedRoomName
+    getBackendSafeRoomName
 } from '../util/uri';
 
 import {
@@ -143,7 +142,10 @@ export function constructOptions(state: IReduxState) {
     const { room } = state['features/base/conference'];
 
     if (serviceUrl && room) {
-        const roomName = getNormalizedRoomName(room);
+        // Name the room as it is joined: Prosody modules such as end_conference look the room up by this
+        // parameter, so a decoded name finds no room when it holds characters that the room's JID encodes,
+        // for example a patient HN with "/". The URL encodes it once more and Prosody decodes it once.
+        const roomName = getBackendSafeRoomName(room);
 
         options.serviceUrl = appendURLParam(serviceUrl, 'room', roomName ?? '');
 

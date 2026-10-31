@@ -6,3 +6,4 @@ The hospital system already creates rooms from the patient's hospital number (HN
 
 - Those logs contain patient identifiers and must be access-controlled and retention-limited like other patient data.
 - A patient's consultations all reuse the same room name, so recordings must be keyed by HN plus start time, never by room name alone.
+- An HN can contain `/`, which the room name encodes as `%2F`. nginx decodes it before it picks a location, so stock Jitsi nginx configuration reads the patient's link as a room under a tenant. Deployments include `recorder-bot/deploy/nginx/hn-rooms.conf` to keep the link in one room. The fork also names the room in the XMPP websocket's `room` parameter as the room's JID does: upstream decodes it, so Prosody finds no room for such a name, and "End meeting for all" does nothing there.

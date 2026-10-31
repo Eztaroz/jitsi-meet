@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Recorder bot</title>
+    <meta name="robots" content="noindex">
+    <!--
+        The recorder bot service (recorder-bot/) drives this page in headless Chromium. It is served from the
+        deployment's own web server so that it runs on the Jitsi origin and loads the deployed config.js and
+        lib-jitsi-meet. It does nothing until the service calls recorderBot.start().
+    -->
+    <script src="../config.js"></script>
+    <script src="../libs/lib-jitsi-meet.min.js"></script>
+    <script src="recorder-bot.js"></script>
+</head>
+<body></body>
+</html>
