@@ -99,8 +99,10 @@ The deployment supports the fork's web client only (ADR 0010, ADR 0007). On dock
    Only the hosts in `muc_require_move_support_exempt_hosts` are exempt, set through `XMPP_MUC_CONFIGURATION` (add it to any `token_verification_allowlist` line you already have there):
 
    ```
-   muc_require_move_support_exempt_hosts = { "auth.meet.example.org", "recorder.meet.example.org" }
+   muc_require_move_support_exempt_hosts = { "auth.meet.example.org"; "recorder.meet.example.org" }
    ```
+
+   Separate the hosts with `;`, not `,`: the docker-jitsi-meet image turns every comma in `XMPP_MUC_CONFIGURATION` into a new line, which breaks the list and stops Prosody from starting.
 
    List the auth domain (Jicofo, which also covers Jibri) and the recorder bot's hidden domain (`XMPP_HIDDEN_DOMAIN`), written out in full. Without the option the module assumes `auth.<domain>` and `recorder.<domain>`. Every other host must announce move support, the guest domain included. No dial-in is deployed: **adding dial-in (Jigasi) later means adding its host to this list**, otherwise it is refused.
 

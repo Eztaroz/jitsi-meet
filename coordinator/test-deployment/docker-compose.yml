@@ -33,7 +33,7 @@ services:
             XMPP_MUC_MODULES: muc_require_move_support
             XMPP_MUC_CONFIGURATION: |
                 token_verification_allowlist = { "${XMPP_HIDDEN_DOMAIN}" }
-                muc_require_move_support_exempt_hosts = { "auth.meet.jitsi", "${XMPP_HIDDEN_DOMAIN}" }
+                muc_require_move_support_exempt_hosts = { "auth.meet.jitsi"; "${XMPP_HIDDEN_DOMAIN}" }
             # The guest domain exists so that webOnly.spec.ts can check that it is not exempt.
             ENABLE_GUESTS: '1'
             XMPP_MODULES: presence_identity,coordinator_api
