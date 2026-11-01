@@ -44,6 +44,13 @@ if not muc_domain_base then
     return ;
 end
 
+-- docker-jitsi-meet loads XMPP_MODULES on the guest virtual host too once guests are enabled; the API belongs on the
+-- main one, the only host with token authentication.
+if module.host ~= muc_domain_base then
+    module:log("debug", "Not the main virtual host, disabling the coordinator API.");
+    return ;
+end
+
 local key_server = module:get_option_string("coordinator_api_key_server", "");
 if key_server == "" then
     module:log("warn", "No 'coordinator_api_key_server' option set, disabling the coordinator API.");
