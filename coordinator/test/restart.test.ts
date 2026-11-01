@@ -10,7 +10,7 @@ import { CoordinatorService } from '../src/coordinatorService.ts';
 import type { Prosody } from '../src/prosody.ts';
 import type { RecorderBot } from '../src/recorderBot.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
-import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, PREPARE_WAIT_MS } from '../src/rules.ts';
+import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, type IMove, PREPARE_WAIT_MS } from '../src/rules.ts';
 import { Store } from '../src/store.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
@@ -130,6 +130,20 @@ describe('the coordinator service across a restart', () => {
         mock.timers.reset();
     });
 
+    /**
+     * Learns the patient's own room, then asks to move them back into it while it is closed: the move prepares it.
+     *
+     * @returns {Promise<IMove>}
+     */
+    async function moveToClosedOwnRoom(): Promise<IMove> {
+        rooms = [ { name: 'hn-a', occupants: [ patient ] }, { name: 'station-1', occupants: [ staff ] } ];
+        await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'station-1' }, 'system');
+        await advance(PREPARE_WAIT_MS);
+        rooms = [ { name: 'station-1', occupants: [ staff, patient ] } ];
+
+        return service.requestMove({ endpointId: 'e-pat', fromRoom: 'station-1', toRoom: 'hn-a' }, 'system');
+    }
+
     const stateOf = (moveId: string) => service.state.moves.find(m => m.id === moveId);
     const moveAudits = () => service.audit(100).filter(e => e.kind === 'move');
 
@@ -203,23 +217,21 @@ describe('the coordinator service across a restart', () => {
     });
 
     it('fails a move still waiting for the recorder bot with recorder_bot_not_ready when its deadline passed', async () => {
-        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
-
-        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+        const move = await moveToClosedOwnRoom();
 
         await settle();
         await restart(PREPARE_WAIT_MS + 1000);
 
         assert.equal(stateOf(move.id)?.state, 'failed');
         assert.equal(stateOf(move.id)?.reason, 'recorder_bot_not_ready');
-        assert.equal(moveAudits().length, 1);
+        // One entry for the earlier station move that failed, one for this move.
+        assert.equal(moveAudits().length, 2);
+        assert.equal(moveAudits()[0].reason, 'recorder_bot_not_ready');
         assert.deepEqual(sent, []);
     });
 
     it('resumes the wait for the recorder bot for the time left, then sends the patient', async () => {
-        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
-
-        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+        const move = await moveToClosedOwnRoom();
 
         await advance(10_000);
         await restart();
@@ -232,9 +244,7 @@ describe('the coordinator service across a restart', () => {
     });
 
     it('fails a resumed wait at its original deadline when the recorder bot never comes', async () => {
-        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
-
-        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+        const move = await moveToClosedOwnRoom();
 
         await advance(10_000);
         await restart();
