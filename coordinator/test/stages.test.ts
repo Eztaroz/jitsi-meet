@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { nextMidnight } from '../src/midnight.ts';
-import { initialState, queues, step } from '../src/patientFlow.ts';
+import { initialState, queues, step } from '../src/rules.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
 const at = (seconds: number) => new Date(T0.getTime() + seconds * 1000);

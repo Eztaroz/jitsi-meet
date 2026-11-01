@@ -1,12 +1,12 @@
 /**
- * Persists the patient-flow module's state in SQLite, so that encounters survive a restart.
+ * Persists the rules module's state in SQLite, so that encounters survive a restart.
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { IAuditEntry } from './audit.ts';
-import type { IEncounter, IState } from './patientFlow.ts';
+import type { IEncounter, IState } from './rules.ts';
 
 export class Store {
     private readonly _db: DatabaseSync;

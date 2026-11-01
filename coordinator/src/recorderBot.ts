@@ -1,6 +1,7 @@
 /**
  * The client of the recorder bot service's control API.
  */
+import type { IStationConsultation } from './rules.ts';
 
 export class RecorderBotUnavailableError extends Error {
     readonly code: string;
@@ -40,7 +41,7 @@ export class RecorderBot {
      * @param {string} station.room - The station.
      * @returns {Promise<string>} The consultation's id.
      */
-    async recordRoom(hn: string, station?: { patientId: string; room: string; }): Promise<string> {
+    async recordRoom(hn: string, station?: IStationConsultation): Promise<string> {
         let response: Response;
 
         try {

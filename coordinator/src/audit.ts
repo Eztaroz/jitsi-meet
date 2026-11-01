@@ -5,9 +5,9 @@
  */
 import { createHmac } from 'node:crypto';
 
-import type { IMove, Stage } from './patientFlow.ts';
 import { backendSafeRoomName } from './roomName.ts';
 import type { ILayout } from './rooms.ts';
+import type { IMove, Stage } from './rules.ts';
 
 export interface IAuditEntry {
     at: Date;

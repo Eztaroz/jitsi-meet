@@ -1,5 +1,5 @@
 /**
- * The patient-flow module: owns encounters and, in later slices, stages, queues, the room rules and moves.
+ * The rules module: owns the coordinator service's encounters, stages, queues, room rules and moves.
  *
  * It is pure. It takes timestamped events and returns the new state, the commands the caller must carry out and the
  * result for the caller's request. It does no I/O and has no timers of its own.
@@ -75,6 +75,16 @@ export interface IState {
     patientRooms: Record<string, string>;
 }
 
+/** The patient and the station they are moved into, which travel together while their time there is recorded (ADR 0006). */
+export interface IStationConsultation {
+
+    /** The patient's verified identity id. */
+    patientId: string;
+
+    /** The station. */
+    room: string;
+}
+
 /** A room as the rooms module describes it; only what the rules need. */
 export interface IRoomView {
 
@@ -94,7 +104,7 @@ export interface IRoomView {
     open?: boolean;
 }
 
-export type FlowEvent = { at: Date; } & (
+export type RulesEvent = { at: Date; } & (
     | { hn: string; type: 'start_encounter'; }
     | { encounterId: string; stage: Stage; type: 'change_stage'; }
 
@@ -115,7 +125,7 @@ export type Command =
     | { afterMs: number; moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'start_timer'; }
 
     /** Open the destination, a patient's own room, by asking the recorder bot to record it, and report back. */
-    | { hn: string; moveId: string; station?: { patientId: string; room: string; }; type: 'prepare_destination'; }
+    | { hn: string; moveId: string; station?: IStationConsultation; type: 'prepare_destination'; }
 
     /** Stop the consultation started in a station for a move that did not bring the patient. Nothing is kept. */
     | { moveId: string; type: 'stop_station_consultation'; };
@@ -284,11 +294,11 @@ export function queues(state: IState, now: Date): Queues {
  * Starts a move, or refuses it.
  *
  * @param {IState} state - The current state.
- * @param {FlowEvent} event - The request.
+ * @param {RulesEvent} event - The request.
  * @param {() => string} newId - Makes an opaque id.
  * @returns {IStep}
  */
-function requestMove(startState: IState, event: FlowEvent & { type: 'request_move'; }, newId: () => string): IStep {
+function requestMove(startState: IState, event: RulesEvent & { type: 'request_move'; }, newId: () => string): IStep {
     const state = learnPatientRooms(startState, event.rooms);
     const origin = event.rooms.find(r => r.name === event.fromRoom);
     const occupant = origin?.occupants.find(o => o.endpointId === event.endpointId);
@@ -378,11 +388,11 @@ function requestMove(startState: IState, event: FlowEvent & { type: 'request_mov
  * Applies one event.
  *
  * @param {IState} state - The current state.
- * @param {FlowEvent} event - The event.
+ * @param {RulesEvent} event - The event.
  * @param {() => string} newId - Makes an opaque id; replaceable by callers that need determinism.
  * @returns {IStep}
  */
-export function step(state: IState, event: FlowEvent, newId: () => string = randomUUID): IStep {
+export function step(state: IState, event: RulesEvent, newId: () => string = randomUUID): IStep {
     switch (event.type) {
     case 'start_encounter':
         return startEncounter(state, event.hn, event.at, newId);

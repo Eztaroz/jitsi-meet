@@ -4,47 +4,20 @@
  * what is read back.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
-
-import type { Flow } from './flow.ts';
+import type { CoordinatorService } from './coordinatorService.ts';
+import { HttpError, readJson, send } from './http.ts';
 import { errorCode, log } from './log.ts';
-import { type IEncounter, type IMove, STAGES, type Stage } from './patientFlow.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
-import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
-
-/** The files of the coordinator screen, read once. */
-const SCREEN_FILES: Record<string, { body: Buffer; type: string; }> = {};
-
-for (const [ route, file, type ] of [
-    [ '/screen', 'index.html', 'text/html; charset=utf-8' ],
-    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ],
-    [ '/screen/screen.js', 'screen.js', 'text/javascript; charset=utf-8' ]
-]) {
-    SCREEN_FILES[route] = { body: readFileSync(new URL(`./screen/${file}`, import.meta.url)), type };
-}
+import { type IEncounter, type IMove, STAGES, type Stage } from './rules.ts';
+import type { ICoordinatorAuth } from './screenAuth.ts';
+import { createScreenRoutes } from './screenRoutes.ts';
 
 /** Who the audit log names for a call with the shared bearer secret. */
 const SYSTEM = 'system';
-const MAX_BODY_BYTES = 16 * 1024;
 const MAX_HN_LENGTH = 128;
-
-class HttpError extends Error {
-    readonly status: number;
-
-    /**
-     * An error answered with an HTTP status.
-     *
-     * @param {number} status - The HTTP status.
-     * @param {string} message - The error message sent to the client.
-     */
-    constructor(status: number, message: string) {
-        super(message);
-        this.status = status;
-    }
-}
 
 /**
  * Compares two secrets in constant time.
@@ -57,44 +30,6 @@ function sameSecret(a: string, b: string): boolean {
     const digest = (s: string) => createHash('sha256').update(s).digest();
 
     return timingSafeEqual(digest(a), digest(b));
-}
-
-/**
- * Sends a JSON response.
- *
- * @param {ServerResponse} res - The response.
- * @param {number} status - The HTTP status.
- * @param {unknown} body - The body.
- * @returns {void}
- */
-function send(res: ServerResponse, status: number, body: unknown) {
-    res.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json' });
-    res.end(JSON.stringify(body));
-}
-
-/**
- * Reads a JSON request body.
- *
- * @param {IncomingMessage} req - The request.
- * @returns {Promise<unknown>}
- */
-async function readJson(req: IncomingMessage): Promise<unknown> {
-    const chunks: Buffer[] = [];
-    let size = 0;
-
-    for await (const chunk of req) {
-        size += chunk.length;
-        if (size > MAX_BODY_BYTES) {
-            throw new HttpError(413, 'request body too large');
-        }
-        chunks.push(chunk);
-    }
-
-    try {
-        return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    } catch {
-        throw new HttpError(400, 'request body must be JSON');
-    }
 }
 
 /**
@@ -173,12 +108,12 @@ function moveFrom(body: unknown): { endpointId: string; fromRoom: string; toRoom
  * Creates the API server.
  *
  * @param {Object} options - Options.
- * @param {Flow} options.flow - The patient-flow runner.
+ * @param {CoordinatorService} options.service - The coordinator service.
  * @param {ICoordinatorAuth} options.screen - How coordinators sign in; without it there is no screen.
  * @param {string} options.secret - The shared bearer secret.
  * @returns {Server}
  */
-export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoordinatorAuth; secret: string; }): Server {
+export function createApi({ screen, secret, service }: { screen?: ICoordinatorAuth; secret: string; service: CoordinatorService; }): Server {
     /**
      * Handles the requests that act: starting an encounter, moving a participant and changing a stage. The system and
      * the coordinators' screen make the same ones, and the audit log names who made them.
@@ -194,7 +129,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
             const hn = hnFrom(await readJson(req));
 
             try {
-                const { encounter } = await flow.startEncounter(hn);
+                const { encounter } = await service.startEncounter(hn);
 
                 send(res, encounter?.created ? 201 : 200,
                     { id: encounter?.id, stage: encounter?.stage, startedAt: encounter?.startedAt });
@@ -212,7 +147,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
             const request = moveFrom(await readJson(req));
 
             try {
-                const move = await flow.requestMove(request, issuer);
+                const move = await service.requestMove(request, issuer);
 
                 send(res, move.state === 'refused' ? 200 : 202, moveBody(move));
             } catch (error) {
@@ -235,7 +170,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
                 throw new HttpError(400, `stage must be one of ${STAGES.join(', ')}`);
             }
 
-            const { encounter, refused } = await flow.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage, issuer);
+            const { encounter, refused } = await service.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage, issuer);
 
             if (refused === 'unknown_encounter') {
                 throw new HttpError(404, 'no such encounter');
@@ -243,7 +178,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
             if (refused === 'encounter_closed') {
                 throw new HttpError(409, 'the encounter is done');
             }
-            send(res, 200, encounterBody(flow.state.encounters.find(e => e.id === encounter?.id) as IEncounter));
+            send(res, 200, encounterBody(service.state.encounters.find(e => e.id === encounter?.id) as IEncounter));
 
             return true;
         }
@@ -251,94 +186,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
         return false;
     }
 
-    /**
-     * Handles a request for the coordinator screen. The page and its files are public: they are a form to sign in.
-     * What the page shows comes from the screen's own API, which only a coordinator's token opens; the shared bearer
-     * secret does not.
-     *
-     * @param {IncomingMessage} req - The request.
-     * @param {ServerResponse} res - The response.
-     * @param {string|undefined} token - The bearer token, if there is one.
-     * @returns {Promise<void>}
-     */
-    async function handleScreen(req: IncomingMessage, res: ServerResponse, token: string | undefined) {
-        const { pathname } = new URL(req.url ?? '/', 'http://localhost');
-
-        if (!screen) {
-            throw new HttpError(404, 'not found');
-        }
-
-        const file = req.method === 'GET' ? SCREEN_FILES[pathname] : undefined;
-
-        if (file) {
-            res.writeHead(200, {
-                'cache-control': 'no-store',
-                'content-security-policy': 'default-src \'self\'; frame-ancestors \'none\'',
-                'content-type': file.type
-            });
-            res.end(file.body);
-
-            return;
-        }
-        if (!pathname.startsWith('/screen/api/')) {
-            throw new HttpError(404, 'not found');
-        }
-        if (!token) {
-            res.setHeader('www-authenticate', 'Bearer');
-            throw new HttpError(401, 'sign in with a coordinator token');
-        }
-
-        let coordinator;
-
-        try {
-            coordinator = await verifyCoordinator(token, screen);
-        } catch (error) {
-            if (error instanceof SignInError) {
-                send(res, 403, { error: error.code });
-
-                return;
-            }
-            throw error;
-        }
-
-        try {
-            const route = pathname.slice('/screen/api'.length);
-
-            if (route === '/state' && req.method === 'GET') {
-                const queues = flow.queues();
-                const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
-                const recent = Date.now() - 2 * 60_000;
-
-                send(res, 200, {
-                    coordinator,
-                    moves: flow.state.moves
-                        .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down' || m.state === 'preparing')
-                        .map(m => ({
-                            destination: m.destination,
-                            endpointId: m.endpointId,
-                            id: m.id,
-                            origin: m.origin,
-                            reason: m.reason,
-                            startedAt: m.startedAt,
-                            state: m.state
-                        })),
-                    queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
-                        [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
-                    rooms: await flow.rooms()
-                });
-
-                return;
-            }
-            if (!await act(req, res, route, coordinator.id)) {
-                throw new HttpError(404, 'not found');
-            }
-        } catch (error) {
-            if (error instanceof ProsodyUnavailableError) {
-                throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
-            }
-            throw error;
-        }
-    }
+    const handleScreen = createScreenRoutes({ act, screen, service });
 
     /**
      * Handles one request.
@@ -365,7 +213,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
 
         if (pathname === '/health' && req.method === 'GET') {
             send(res, 200, {
-                openEncounters: flow.state.encounters.filter(e => e.stage !== 'done').length,
+                openEncounters: service.state.encounters.filter(e => e.stage !== 'done').length,
                 status: 'ok'
             });
 
@@ -376,7 +224,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
         }
         if (pathname === '/rooms' && req.method === 'GET') {
             try {
-                send(res, 200, { rooms: await flow.rooms() });
+                send(res, 200, { rooms: await service.rooms() });
             } catch (error) {
                 if (error instanceof ProsodyUnavailableError) {
                     log.warn('could not read the rooms', { error: error.code });
@@ -390,13 +238,13 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
         if (pathname === '/audit' && req.method === 'GET') {
             const limit = Math.min(Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('limit')) || 100, 1000);
 
-            send(res, 200, { entries: flow.audit(limit) });
+            send(res, 200, { entries: service.audit(limit) });
 
             return;
         }
         if (pathname === '/queues' && req.method === 'GET') {
-            const queues = flow.queues();
-            const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
+            const queues = service.queues();
+            const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
 
             send(res, 200, { queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
                 [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])) });
@@ -407,7 +255,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
         const encounterMatch = /^\/encounters\/([^/]+)$/.exec(pathname);
 
         if (encounterMatch && req.method === 'GET') {
-            const encounter = flow.state.encounters.find(e => e.id === decodeURIComponent(encounterMatch[1]));
+            const encounter = service.state.encounters.find(e => e.id === decodeURIComponent(encounterMatch[1]));
 
             if (!encounter) {
                 throw new HttpError(404, 'no such encounter');
@@ -420,7 +268,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
         const moveMatch = /^\/moves\/([^/]+)$/.exec(pathname);
 
         if (moveMatch && req.method === 'GET') {
-            const move = flow.state.moves.find(m => m.id === decodeURIComponent(moveMatch[1]));
+            const move = service.state.moves.find(m => m.id === decodeURIComponent(moveMatch[1]));
 
             if (!move) {
                 throw new HttpError(404, 'no such move');

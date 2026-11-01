@@ -1,42 +1,34 @@
 /**
- * Runs the patient-flow module: applies events one at a time, carries out the commands it returns, and feeds the
+ * The coordinator service: runs the rules module: applies events one at a time, carries out the commands it returns, and feeds the
  * outcomes back as events. It is the only place with I/O and timers.
  */
 import { randomUUID } from 'node:crypto';
 
 import { type IAuditEntry, moveEntry, stageEntry } from './audit.ts';
-import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
+import { MoveEffects } from './moveEffects.ts';
+import type { Prosody } from './prosody.ts';
+import type { RecorderBot } from './recorderBot.ts';
+import { backendSafeRoomName } from './roomName.ts';
+import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
 import {
-    COUNTDOWN_MS,
     type Command,
-    type FlowEvent,
     type IMove,
     type IState,
     type IStep,
-    PREPARE_WAIT_MS,
+    type RulesEvent,
     type Stage,
     queues,
     step
-} from './patientFlow.ts';
-import { type Prosody, ProsodyUnavailableError } from './prosody.ts';
-import { type RecorderBot, RecorderBotUnavailableError } from './recorderBot.ts';
-import { backendSafeRoomName } from './roomName.ts';
-import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
+} from './rules.ts';
 import type { Store } from './store.ts';
-import { destinationClaims } from './tokens.ts';
 
 /** The states of a move that is under way: it has no audit entry until it ends. */
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
 const POLL_MS = 1000;
-const READY_POLL_MS = 500;
-const TOKEN_LIFETIME_MS = 5 * 60_000;
 
-/** The statuses by which the recorder bot is in the room, ready for the patient. */
-const BOT_IN_ROOM = new Set([ 'waiting_for_participants', 'recording' ]);
-
-export class Flow {
+export class CoordinatorService {
     private readonly _opts: {
         auditKey: string;
         layout: ILayout;
@@ -58,21 +50,32 @@ export class Flow {
     private readonly _issuers = new Map<string, string>();
     private _retention?: NodeJS.Timeout;
 
-    /** The consultation each move started in a station, so that it can be stopped. */
-    private readonly _stationConsultations = new Map<string, string>();
+    private readonly _effects: MoveEffects;
     private _midnight?: NodeJS.Timeout;
     private _poll?: NodeJS.Timeout;
     private _queue: Promise<unknown> = Promise.resolve();
     private _state: IState;
 
     /**
-     * Creates the runner.
+     * Creates the service.
      *
      * @param {Object} opts - Its collaborators and settings.
      */
-    constructor(opts: Flow['_opts']) {
+    constructor(opts: CoordinatorService['_opts']) {
         this._opts = opts;
         this._state = opts.store.load();
+        this._effects = new MoveEffects(opts, {
+            failSend: moveId => this._commit(step(this._state, {
+                at: new Date(), moveId, reason: 'could_not_send_move', type: 'destination_failed'
+            }).state),
+            isPreparing: moveId => this._state.moves.some(m => m.id === moveId && m.state === 'preparing'),
+            knownHn: hn => this._state.encounters.find(e => backendSafeRoomName(e.hn) === backendSafeRoomName(hn))?.hn,
+            report: event => this._serial(async () => {
+                const rooms = event.type === 'destination_ready' ? await this.rooms().catch(() => []) : [];
+
+                await this._apply(event, rooms);
+            })
+        });
     }
 
     /**
@@ -240,12 +243,12 @@ export class Flow {
     /**
      * Applies an event and carries out its commands.
      *
-     * @param {FlowEvent} event - The event.
+     * @param {RulesEvent} event - The event.
      * @param {IRoom[]} rooms - The rooms at the time, for the commands that need the participant's identity.
      * @param {Function} newId - Makes the opaque id of a new move.
      * @returns {Promise<IStep>}
      */
-    private async _apply(event: FlowEvent, rooms: IRoom[], newId?: () => string): Promise<IStep> {
+    private async _apply(event: RulesEvent, rooms: IRoom[], newId?: () => string): Promise<IStep> {
         const result = step(this._state, event, newId);
 
         this._commit(result.state);
@@ -349,123 +352,15 @@ export class Flow {
             }, command.afterMs).unref();
             break;
         case 'prepare_destination':
-            this._prepareDestination(command.moveId, command.hn, command.station);
+            this._effects.prepareDestination(command.moveId, command.hn, command.station);
             break;
-        case 'stop_station_consultation': {
-            const consultationId = this._stationConsultations.get(command.moveId);
-
-            this._stationConsultations.delete(command.moveId);
-            if (consultationId) {
-                this._opts.recorderBot.stop(consultationId).catch(error => log.warn('could not stop a station consultation', {
-                    error: error instanceof RecorderBotUnavailableError ? error.code : 'unknown'
-                }));
-            }
+        case 'stop_station_consultation':
+            this._effects.stopStationConsultation(command.moveId);
             break;
-        }
         case 'send_move':
-            await this._sendMove(command, rooms);
+            await this._effects.sendMove(command, rooms);
             break;
         }
-    }
-
-    /**
-     * Sends the participant the command to move. When that fails, the move fails.
-     *
-     * @param {Object} command - The `send_move` command.
-     * @param {IRoom[]} rooms - The rooms at the time.
-     * @returns {Promise<void>}
-     */
-    private async _sendMove(command: Extract<Command, { type: 'send_move'; }>, rooms: IRoom[]): Promise<void> {
-        const occupant = rooms.find(r => r.name === command.room)?.occupants
-            .find(o => o.endpointId === command.endpointId);
-        const token = signToken({
-            claims: destinationClaims({
-                ...this._opts.token,
-                identity: occupant?.identity ?? {},
-                lifetimeMs: TOKEN_LIFETIME_MS,
-                markers: this._opts.roleMarkers,
-                now: new Date(),
-                role: occupant?.role ?? 'unknown',
-                room: command.destination
-            }),
-            ...this._opts.signingKey
-        });
-
-        try {
-            await this._opts.prosody.sendMove({
-                endpointId: command.endpointId,
-                move: {
-                    countdownSeconds: COUNTDOWN_MS / 1000,
-                    destination: command.destination,
-                    moveId: command.moveId,
-                    token,
-                    type: 'coordinator_move'
-                },
-                room: backendSafeRoomName(command.room)
-            });
-        } catch (error) {
-            log.warn('could not send a move', { error: error instanceof ProsodyUnavailableError ? error.code : 'unknown' });
-            this._commit(step(this._state, {
-                at: new Date(), moveId: command.moveId, reason: 'could_not_send_move', type: 'destination_failed'
-            }).state);
-            throw error;
-        }
-    }
-
-    /**
-     * Opens a patient's own room by asking the recorder bot to record it, then reports when the bot is in it, or
-     * why it cannot be. It runs on in the background; the module's timer ends the wait.
-     *
-     * @param {string} moveId - The move.
-     * @param {string} hn - The patient's HN, which is the room, or whose time in a station is recorded.
-     * @param {Object} station - Set to record one patient's time in a station instead.
-     * @param {string} station.patientId - The patient's verified identity id.
-     * @param {string} station.room - The station.
-     * @returns {void}
-     */
-    private _prepareDestination(moveId: string, hn: string, station?: { patientId: string; room: string; }): void {
-        const report = (event: FlowEvent) => this._serial(async () => {
-            const rooms = event.type === 'destination_ready' ? await this.rooms().catch(() => []) : [];
-
-            await this._apply(event, rooms);
-        }).catch(error => log.error('could not report on a destination', { error: (error as Error).name }));
-
-        (async () => {
-            const deadline = Date.now() + PREPARE_WAIT_MS;
-            // The room's name has lost the HN's case; the encounter kept the HN as the hospital wrote it.
-            const known = this._state.encounters.find(e => backendSafeRoomName(e.hn) === backendSafeRoomName(hn))?.hn;
-            const consultationId = await this._opts.recorderBot.recordRoom(station ? known ?? hn : hn, station);
-
-            if (station) {
-                this._stationConsultations.set(moveId, consultationId);
-                if (!this._state.moves.some(m => m.id === moveId && m.state === 'preparing')) {
-                    // The move ended while the recorder bot was answering: nobody is coming.
-                    this._stationConsultations.delete(moveId);
-                    await this._opts.recorderBot.stop(consultationId);
-
-                    return;
-                }
-            }
-
-            while (Date.now() < deadline) {
-                if (!this._state.moves.some(m => m.id === moveId && m.state === 'preparing')) {
-                    return;
-                }
-                if (BOT_IN_ROOM.has(await this._opts.recorderBot.status(consultationId))) {
-                    await report({ at: new Date(), moveId, type: 'destination_ready' });
-
-                    return;
-                }
-                await new Promise(resolve => setTimeout(resolve, READY_POLL_MS));
-            }
-        })().catch(async error => {
-            const reason = error instanceof RecorderBotUnavailableError && error.code === 'at_capacity'
-                ? 'recorder_bot_at_capacity'
-                : 'recorder_bot_unreachable';
-
-            log.warn('could not open a destination', { error: error instanceof RecorderBotUnavailableError ? error.code : 'unknown' });
-            await report({ at: new Date(), moveId, reason, type: 'destination_failed' });
-        });
     }
 
     /**

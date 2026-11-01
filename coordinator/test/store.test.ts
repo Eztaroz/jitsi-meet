@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 
-import { initialState, step } from '../src/patientFlow.ts';
+import { initialState, step } from '../src/rules.ts';
 import { Store } from '../src/store.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');

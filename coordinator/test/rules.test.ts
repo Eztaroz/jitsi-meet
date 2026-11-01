@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, PREPARE_WAIT_MS, initialState, step } from '../src/patientFlow.ts';
+import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, PREPARE_WAIT_MS, initialState, step } from '../src/rules.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
 

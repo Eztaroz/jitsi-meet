@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { auditRef, moveEntry, stageEntry } from '../src/audit.ts';
-import type { IMove } from '../src/patientFlow.ts';
+import type { IMove } from '../src/rules.ts';
 
 const layout = { lounges: [ { room: 'lounge-1' } ], stations: [ { room: 'intake-1', stage: 'intake' as const } ] };
 const T = new Date('2030-01-01T08:00:00Z');
