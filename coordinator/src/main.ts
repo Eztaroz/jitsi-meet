@@ -26,6 +26,7 @@ const service = new CoordinatorService({
     token: config.token
 });
 
+service.resume().catch(error => log.error('could not resume the moves', { error: (error as Error).name }));
 service.startDayEnds();
 service.startRetention();
 const api = createApi({
