@@ -16,12 +16,12 @@ import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
     description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, moves \
-a participant to a chosen room, changes an encounter\'s stage and marks it done. A participant being moved shows as \
+a patient to a station, changes an encounter\'s stage and marks it done. A participant being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
 participant, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
 Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service \
 on top of it.',
-    usesBrowsers: [ 'p1', 'p2', 'p4' ]
+    usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
 });
 
 describe('Coordinator: acting from the screen', () => {
@@ -84,6 +84,14 @@ describe('Coordinator: acting from the screen', () => {
         }, { roomName: patientLinkRoom(hn) });
         a = await joinMuc({ name: 'p1', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
         b = await joinMuc({ name: 'p2', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
+        // A patient may be moved only into a station or their own room: a staff member keeps a station open for them.
+        await joinMuc({
+            name: 'p3',
+            token: generateToken({
+                displayName: 'Nurse N',
+                userClaims: { ...expectations.recorderBot.staffClaims, id: `nurse-${uuidv4()}` }
+            })
+        }, { roomName: 'intake-1' });
         await openScreen(a, coordinatorA);
         await openScreen(b, coordinatorB);
         await waitForRoom(r => r !== undefined, hn, 'the patient\'s room');
@@ -133,21 +141,23 @@ describe('Coordinator: acting from the screen', () => {
             .toBe(coordinatorA.id);
     });
 
-    it('moves a participant to a chosen room: both screens show them moving, and the participant can cancel', async () => {
+    it('moves a patient to a station: both screens show them moving, and the participant can cancel', async () => {
         const room = hn.toLowerCase();
-        const closed = uniqueHn('ACTCLOSED').toLowerCase();
+        const station = 'intake-1';
 
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
+        await a.driver.waitUntil(
+            async () => (await roomText(a, station)).length > 0, { timeoutMsg: 'the station is not shown' });
         await a.driver.execute((name: string, to: string) => {
             const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
-            const typed = card.querySelector('.occupant[data-role="patient"] input.move-hn') as HTMLInputElement;
+            const select = card.querySelector('.occupant[data-role="patient"] select.move-to') as HTMLSelectElement;
 
-            // A room that is closed is in no list: a coordinator names a patient's own room by the HN.
-            typed.value = to;
+            select.value = to;
+            select.dispatchEvent(new Event('change'));
             (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();
-        }, room, closed);
+        }, room, station);
 
-        // The recorder bot is asked to open the destination before the patient is told: that takes a while.
+        // The recorder bot is asked to record the patient's time in the station before they are told.
         await Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
             async () => (await roomText(screen, room)).includes('กำลังย้าย'),
             { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' })));
