@@ -79,6 +79,7 @@ export async function getEncounter(id: string): Promise<{ body: IEncounter; stat
 
 /** A room as the API reports it. */
 export interface IRoom {
+    kind: 'lounge' | 'patient' | 'station';
     name: string;
     occupants: {
         displayName?: string;
@@ -86,6 +87,8 @@ export interface IRoom {
         identity?: { id?: string; name?: string; };
         role: 'hidden' | 'patient' | 'staff' | 'unknown';
     }[];
+    open: boolean;
+    stage?: string;
 }
 
 /**
@@ -136,7 +139,7 @@ export async function waitForRoom(
 export interface IMove {
     id: string;
     reason?: string;
-    state: 'counting_down' | 'done' | 'failed' | 'refused';
+    state: 'cancelled' | 'counting_down' | 'done' | 'failed' | 'preparing' | 'refused';
 }
 
 /**

@@ -35,9 +35,9 @@ export class RecorderBot {
      * Asks the recorder bot to record a patient's room.
      *
      * @param {string} hn - The patient's HN.
-     * @returns {Promise<void>}
+     * @returns {Promise<string>} The consultation's id.
      */
-    async recordRoom(hn: string): Promise<void> {
+    async recordRoom(hn: string): Promise<string> {
         let response: Response;
 
         try {
@@ -57,5 +57,31 @@ export class RecorderBot {
         if (!response.ok) {
             throw new RecorderBotUnavailableError('rejected');
         }
+
+        return (await response.json() as { consultationId: string; }).consultationId;
+    }
+
+    /**
+     * Reads a consultation's status.
+     *
+     * @param {string} consultationId - The consultation.
+     * @returns {Promise<string>} Its status, such as `waiting_for_participants`.
+     */
+    async status(consultationId: string): Promise<string> {
+        let response: Response;
+
+        try {
+            response = await fetch(`${this._url}/consultations/${consultationId}`, {
+                headers: { authorization: `Bearer ${this._secret}` },
+                signal: AbortSignal.timeout(10_000)
+            });
+        } catch {
+            throw new RecorderBotUnavailableError('unreachable');
+        }
+        if (!response.ok) {
+            throw new RecorderBotUnavailableError('rejected');
+        }
+
+        return (await response.json() as { status: string; }).status;
     }
 }

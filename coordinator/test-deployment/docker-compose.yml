@@ -35,11 +35,13 @@ services:
         volumes:
             - coordinator-data:/var/lib/coordinator
             - ../../coordinator/test-deployment/keys/private.pem:/run/keys/private.pem:ro
+            - ../../coordinator/test-deployment/rooms.json:/etc/coordinator/rooms.json:ro
         environment:
             COORDINATOR_API_PORT: 8094
             COORDINATOR_API_SECRET: coordinator-test-secret
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
             COORDINATOR_PROSODY_URL: http://localhost:5280
+            COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
             COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
             COORDINATOR_RECORDER_BOT_URL: http://localhost:8090
             COORDINATOR_SIGNING_KEY_FILE: /run/keys/private.pem

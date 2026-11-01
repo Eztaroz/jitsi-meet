@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { type IRoleMarkers, parseRoleMarker } from './rooms.ts';
+import { type ILayout, type IRoleMarkers, parseRoleMarker } from './rooms.ts';
 
 /**
  * The coordinator service's settings, read from environment variables. `coordinator/deploy/README.md` documents each.
@@ -16,6 +16,9 @@ export interface IConfig {
 
     /** The directory holding the database; mount a volume here. */
     dataDir: string;
+
+    /** The stations and lounges (`COORDINATOR_ROOMS_FILE`). */
+    layout: ILayout;
 
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
@@ -64,6 +67,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
         dataDir: env.COORDINATOR_DATA_DIR?.trim() || '/var/lib/coordinator',
+        layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
         recorderBotSecret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
         recorderBotUrl: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, ''),
@@ -80,5 +84,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
             kid: required(env, 'COORDINATOR_SIGNING_KID'),
             privateKey: readFileSync(required(env, 'COORDINATOR_SIGNING_KEY_FILE'), 'utf8')
         }
+    };
+}
+
+/**
+ * Reads the stations and lounges from a JSON file: `{ "stations": [ { "room", "stage" } ], "lounges": [ { "room" } ] }`.
+ *
+ * @param {string|undefined} file - The file; unset for none.
+ * @returns {ILayout}
+ * @throws {Error} When the file is malformed.
+ */
+export function loadLayout(file: string | undefined): ILayout {
+    if (!file) {
+        return { lounges: [], stations: [] };
+    }
+
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<Record<keyof ILayout, { room?: unknown; stage?: unknown; }[]>>;
+    const named = (entries: { room?: unknown; stage?: unknown; }[] | undefined, what: string) => (entries ?? []).map(e => {
+        if (typeof e.room !== 'string' || !e.room.trim()) {
+            throw new Error(`COORDINATOR_ROOMS_FILE: every ${what} needs a "room"`);
+        }
+
+        return e as { room: string; stage?: unknown; };
+    });
+
+    return {
+        lounges: named(raw.lounges, 'lounge').map(l => ({ room: l.room })),
+        stations: named(raw.stations, 'station').map(s => {
+            if (s.stage !== 'intake' && s.stage !== 'aftercare') {
+                throw new Error('COORDINATOR_ROOMS_FILE: every station needs a "stage", intake or aftercare');
+            }
+
+            return { room: s.room, stage: s.stage };
+        })
     };
 }

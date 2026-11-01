@@ -23,7 +23,10 @@ export const COUNTDOWN_MS = 5000;
 /** How long a participant has, after the countdown, to appear in the destination, in milliseconds. */
 export const ARRIVAL_WAIT_MS = 30_000;
 
-export type MoveState = 'cancelled' | 'counting_down' | 'done' | 'failed' | 'refused';
+/** How long the recorder bot has to be in a destination that was closed before the participant is sent, in ms. */
+export const PREPARE_WAIT_MS = 30_000;
+
+export type MoveState = 'cancelled' | 'counting_down' | 'done' | 'failed' | 'preparing' | 'refused';
 
 export interface IMove {
     destination: string;
@@ -45,7 +48,11 @@ export interface IState {
 
 /** A room as the rooms module describes it; only what the rules need. */
 export interface IRoomView {
+
+    /** What the room is. A room that is not configured as a station or a lounge is a patient's own. */
+    kind?: 'lounge' | 'patient' | 'station';
     name: string;
+
     occupants: {
 
         /** The id of the move this occupant says they cancel. */
@@ -54,19 +61,28 @@ export interface IRoomView {
         identity?: { id?: string; };
         role: 'hidden' | 'patient' | 'staff' | 'unknown';
     }[];
+    /** False for a configured room that nobody is in. Defaults to true. */
+    open?: boolean;
 }
 
 export type FlowEvent = { at: Date; } & (
     | { hn: string; type: 'start_encounter'; }
     | { endpointId: string; fromRoom: string; rooms: IRoomView[]; toRoom: string; type: 'request_move'; }
     | { rooms: IRoomView[]; type: 'rooms_snapshot'; }
-    | { moveId: string; timer: 'move_arrival'; type: 'timer_fired'; }
+    | { moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'timer_fired'; }
+
+    /** The recorder bot is in the destination the participant was waiting for. */
+    | { moveId: string; type: 'destination_ready'; }
+    | { moveId: string; reason: 'could_not_send_move' | 'recorder_bot_at_capacity' | 'recorder_bot_unreachable'; type: 'destination_failed'; }
 );
 
 export type Command =
     | { hn: string; type: 'record_room'; }
     | { destination: string; endpointId: string; moveId: string; room: string; type: 'send_move'; }
-    | { afterMs: number; moveId: string; timer: 'move_arrival'; type: 'start_timer'; };
+    | { afterMs: number; moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'start_timer'; }
+
+    /** Open the destination, a patient's own room, by asking the recorder bot to record it, and report back. */
+    | { hn: string; moveId: string; type: 'prepare_destination'; };
 
 export interface IStartResult extends IEncounter {
 
@@ -119,6 +135,17 @@ function startEncounter(state: IState, hn: string, at: Date, newId: () => string
     };
 }
 
+/** The states of a move that is under way. */
+const ACTIVE: ReadonlySet<MoveState> = new Set([ 'counting_down', 'preparing' ]);
+
+/** The commands that send a participant and wait for them to arrive. */
+function sendCommands(move: IMove): Command[] {
+    return [
+        { destination: move.destination, endpointId: move.endpointId, moveId: move.id, room: move.origin, type: 'send_move' },
+        { afterMs: COUNTDOWN_MS + ARRIVAL_WAIT_MS, moveId: move.id, timer: 'move_arrival', type: 'start_timer' }
+    ];
+}
+
 /**
  * Tells whether two moves are of the same participant: the same verified identity, or the same endpoint in the same
  * room.
@@ -153,17 +180,31 @@ function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }
         origin: event.fromRoom,
         startedAt: event.at
     };
+    const destination = event.rooms.find(r => r.name === event.toRoom);
+    const destinationOpen = destination !== undefined && destination.open !== false;
+    const toLounge = destination?.kind === 'lounge';
     let reason: string | undefined;
+    let prepare = false;
 
     if (!occupant) {
         reason = 'participant_not_found';
     } else if (occupant.role === 'hidden') {
         reason = 'participant_not_movable';
-    } else if (occupant.role !== 'staff') {
-        reason = 'only_staff_can_be_moved';
-    } else if (!event.rooms.some(r => r.name === event.toRoom)) {
-        reason = 'destination_not_open';
-    } else if (state.moves.some(m => m.state === 'counting_down' && sameParticipant(m, base))) {
+    } else if (occupant.role !== 'staff' && occupant.role !== 'patient') {
+        reason = 'participant_not_movable';
+    } else if (occupant.role === 'patient' && toLounge) {
+        reason = 'patient_into_lounge';
+    } else if (occupant.role === 'patient' && destinationOpen
+            && destination.occupants.some(o => o.role === 'patient' && o.identity?.id !== occupant.identity?.id)) {
+        reason = 'destination_holds_a_patient';
+    } else if (!destinationOpen) {
+        // Only a patient's own room is opened for a move, and only for a patient.
+        prepare = occupant.role === 'patient' && (destination === undefined || destination.kind === 'patient');
+        if (!prepare) {
+            reason = 'destination_not_open';
+        }
+    }
+    if (!reason && state.moves.some(m => ACTIVE.has(m.state) && sameParticipant(m, base))) {
         reason = 'already_being_moved';
     }
 
@@ -173,13 +214,23 @@ function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }
         return { commands: [], move: refused, state: { ...state, moves: [ ...state.moves, refused ] } };
     }
 
+    if (prepare) {
+        const preparing: IMove = { ...base, state: 'preparing' };
+
+        return {
+            commands: [
+                { hn: event.toRoom, moveId: preparing.id, type: 'prepare_destination' },
+                { afterMs: PREPARE_WAIT_MS, moveId: preparing.id, timer: 'move_prepare', type: 'start_timer' }
+            ],
+            move: preparing,
+            state: { ...state, moves: [ ...state.moves, preparing ] }
+        };
+    }
+
     const move: IMove = { ...base, state: 'counting_down' };
 
     return {
-        commands: [
-            { destination: event.toRoom, endpointId: event.endpointId, moveId: move.id, room: event.fromRoom, type: 'send_move' },
-            { afterMs: COUNTDOWN_MS + ARRIVAL_WAIT_MS, moveId: move.id, timer: 'move_arrival', type: 'start_timer' }
-        ],
+        commands: sendCommands(move),
         move,
         state: { ...state, moves: [ ...state.moves, move ] }
     };
@@ -217,15 +268,44 @@ export function step(state: IState, event: FlowEvent, newId: () => string = rand
 
         return { commands: [], state: { ...state, moves: state.moves.map(next) } };
     }
-    case 'timer_fired':
+    case 'destination_ready': {
+        const move = state.moves.find(m => m.id === event.moveId && m.state === 'preparing');
+
+        if (!move) {
+            return { commands: [], state };
+        }
+
+        const sent: IMove = { ...move, state: 'counting_down' };
+
+        return {
+            commands: sendCommands(sent),
+            state: { ...state, moves: state.moves.map(m => m.id === move.id ? sent : m) }
+        };
+    }
+    case 'destination_failed':
         return {
             commands: [],
             state: {
                 ...state,
-                moves: state.moves.map(m => m.id === event.moveId && m.state === 'counting_down'
-                    ? { ...m, reason: 'participant_did_not_arrive', state: 'failed' as const }
+                moves: state.moves.map(m => m.id === event.moveId && ACTIVE.has(m.state)
+                    ? { ...m, reason: event.reason, state: 'failed' as const }
                     : m)
             }
         };
+    case 'timer_fired': {
+        const [ from, reason ] = event.timer === 'move_arrival'
+            ? [ 'counting_down', 'participant_did_not_arrive' ] as const
+            : [ 'preparing', 'recorder_bot_not_ready' ] as const;
+
+        return {
+            commands: [],
+            state: {
+                ...state,
+                moves: state.moves.map(m => m.id === event.moveId && m.state === from
+                    ? { ...m, reason, state: 'failed' as const }
+                    : m)
+            }
+        };
+    }
     }
 }

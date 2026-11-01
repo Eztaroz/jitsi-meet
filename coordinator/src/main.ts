@@ -12,6 +12,7 @@ import { Store } from './store.ts';
 const config = loadConfig();
 const store = new Store(config.dataDir);
 const flow = new Flow({
+    layout: config.layout,
     prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
     recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
     roleMarkers: config.roleMarkers,

@@ -64,3 +64,40 @@ describe('describing the rooms Prosody reports', () => {
         assert.deepEqual(describeRooms({ rooms: {} }, markers), []);
     });
 });
+
+describe('labelling the rooms from the configured layout', () => {
+    const layout = {
+        lounges: [ { room: 'Lounge-1' } ],
+        stations: [ { room: 'intake-1', stage: 'intake' as const }, { room: 'aftercare-1', stage: 'aftercare' as const } ]
+    };
+    const raw = {
+        rooms: [
+            { name: 'intake-1', occupants: [ { endpointId: 'e1', hidden: false } ] },
+            { name: 'hn%2fa1', occupants: [] }
+        ]
+    };
+
+    it('labels a configured station with its stage and any other room as a patient\'s', () => {
+        const rooms = describeRooms(raw, {}, layout);
+
+        assert.deepEqual(rooms.map(r => [ r.name, r.kind, r.stage ]), [
+            [ 'intake-1', 'station', 'intake' ],
+            [ 'hn/a1', 'patient', undefined ],
+            [ 'aftercare-1', 'station', 'aftercare' ],
+            [ 'Lounge-1', 'lounge', undefined ]
+        ]);
+    });
+
+    it('lists the configured rooms nobody is in as closed', () => {
+        const rooms = describeRooms(raw, {}, layout);
+
+        assert.deepEqual(rooms.map(r => r.open), [ true, true, false, false ]);
+    });
+
+    it('matches a configured room by the name Prosody gives it, whatever the case', () => {
+        const [ lounge ] = describeRooms({ rooms: [ { name: 'lounge-1', occupants: [] } ] }, {}, layout)
+            .filter(r => r.kind === 'lounge');
+
+        assert.equal(lounge.open, true);
+    });
+});

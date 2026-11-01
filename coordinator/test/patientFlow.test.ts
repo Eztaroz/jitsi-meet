@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, initialState, step } from '../src/patientFlow.ts';
+import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, PREPARE_WAIT_MS, initialState, step } from '../src/patientFlow.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
 
@@ -127,13 +127,6 @@ describe('moving a staff member', () => {
         assert.equal(move?.reason, 'participant_not_movable');
     });
 
-    it('refuses, for now, to move a patient', () => {
-        const { move } = step(initialState(), request(undefined, { endpointId: 'e-pat', fromRoom: 'patient-a', toRoom: 'lounge-1' }));
-
-        assert.equal(move?.state, 'refused');
-        assert.equal(move?.reason, 'only_staff_can_be_moved');
-    });
-
     it('is cancelled when the moved participant says so, and stays where they are', () => {
         const started = step(initialState(), request());
         const moveId = started.move?.id as string;
@@ -178,5 +171,133 @@ describe('moving a staff member', () => {
         const again = step(cancelled.state, request());
 
         assert.equal(again.move?.state, 'counting_down');
+    });
+
+});
+
+describe('moving a patient', () => {
+    const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
+    const here = { name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
+    const station = { kind: 'station' as const, name: 'intake-1', occupants: [ occupant('e-nurse', 'n-1', 'staff') ] };
+    const lounge = { kind: 'lounge' as const, name: 'lounge-1', occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
+    const other = { name: 'patient-b', occupants: [ occupant('e-pat2', 'pat-2', 'patient') ] };
+    const request = (rooms: unknown[], toRoom: string) => ({
+        at: T0,
+        endpointId: 'e-pat',
+        fromRoom: 'patient-a',
+        rooms: rooms as never,
+        toRoom,
+        type: 'request_move' as const
+    });
+
+    it('may go to a room that holds only staff', () => {
+        const { commands, move } = step(initialState(), request([ here, station ], 'intake-1'));
+
+        assert.equal(move?.state, 'counting_down');
+        assert.equal(commands[0].type, 'send_move');
+    });
+
+    it('is refused a room that holds another patient', () => {
+        const { commands, move } = step(initialState(), request([ here, other ], 'patient-b'));
+
+        assert.equal(move?.state, 'refused');
+        assert.equal(move?.reason, 'destination_holds_a_patient');
+        assert.deepEqual(commands, []);
+    });
+
+    it('is refused a lounge, open or closed', () => {
+        const open = step(initialState(), request([ here, lounge ], 'lounge-1'));
+        const closed = step(initialState(), request([ here, { ...lounge, occupants: [], open: false } ], 'lounge-1'));
+
+        assert.equal(open.move?.reason, 'patient_into_lounge');
+        assert.equal(closed.move?.reason, 'patient_into_lounge');
+    });
+
+    it('may go back to their own room while it is closed: the recorder bot is asked first, and nothing is sent yet', () => {
+        const { commands, move } = step(initialState(), request([ here ], 'home-room'));
+
+        assert.equal(move?.state, 'preparing');
+        assert.deepEqual(commands, [
+            { hn: 'home-room', moveId: move?.id, type: 'prepare_destination' },
+            { afterMs: PREPARE_WAIT_MS, moveId: move?.id, timer: 'move_prepare', type: 'start_timer' }
+        ]);
+    });
+
+    it('is sent, and waits for the arrival, once the recorder bot is in the destination', () => {
+        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
+
+        assert.equal(ready.state.moves[0].state, 'counting_down');
+        assert.deepEqual(ready.commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
+    });
+
+    it('fails, with its reason, when the recorder bot is at capacity, and nothing is sent', () => {
+        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const failed = step(preparing.state, {
+            at: T0, moveId: preparing.move?.id as string, reason: 'recorder_bot_at_capacity', type: 'destination_failed'
+        });
+
+        assert.equal(failed.state.moves[0].state, 'failed');
+        assert.equal(failed.state.moves[0].reason, 'recorder_bot_at_capacity');
+        assert.deepEqual(failed.commands, []);
+    });
+
+    it('fails when the recorder bot is not ready in time', () => {
+        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const failed = step(preparing.state, {
+            at: new Date(T0.getTime() + PREPARE_WAIT_MS), moveId: preparing.move?.id as string,
+            timer: 'move_prepare', type: 'timer_fired'
+        });
+
+        assert.equal(failed.state.moves[0].state, 'failed');
+        assert.equal(failed.state.moves[0].reason, 'recorder_bot_not_ready');
+    });
+
+    it('ignores the preparation timer once the move is sent', () => {
+        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
+        const late = step(ready.state, { at: T0, moveId: preparing.move?.id as string, timer: 'move_prepare', type: 'timer_fired' });
+
+        assert.equal(late.state.moves[0].state, 'counting_down');
+    });
+
+    it('is refused a closed station, for now', () => {
+        const closed = { ...station, occupants: [], open: false };
+        const { move } = step(initialState(), request([ here, closed ], 'intake-1'));
+
+        assert.equal(move?.reason, 'destination_not_open');
+    });
+
+    it('does not make a second move while one is being prepared', () => {
+        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const second = step(preparing.state, request([ here ], 'home-room'));
+
+        assert.equal(second.move?.reason, 'already_being_moved');
+    });
+
+    it('a staff member is still refused a closed room', () => {
+        const staffInLounge = { kind: 'lounge' as const, name: 'lounge-1', occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
+        const { move } = step(initialState(), {
+            at: T0, endpointId: 'e-doc', fromRoom: 'lounge-1', rooms: [ staffInLounge ] as never, toRoom: 'closed', type: 'request_move'
+        });
+
+        assert.equal(move?.reason, 'destination_not_open');
+    });
+
+    it('fails a move that could not be sent, whichever way it was waiting', () => {
+        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const sentFail = step(preparing.state, {
+            at: T0, moveId: preparing.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
+        });
+
+        assert.equal(sentFail.state.moves[0].reason, 'could_not_send_move');
+        assert.equal(sentFail.state.moves[0].state, 'failed');
+
+        const counting = step(initialState(), request([ here, station ], 'intake-1'));
+        const failed = step(counting.state, {
+            at: T0, moveId: counting.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
+        });
+
+        assert.equal(failed.state.moves[0].state, 'failed');
     });
 });

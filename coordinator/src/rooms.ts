@@ -1,3 +1,5 @@
+import { backendSafeRoomName } from './roomName.ts';
+
 /**
  * Turns what Prosody reports about the open rooms into the coordinator's view: who is in each room, and whether each
  * occupant is a patient or staff, by the deployment's role markers.
@@ -31,11 +33,27 @@ export interface IOccupant {
     supportsMove: boolean;
 }
 
+/** The stages a station can belong to. */
+export type StationStage = 'aftercare' | 'intake';
+
+/** The rooms the deployment fixes: stations, each for a stage, and lounges (`GLOSSARY.md`). */
+export interface ILayout {
+    lounges: { room: string; }[];
+    stations: { room: string; stage: StationStage; }[];
+}
+
 export interface IRoom {
+    kind: 'lounge' | 'patient' | 'station';
 
     /** The room name, which for a patient's room is the HN. */
     name: string;
     occupants: IOccupant[];
+
+    /** False for a configured room that nobody is in. */
+    open: boolean;
+
+    /** The stage of a station. */
+    stage?: StationStage;
 }
 
 interface IRawIdentity {
@@ -115,18 +133,55 @@ function decodeRoomName(name: string): string {
  * @param {IRoleMarkers} markers - Which identities are patients and which staff.
  * @returns {IRoom[]}
  */
-export function describeRooms(raw: unknown, markers: IRoleMarkers): IRoom[] {
+export function describeRooms(raw: unknown, markers: IRoleMarkers, layout: ILayout = { lounges: [], stations: [] }): IRoom[] {
     const rooms = (raw as { rooms?: unknown; } | undefined)?.rooms;
+    const open = describeOpenRooms(Array.isArray(rooms) ? rooms : [], markers, layout);
+    const isOpen = (configured: string) => open.some(r => sameRoom(r.name, configured));
 
-    if (!Array.isArray(rooms)) {
-        return [];
-    }
+    // The configured rooms nobody is in are listed too, closed, so that they can be moved into.
+    return [
+        ...open,
+        ...layout.stations.filter(s => !isOpen(s.room)).map(s => {
+            return { kind: 'station' as const, name: s.room, occupants: [], open: false, stage: s.stage };
+        }),
+        ...layout.lounges.filter(l => !isOpen(l.room)).map(l => {
+            return { kind: 'lounge' as const, name: l.room, occupants: [], open: false };
+        })
+    ];
+}
 
+/**
+ * Tells whether two names are of the same room: Prosody names a room by the lower-case URL-encoded name.
+ *
+ * @param {string} a - One name.
+ * @param {string} b - The other.
+ * @returns {boolean}
+ */
+function sameRoom(a: string, b: string): boolean {
+    return backendSafeRoomName(a) === backendSafeRoomName(b);
+}
+
+/**
+ * Describes the rooms Prosody reported as open.
+ *
+ * @param {Object[]} rooms - Prosody's rooms.
+ * @param {IRoleMarkers} markers - Which identities are patients and which staff.
+ * @param {ILayout} layout - The configured rooms.
+ * @returns {IRoom[]}
+ */
+function describeOpenRooms(rooms: { name?: string; occupants?: unknown; }[], markers: IRoleMarkers, layout: ILayout): IRoom[] {
     return rooms.map((room: { name?: string; occupants?: unknown; }) => {
         const occupants = Array.isArray(room.occupants) ? room.occupants as IRawOccupant[] : [];
 
+        const name = decodeRoomName(room.name ?? '');
+        const station = layout.stations.find(st => sameRoom(st.room, name));
+        const lounge = layout.lounges.some(l => sameRoom(l.room, name));
+
         return {
-            name: decodeRoomName(room.name ?? ''),
+            kind: station ? 'station' : lounge ? 'lounge' : 'patient',
+            name,
+            open: true,
+            stage: station?.stage,
             occupants: occupants.map(o => {
                 let role: Role = 'unknown';
 
