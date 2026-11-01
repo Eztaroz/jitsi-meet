@@ -23,7 +23,7 @@ export const COUNTDOWN_MS = 5000;
 /** How long a participant has, after the countdown, to appear in the destination, in milliseconds. */
 export const ARRIVAL_WAIT_MS = 30_000;
 
-export type MoveState = 'counting_down' | 'done' | 'failed' | 'refused';
+export type MoveState = 'cancelled' | 'counting_down' | 'done' | 'failed' | 'refused';
 
 export interface IMove {
     destination: string;
@@ -47,6 +47,9 @@ export interface IState {
 export interface IRoomView {
     name: string;
     occupants: {
+
+        /** The id of the move this occupant says they cancel. */
+        cancelledMove?: string;
         endpointId: string;
         identity?: { id?: string; };
         role: 'hidden' | 'patient' | 'staff' | 'unknown';
@@ -145,6 +148,10 @@ function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }
         reason = 'only_staff_can_be_moved';
     } else if (!event.rooms.some(r => r.name === event.toRoom)) {
         reason = 'destination_not_open';
+    } else if (state.moves.some(m => m.state === 'counting_down'
+            && (m.identityId !== undefined && m.identityId === base.identityId
+                || m.origin === base.origin && m.endpointId === base.endpointId))) {
+        reason = 'already_being_moved';
     }
 
     if (reason) {
@@ -180,13 +187,22 @@ export function step(state: IState, event: FlowEvent, newId: () => string = rand
     case 'request_move':
         return requestMove(state, event, newId);
     case 'rooms_snapshot': {
-        const arrived = (m: IMove) => m.state === 'counting_down' && m.identityId !== undefined
+        const arrived = (m: IMove) => m.identityId !== undefined
             && event.rooms.some(r => r.name === m.destination && r.occupants.some(o => o.identity?.id === m.identityId));
+        const cancelled = (m: IMove) => event.rooms.some(r => r.name === m.origin
+            && r.occupants.some(o => o.endpointId === m.endpointId && o.cancelledMove === m.id));
+        const next = (m: IMove): IMove => {
+            if (m.state !== 'counting_down') {
+                return m;
+            }
+            if (arrived(m)) {
+                return { ...m, state: 'done' };
+            }
 
-        return {
-            commands: [],
-            state: { ...state, moves: state.moves.map(m => arrived(m) ? { ...m, state: 'done' as const } : m) }
+            return cancelled(m) ? { ...m, state: 'cancelled' } : m;
         };
+
+        return { commands: [], state: { ...state, moves: state.moves.map(next) } };
     }
     case 'timer_fired':
         return {

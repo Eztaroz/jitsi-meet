@@ -14,7 +14,7 @@ describe('describing the rooms Prosody reports', () => {
             name: 'hn%2fa1',
             occupants: [
                 { displayName: 'P', endpointId: 'e1', hidden: false, identity: { user: { hospital_role: 'patient', id: 'p-1', name: 'Pat' } } },
-                { displayName: 'S', endpointId: 'e2', hidden: false, identity: { user: { hospital_role: 'staff', id: 's-1', name: 'Sam' } } },
+                { cancelledMove: 'm-1', displayName: 'S', endpointId: 'e2', hidden: false, identity: { user: { hospital_role: 'staff', id: 's-1', name: 'Sam' } }, supportsMove: true },
                 { displayName: 'bot', endpointId: 'e3', hidden: true },
                 { displayName: 'X', endpointId: 'e4', hidden: false }
             ]
@@ -34,6 +34,15 @@ describe('describing the rooms Prosody reports', () => {
 
         assert.deepEqual(room.occupants[0].identity, { id: 'p-1', name: 'Pat' });
         assert.equal(room.occupants[3].identity, undefined);
+    });
+
+    it('reports whether an occupant supports moves and which move they cancelled', () => {
+        const [ room ] = describeRooms(raw, markers);
+
+        assert.equal(room.occupants[1].cancelledMove, 'm-1');
+        assert.equal(room.occupants[1].supportsMove, true);
+        assert.equal(room.occupants[0].cancelledMove, undefined);
+        assert.equal(room.occupants[0].supportsMove, false);
     });
 
     it('decodes the room name, which Jitsi percent-encodes in the room address', () => {

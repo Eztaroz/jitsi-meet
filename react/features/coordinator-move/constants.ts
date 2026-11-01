@@ -13,3 +13,9 @@ export const MOVE_SUPPORT_PROPERTY = 'coordinatorMoveSupport';
 
 /** How long the notice counts down when the server does not say, in seconds. */
 export const DEFAULT_COUNTDOWN_SECONDS = 5;
+
+/**
+ * The local participant property by which the participant cancels the move they are counting down to: its value is
+ * the move's id. The server reads it from the participant's own presence, so nobody can cancel another's move.
+ */
+export const MOVE_CANCELLED_PROPERTY = 'coordinatorMoveCancelled';

@@ -1,9 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { makeStyles } from 'tss-react/mui';
 
 import { IReduxState } from '../../../app/types';
+import Button from '../../../base/ui/components/web/Button';
+import { BUTTON_TYPES } from '../../../base/ui/constants.web';
+import { cancelMove } from '../../actions';
 
 const useStyles = makeStyles()(theme => {
     return {
@@ -31,9 +34,11 @@ const useStyles = makeStyles()(theme => {
  */
 const MoveNotice = () => {
     const move = useSelector((state: IReduxState) => state['features/coordinator-move'].move);
+    const dispatch = useDispatch();
     const { t } = useTranslation();
     const { classes } = useStyles();
     const [ now, setNow ] = useState(Date.now());
+    const onCancel = useCallback(() => dispatch(cancelMove()), [ dispatch ]);
 
     useEffect(() => {
         if (!move) {
@@ -57,7 +62,13 @@ const MoveNotice = () => {
             className = { classes.notice }
             id = 'coordinator-move-notice'
             role = 'alert'>
-            { t('coordinatorMove.notice', { seconds }) }
+            <p>{ t('coordinatorMove.notice', { seconds }) }</p>
+            <Button
+                accessibilityLabel = { t('coordinatorMove.cancel') }
+                id = 'coordinator-move-cancel'
+                labelKey = 'coordinatorMove.cancel'
+                onClick = { onCancel }
+                type = { BUTTON_TYPES.SECONDARY } />
         </div>
     );
 };

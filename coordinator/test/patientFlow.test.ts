@@ -133,4 +133,50 @@ describe('moving a staff member', () => {
         assert.equal(move?.state, 'refused');
         assert.equal(move?.reason, 'only_staff_can_be_moved');
     });
+
+    it('is cancelled when the moved participant says so, and stays where they are', () => {
+        const started = step(initialState(), request());
+        const moveId = started.move?.id as string;
+        const cancelling = { ...lounge, occupants: [ { ...lounge.occupants[0], cancelledMove: moveId } ] };
+        const cancelled = step(started.state, { at: T0, rooms: [ cancelling, patientRoom ], type: 'rooms_snapshot' });
+
+        assert.equal(cancelled.state.moves[0].state, 'cancelled');
+    });
+
+    it('ignores a cancellation that names another move', () => {
+        const started = step(initialState(), request());
+        const cancelling = { ...lounge, occupants: [ { ...lounge.occupants[0], cancelledMove: 'some-other-move' } ] };
+        const same = step(started.state, { at: T0, rooms: [ cancelling, patientRoom ], type: 'rooms_snapshot' });
+
+        assert.equal(same.state.moves[0].state, 'counting_down');
+    });
+
+    it('ignores the timer of a cancelled move', () => {
+        const started = step(initialState(), request());
+        const moveId = started.move?.id as string;
+        const cancelling = { ...lounge, occupants: [ { ...lounge.occupants[0], cancelledMove: moveId } ] };
+        const cancelled = step(started.state, { at: T0, rooms: [ cancelling, patientRoom ], type: 'rooms_snapshot' });
+        const late = step(cancelled.state, { at: T0, moveId, timer: 'move_arrival', type: 'timer_fired' });
+
+        assert.equal(late.state.moves[0].state, 'cancelled');
+    });
+
+    it('refuses a second move of someone whose move is still under way, and leaves the first alone', () => {
+        const first = step(initialState(), request());
+        const second = step(first.state, request());
+
+        assert.equal(second.move?.state, 'refused');
+        assert.equal(second.move?.reason, 'already_being_moved');
+        assert.deepEqual(second.commands, []);
+        assert.equal(second.state.moves.find(m => m.id === first.move?.id)?.state, 'counting_down');
+    });
+
+    it('accepts a new move of someone whose earlier move is over', () => {
+        const first = step(initialState(), request());
+        const cancelling = { ...lounge, occupants: [ { ...lounge.occupants[0], cancelledMove: first.move?.id } ] };
+        const cancelled = step(first.state, { at: T0, rooms: [ cancelling, patientRoom ], type: 'rooms_snapshot' });
+        const again = step(cancelled.state, request());
+
+        assert.equal(again.move?.state, 'counting_down');
+    });
 });

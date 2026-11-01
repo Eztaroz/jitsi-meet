@@ -19,10 +19,16 @@ export interface IRoleMarkers {
 }
 
 export interface IOccupant {
+
+    /** The id of the move this occupant said they cancel. */
+    cancelledMove?: string;
     displayName?: string;
     endpointId: string;
     identity?: { id?: string; name?: string; };
     role: Role;
+
+    /** Whether the occupant's client says it obeys move commands. */
+    supportsMove: boolean;
 }
 
 export interface IRoom {
@@ -38,10 +44,12 @@ interface IRawIdentity {
 }
 
 interface IRawOccupant {
+    cancelledMove?: string;
     displayName?: string;
     endpointId?: string;
     hidden?: boolean;
     identity?: IRawIdentity;
+    supportsMove?: boolean;
 }
 
 /**
@@ -131,12 +139,14 @@ export function describeRooms(raw: unknown, markers: IRoleMarkers): IRoom[] {
                 }
 
                 return {
+                    cancelledMove: o.cancelledMove,
                     displayName: o.displayName,
                     endpointId: o.endpointId ?? '',
                     identity: o.identity?.user
                         ? { id: o.identity.user.id, name: o.identity.user.name }
                         : undefined,
-                    role
+                    role,
+                    supportsMove: Boolean(o.supportsMove)
                 };
             })
         };

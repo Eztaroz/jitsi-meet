@@ -19,7 +19,9 @@
 --         "endpointId": <occupant resource>,
 --         "displayName": <the nickname in the presence>,
 --         "hidden": <true when not on the main domain, as the recorder bot>,   (Jicofo is left out)
---         "identity": { "user": { <verified user claims as text> }, "group": <text> }   (when verified)
+--         "identity": { "user": { <verified user claims as text> }, "group": <text> },   (when verified)
+--         "supportsMove": <true when the client announced it obeys moves>,
+--         "cancelledMove": <the id of the move the occupant cancelled, if any>
 --     } ] } ] }
 --     403 missing, malformed or unverifiable token.
 --   POST /coordinator/moves   (Content-Type: application/json)
@@ -128,6 +130,9 @@ local function handle_get_rooms(event)
                         displayName = presence and presence:get_child_text('nick', 'http://jabber.org/protocol/nick');
                         hidden = jid.host(occupant.bare_jid) ~= muc_domain_base;
                         identity = presence and identity_of(presence);
+                        supportsMove = presence ~= nil
+                            and presence:get_child_text('jitsi_participant_coordinatorMoveSupport') == 'true';
+                        cancelledMove = presence and presence:get_child_text('jitsi_participant_coordinatorMoveCancelled');
                     });
                 end
             end

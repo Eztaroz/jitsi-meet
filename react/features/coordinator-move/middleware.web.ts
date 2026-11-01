@@ -1,12 +1,17 @@
 import { CONFERENCE_JOINED, NON_PARTICIPANT_MESSAGE_RECEIVED } from '../base/conference/actionTypes';
+import { getCurrentConference } from '../base/conference/functions';
 import MiddlewareRegistry from '../base/redux/MiddlewareRegistry';
 
-import { START_MOVE } from './actionTypes';
-import { MOVE_SUPPORT_PROPERTY } from './constants';
+import { CANCEL_MOVE, START_MOVE } from './actionTypes';
+import { MOVE_CANCELLED_PROPERTY, MOVE_SUPPORT_PROPERTY } from './constants';
 import { buildDestinationUrl, parseMove } from './functions';
 import logger from './logger';
 
+/** The pending departure of the move being counted down to. */
+let departure: ReturnType<typeof setTimeout> | undefined;
+
 MiddlewareRegistry.register(store => next => action => {
+    const moving = store.getState()['features/coordinator-move'].move;
     const result = next(action);
 
     switch (action.type) {
@@ -31,7 +36,8 @@ MiddlewareRegistry.register(store => next => action => {
         logger.info('being moved to another room');
         store.dispatch({ endsAt: Date.now() + move.countdownSeconds * 1000, move, type: START_MOVE });
 
-        setTimeout(() => {
+        clearTimeout(departure);
+        departure = setTimeout(() => {
             const { audio, video } = store.getState()['features/base/media'];
 
             window.location.assign(buildDestinationUrl(window.location.href, move, {
@@ -41,6 +47,14 @@ MiddlewareRegistry.register(store => next => action => {
         }, move.countdownSeconds * 1000);
         break;
     }
+    case CANCEL_MOVE:
+        // The participant stays. The server learns it from their presence.
+        clearTimeout(departure);
+        departure = undefined;
+        if (moving) {
+            getCurrentConference(store.getState())?.setLocalParticipantProperty(MOVE_CANCELLED_PROPERTY, moving.moveId);
+        }
+        break;
     }
 
     return result;

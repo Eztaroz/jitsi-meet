@@ -1,6 +1,6 @@
 import ReducerRegistry from '../base/redux/ReducerRegistry';
 
-import { START_MOVE } from './actionTypes';
+import { CANCEL_MOVE, START_MOVE } from './actionTypes';
 import { IMove } from './functions';
 
 export interface ICoordinatorMoveState {
@@ -13,6 +13,8 @@ ReducerRegistry.register<ICoordinatorMoveState>('features/coordinator-move', (st
     switch (action.type) {
     case START_MOVE:
         return { move: { ...action.move, endsAt: action.endsAt } };
+    case CANCEL_MOVE:
+        return {};
     }
 
     return state;
