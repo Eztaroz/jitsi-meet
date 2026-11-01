@@ -1,7 +1,7 @@
 import ReducerRegistry from '../base/redux/ReducerRegistry';
 
 import { CANCEL_MOVE, START_MOVE } from './actionTypes';
-import { IMove } from './functions';
+import { IMove } from './types';
 
 export interface ICoordinatorMoveState {
 

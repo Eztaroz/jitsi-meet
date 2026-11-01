@@ -12,7 +12,7 @@ import {
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
-import { patientLinkRoom, postConsultation, uniqueHn } from '../../helpers/recorderBot';
+import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
@@ -42,8 +42,6 @@ describe('Coordinator: move patients', () => {
     let hnA: string;
     let hnB: string;
     let a: Participant;
-    let b: Participant;
-    let nurse: Participant;
 
     /**
      * Returns a patient's own token: it opens their own room only.
@@ -72,8 +70,8 @@ describe('Coordinator: move patients', () => {
         hnA = uniqueHn('PATA');
         hnB = uniqueHn('PATB');
         a = await joinMuc({ name: 'p1', token: patientToken(patientA, hnA) }, { roomName: patientLinkRoom(hnA) });
-        b = await joinMuc({ name: 'p2', token: patientToken(patientB, hnB) }, { roomName: patientLinkRoom(hnB) });
-        nurse = await joinMuc({
+        await joinMuc({ name: 'p2', token: patientToken(patientB, hnB) }, { roomName: patientLinkRoom(hnB) });
+        await joinMuc({
             name: 'p3',
             token: generateToken({
                 displayName: nurseIdentity.name,
@@ -155,7 +153,7 @@ describe('Coordinator: move patients', () => {
         expect(inRoom).toBe(false);
 
         // Patient B left their room to try; put them back.
-        b = await joinMuc({ name: 'p2', token: patientToken(patientB, hnB) }, { roomName: patientLinkRoom(hnB) });
+        await joinMuc({ name: 'p2', token: patientToken(patientB, hnB) }, { roomName: patientLinkRoom(hnB) });
         await waitForRoom(r => r?.occupants.some(o => o.identity?.id === patientB.id) === true, hnB, 'patient B back');
     });
 
@@ -178,33 +176,5 @@ describe('Coordinator: move patients', () => {
         // With token authentication the bot cannot start a room, so it joins as soon as the patient has: it was
         // already waiting, which is why the move was sent.
         await waitForRoom(r => r?.occupants.some(o => o.role === 'hidden') === true, hnA, 'the recorder bot in the room');
-    });
-
-    it('fails the move, and leaves the patient where they are, when the recorder bot is at capacity', async () => {
-        // Fill the recorder bot's consultations; they end by themselves, nobody being in their rooms.
-        for (let i = 0; i < 6; i++) {
-            if ((await postConsultation(uniqueHn(`FILL${i}`))).status === 503) {
-                break;
-            }
-        }
-
-        const roomB = await waitForRoom(r => r?.occupants.some(o => o.identity?.id === patientB.id) === true, hnB, 'B');
-        const endpoint = roomB!.occupants.find(o => o.identity?.id === patientB.id)!.endpointId;
-        const { body } = await postMove(hnB.toLowerCase(), endpoint, uniqueHn('CLOSED').toLowerCase());
-
-        expect(body.state).toBe('preparing');
-        await waitForMove(body.id, 'failed', 30_000);
-
-        const failed = await (await fetch(`${process.env.COORDINATOR_API_URL}/moves/${body.id}`, {
-            headers: { 'Authorization': `Bearer ${process.env.COORDINATOR_API_SECRET}` }
-        })).json() as IMove;
-
-        expect(failed.reason).toBe('recorder_bot_at_capacity');
-        expect(await b.isInMuc()).toBe(true);
-        expect(await b.driver.getUrl()).toContain(encodeURIComponent(hnB));
-        expect(nurse).toBeDefined();
-
-        // The consultations that filled the recorder bot end by themselves; let them, for the specs that follow.
-        await b.driver.pause(25_000);
     });
 });

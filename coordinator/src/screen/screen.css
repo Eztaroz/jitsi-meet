@@ -57,3 +57,5 @@ select { background: var(--card); border: 1px solid var(--line); border-radius: 
 .outcome.cancelled, .outcome.refused { border-color: #c98a00; }
 .outcome.failed { border-color: #b3261e; }
 .start-encounter { margin: 2px 0 6px; }
+
+input.move-hn { background: var(--card); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; padding: 4px; width: 9em; }

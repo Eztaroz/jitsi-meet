@@ -1,56 +1,62 @@
-'use strict';
+
 
 /*
  * The coordinator screen. It shows the queues and the open rooms, and refreshes every few seconds. Everything it shows
  * is put in the page as text, never as markup: names come from the participants' tokens.
  */
-(function () {
-    var TOKEN_KEY = 'coordinator-token';
-    var REFRESH_MS = 3000;
-    var STAGES = [
+(function() {
+    const TOKEN_KEY = 'coordinator-token';
+    const REFRESH_MS = 2000;
+    const STAGES = [
         [ 'waiting', 'รอคิว' ],
         [ 'intake', 'ให้ข้อมูลก่อนพบแพทย์' ],
         [ 'examination', 'พบแพทย์' ],
         [ 'aftercare', 'หลังพบแพทย์' ]
     ];
-    var STAGE_NAMES = { aftercare: 'หลังพบแพทย์', intake: 'ให้ข้อมูลก่อนพบแพทย์' };
-    var ROLES = { hidden: 'ระบบบันทึก', patient: 'ผู้ป่วย', staff: 'เจ้าหน้าที่', unknown: 'ไม่ทราบตัวตน' };
-    var ERRORS = {
-        bad_signature: 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล',
+    const STAGE_NAMES = { aftercare: 'หลังพบแพทย์',
+        intake: 'ให้ข้อมูลก่อนพบแพทย์' };
+    const ROLES = { hidden: 'ระบบบันทึก',
+        patient: 'ผู้ป่วย',
+        staff: 'เจ้าหน้าที่',
+        unknown: 'ไม่ทราบตัวตน' };
+    const ERRORS = {
+        'bad_signature': 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล',
         expired: 'โทเคนหมดอายุแล้ว',
         malformed: 'โทเคนไม่ถูกต้อง',
-        no_identity: 'โทเคนนี้ไม่ระบุตัวผู้ใช้',
-        not_a_coordinator: 'บัญชีนี้ไม่ได้เป็นผู้ประสานงาน',
-        not_yet_valid: 'โทเคนยังใช้ไม่ได้',
-        unknown_key: 'ไม่รู้จักกุญแจของโทเคนนี้',
-        unsupported_algorithm: 'โทเคนไม่ถูกต้อง',
-        wrong_audience: 'โทเคนนี้ไม่ใช่สำหรับระบบนี้',
-        wrong_issuer: 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล'
+        'no_identity': 'โทเคนนี้ไม่ระบุตัวผู้ใช้',
+        'not_a_coordinator': 'บัญชีนี้ไม่ได้เป็นผู้ประสานงาน',
+        'not_yet_valid': 'โทเคนยังใช้ไม่ได้',
+        'unknown_key': 'ไม่รู้จักกุญแจของโทเคนนี้',
+        'unsupported_algorithm': 'โทเคนไม่ถูกต้อง',
+        'wrong_audience': 'โทเคนนี้ไม่ใช่สำหรับระบบนี้',
+        'wrong_issuer': 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล'
     };
-    var REASONS = {
-        already_being_moved: 'กำลังย้ายผู้นี้อยู่แล้ว',
-        could_not_send_move: 'ส่งคำสั่งย้ายไม่ได้',
-        destination_holds_a_patient: 'ห้องปลายทางมีผู้ป่วยอยู่แล้ว',
-        destination_not_open: 'ห้องปลายทางยังไม่เปิด',
-        participant_did_not_arrive: 'ผู้ถูกย้ายไม่ไปถึงห้องปลายทาง',
-        participant_not_found: 'ไม่พบผู้ที่จะย้ายในห้อง',
-        participant_not_movable: 'ย้ายผู้นี้ไม่ได้',
-        patient_into_lounge: 'ห้ามย้ายผู้ป่วยเข้าห้องพักเจ้าหน้าที่',
-        patient_room_unknown: 'ไม่ทราบห้องของผู้ป่วยรายนี้',
-        recorder_bot_at_capacity: 'ระบบบันทึกเต็ม ย้ายไม่ได้',
-        recorder_bot_not_ready: 'ระบบบันทึกไม่พร้อมภายใน 30 วินาที',
-        recorder_bot_unreachable: 'ติดต่อระบบบันทึกไม่ได้'
+    const REASONS = {
+        'already_being_moved': 'กำลังย้ายผู้นี้อยู่แล้ว',
+        'could_not_send_move': 'ส่งคำสั่งย้ายไม่ได้',
+        'destination_holds_a_patient': 'ห้องปลายทางมีผู้ป่วยอยู่แล้ว',
+        'destination_not_open': 'ห้องปลายทางยังไม่เปิด',
+        'participant_did_not_arrive': 'ผู้ถูกย้ายไม่ไปถึงห้องปลายทาง',
+        'participant_not_found': 'ไม่พบผู้ที่จะย้ายในห้อง',
+        'participant_not_movable': 'ย้ายผู้นี้ไม่ได้',
+        'patient_into_lounge': 'ห้ามย้ายผู้ป่วยเข้าห้องพักเจ้าหน้าที่',
+        'patient_room_unknown': 'ไม่ทราบห้องของผู้ป่วยรายนี้',
+        'recorder_bot_at_capacity': 'ระบบบันทึกเต็ม ย้ายไม่ได้',
+        'recorder_bot_not_ready': 'ระบบบันทึกไม่พร้อมภายใน 30 วินาที',
+        'recorder_bot_unreachable': 'ติดต่อระบบบันทึกไม่ได้'
     };
-    var OUTCOMES = { cancelled: 'ผู้ถูกย้ายกดยกเลิก', done: 'ย้ายสำเร็จ', failed: 'ย้ายไม่สำเร็จ', refused: 'ไม่อนุญาตให้ย้าย' };
-    var ALL_STAGES = STAGES.concat([ [ 'done', 'เสร็จสิ้น' ] ]);
+    const OUTCOMES = { cancelled: 'ผู้ถูกย้ายกดยกเลิก',
+        done: 'ย้ายสำเร็จ',
+        failed: 'ย้ายไม่สำเร็จ',
+        refused: 'ไม่อนุญาตให้ย้าย' };
+    const ALL_STAGES = STAGES.concat([ [ 'done', 'เสร็จสิ้น' ] ]);
 
     /** What the coordinator has chosen in the lists, kept across the redraws. */
-    var choices = {};
+    const choices = {};
 
     /** The name of everyone seen, by endpoint, so that a move can be described after the person has gone. */
-    var names = {};
-    var latest;
-    var timer;
+    const names = {};
+    let timer;
 
     /**
      * Finds an element.
@@ -70,17 +76,18 @@
      * @returns {Promise<Object>} The status and the body.
      */
     function act(path, body) {
-        return fetch('/screen/api' + path, {
+        return fetch(`/screen/api${path}`, {
             body: JSON.stringify(body),
-            headers: { Authorization: 'Bearer ' + sessionStorage.getItem(TOKEN_KEY), 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY)}`,
+                'Content-Type': 'application/json' },
             method: 'POST'
-        }).then(function (response) {
-            return response.json().catch(function () {
-                return {};
-            }).then(function (json) {
-                return { body: json, status: response.status };
-            });
-        });
+        }).then(response => response.json().catch(() => {
+            return {};
+        })
+.then(json => {
+    return { body: json,
+        status: response.status };
+}));
     }
 
     /**
@@ -103,7 +110,7 @@
      * @returns {HTMLElement}
      */
     function el(tag, text, className) {
-        var node = document.createElement(tag);
+        const node = document.createElement(tag);
 
         if (text !== undefined) {
             node.textContent = text;
@@ -123,10 +130,10 @@
      */
     function waited(seconds) {
         if (seconds < 60) {
-            return seconds + ' วินาที';
+            return `${seconds} วินาที`;
         }
 
-        return Math.floor(seconds / 60) + ' นาที ' + (seconds % 60) + ' วินาที';
+        return `${Math.floor(seconds / 60)} นาที ${seconds % 60} วินาที`;
     }
 
     /**
@@ -152,58 +159,58 @@
      * @returns {void}
      */
     function drawQueues(queues) {
-        var list = $('queue-list');
+        const list = $('queue-list');
 
         list.textContent = '';
         list.className = 'grid';
-        STAGES.forEach(function (stage) {
-            var card = el('div', undefined, 'card');
-            var entries = queues[stage[0]] || [];
+        STAGES.forEach(stage => {
+            const card = el('div', undefined, 'card');
+            const entries = queues[stage[0]] || [];
 
-            card.id = 'queue-' + stage[0];
-            var title = el('h3', stage[1]);
+            card.id = `queue-${stage[0]}`;
+            const title = el('h3', stage[1]);
 
             title.appendChild(el('span', String(entries.length), 'badge'));
             card.appendChild(title);
             if (!entries.length) {
                 card.appendChild(el('div', 'ไม่มีผู้ป่วยรอ', 'empty'));
             }
-            entries.forEach(function (entry) {
-                var row = el('div', undefined, 'queue-entry' + (entry.suggested ? ' suggested' : ''));
+            entries.forEach(entry => {
+                const row = el('div', undefined, `queue-entry${entry.suggested ? ' suggested' : ''}`);
 
                 row.dataset.encounter = entry.encounterId;
                 row.appendChild(el('span', entry.hn || ''));
                 row.appendChild(el('span', waited(entry.waitedSeconds) + (entry.suggested ? ' · แนะนำคนถัดไป' : '')));
 
-                var key = 'stage|' + entry.encounterId;
-                var pick = el('select', undefined, 'stage-to');
+                const key = `stage|${entry.encounterId}`;
+                const pick = el('select', undefined, 'stage-to');
 
-                ALL_STAGES.forEach(function (stage) {
-                    var option = el('option', stage[1]);
+                ALL_STAGES.forEach(choice => {
+                    const option = el('option', choice[1]);
 
-                    option.value = stage[0];
+                    option.value = choice[0];
                     pick.appendChild(option);
                 });
                 pick.value = choices[key] || stage[0];
-                pick.addEventListener('change', function () {
+                pick.addEventListener('change', () => {
                     choices[key] = pick.value;
                 });
 
-                var go = el('button', 'เปลี่ยนขั้น', 'stage-go');
+                const go = el('button', 'เปลี่ยนขั้น', 'stage-go');
 
                 go.type = 'button';
-                go.addEventListener('click', function () {
+                go.addEventListener('click', () => {
                     changeStage(entry.encounterId, pick.value);
                 });
 
-                var done = el('button', 'เสร็จสิ้น', 'stage-done secondary');
+                const done = el('button', 'เสร็จสิ้น', 'stage-done secondary');
 
                 done.type = 'button';
-                done.addEventListener('click', function () {
+                done.addEventListener('click', () => {
                     changeStage(entry.encounterId, 'done');
                 });
 
-                var controls = el('div', undefined, 'controls');
+                const controls = el('div', undefined, 'controls');
 
                 controls.appendChild(pick);
                 controls.appendChild(go);
@@ -226,7 +233,7 @@
             return 'ห้องพักเจ้าหน้าที่';
         }
         if (room.kind === 'station') {
-            return 'จุดบริการ: ' + (STAGE_NAMES[room.stage] || '');
+            return `จุดบริการ: ${STAGE_NAMES[room.stage] || ''}`;
         }
 
         return 'ห้องผู้ป่วย';
@@ -244,11 +251,13 @@
         if (!destination) {
             return;
         }
-        act('/moves', { from: { endpointId: endpointId, room: room }, to: { room: destination } }).then(function (result) {
+        act('/moves', { from: { endpointId,
+            room },
+        to: { room: destination } }).then(result => {
             if (result.status >= 400) {
                 say(result.status === 503 ? 'ติดต่อระบบไม่ได้ ย้ายไม่สำเร็จ' : 'ย้ายไม่สำเร็จ');
             } else if (result.body.state === 'refused') {
-                say(OUTCOMES.refused + ': ' + (REASONS[result.body.reason] || result.body.reason));
+                say(`${OUTCOMES.refused}: ${REASONS[result.body.reason] || result.body.reason}`);
             } else {
                 say('');
             }
@@ -264,8 +273,12 @@
      * @returns {void}
      */
     function changeStage(encounterId, stage) {
-        act('/encounters/' + encodeURIComponent(encounterId) + '/stage', { stage: stage }).then(function (result) {
-            say(result.status === 409 ? 'encounter นี้เสร็จสิ้นแล้ว' : result.status >= 400 ? 'เปลี่ยนขั้นไม่สำเร็จ' : '');
+        act(`/encounters/${encodeURIComponent(encounterId)}/stage`, { stage }).then(result => {
+            if (result.status === 409) {
+                say('encounter นี้เสร็จสิ้นแล้ว');
+            } else {
+                say(result.status >= 400 ? 'เปลี่ยนขั้นไม่สำเร็จ' : '');
+            }
             refresh();
         });
     }
@@ -278,13 +291,13 @@
      * @returns {void}
      */
     function drawRooms(rooms, moves) {
-        var list = $('rooms');
+        const list = $('rooms');
 
         list.textContent = '';
         list.className = 'grid';
-        rooms.forEach(function (room) {
-            var card = el('div', undefined, 'card room');
-            var title = el('h3', room.name);
+        rooms.forEach(room => {
+            const card = el('div', undefined, 'card room');
+            const title = el('h3', room.name);
 
             card.dataset.room = room.name;
             card.dataset.kind = room.kind;
@@ -297,60 +310,67 @@
             }
             card.appendChild(title);
             if (room.kind === 'patient' && room.open && !room.encounterId) {
-                var start = el('button', 'เริ่ม encounter', 'start-encounter');
+                const start = el('button', 'เริ่ม encounter', 'start-encounter');
 
                 start.type = 'button';
-                start.addEventListener('click', function () {
-                    act('/encounters', { hn: room.name }).then(function (result) {
+                start.addEventListener('click', () => {
+                    act('/encounters', { hn: room.name }).then(result => {
                         say(result.status >= 400 ? 'เริ่ม encounter ไม่สำเร็จ (ระบบบันทึกอาจเต็ม)' : '');
                         refresh();
                     });
                 });
                 card.appendChild(start);
             }
-            room.occupants.forEach(function (o) {
-                var who = o.identity && o.identity.name || o.displayName || 'ไม่ระบุชื่อ';
-                var line = el('div', undefined, 'occupant');
-                var moving = moves.some(function (m) {
-                    return (m.state === 'counting_down' || m.state === 'preparing') && m.origin === room.name && m.endpointId === o.endpointId;
-                });
+            room.occupants.forEach(o => {
+                const who = (o.identity && o.identity.name) || o.displayName || 'ไม่ระบุชื่อ';
+                const line = el('div', undefined, 'occupant');
+                const moving = moves.some(m => (m.state === 'counting_down' || m.state === 'preparing')
+                    && m.origin === room.name && m.endpointId === o.endpointId);
 
                 names[o.endpointId] = who;
                 line.dataset.role = o.role;
                 line.dataset.endpoint = o.endpointId;
-                line.appendChild(el('span', who + ' · ' + ROLES[o.role]));
+                line.appendChild(el('span', `${who} · ${ROLES[o.role]}`));
                 if (moving) {
                     line.appendChild(el('span', 'กำลังย้าย', 'badge moving'));
                 } else if (o.role === 'patient' || o.role === 'staff') {
-                    var key = 'move|' + room.name + '|' + o.endpointId;
-                    var pick = el('select', undefined, 'move-to');
-                    var blank = el('option', 'ย้ายไปห้อง…');
+                    const key = `move|${room.name}|${o.endpointId}`;
+                    const pick = el('select', undefined, 'move-to');
+                    const blank = el('option', 'ย้ายไปห้อง…');
 
                     blank.value = '';
                     pick.appendChild(blank);
-                    rooms.forEach(function (other) {
+                    rooms.forEach(other => {
                         if (other.name !== room.name) {
-                            var option = el('option', other.name + (other.open ? '' : ' (ปิดอยู่)'));
+                            const option = el('option', other.name + (other.open ? '' : ' (ปิดอยู่)'));
 
                             option.value = other.name;
                             pick.appendChild(option);
                         }
                     });
                     pick.value = choices[key] || '';
-                    pick.addEventListener('change', function () {
+                    pick.addEventListener('change', () => {
                         choices[key] = pick.value;
                     });
 
-                    var go = el('button', 'ย้าย', 'move-go');
+                    // A patient's own room that is closed is in no list: the coordinator can name it by the HN.
+                    const typed = el('input', undefined, 'move-hn');
+
+                    typed.type = 'text';
+                    typed.placeholder = 'หรือพิมพ์ HN';
+                    typed.autocomplete = 'off';
+
+                    const go = el('button', 'ย้าย', 'move-go');
 
                     go.type = 'button';
-                    go.addEventListener('click', function () {
-                        var to = pick.value;
+                    go.addEventListener('click', () => {
+                        const to = typed.value.trim() || pick.value;
 
                         delete choices[key];
                         move(room.name, o.endpointId, to);
                     });
                     line.appendChild(pick);
+                    line.appendChild(typed);
                     line.appendChild(go);
                 }
                 card.appendChild(line);
@@ -369,21 +389,18 @@
      * @returns {void}
      */
     function drawOutcomes(moves) {
-        var list = $('outcomes');
+        const list = $('outcomes');
 
         list.textContent = '';
-        moves.filter(function (m) {
-            return OUTCOMES[m.state];
-        }).sort(function (a, b) {
-            return new Date(b.startedAt) - new Date(a.startedAt);
-        }).forEach(function (m) {
-            var text = (names[m.endpointId] || 'ผู้เข้าร่วม') + ': ' + OUTCOMES[m.state]
-                + (m.reason ? ' (' + (REASONS[m.reason] || m.reason) + ')' : '');
-            var item = el('li', text, 'outcome ' + m.state);
+        moves.filter(m => OUTCOMES[m.state]).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
+.forEach(m => {
+    const text = `${names[m.endpointId] || 'ผู้เข้าร่วม'}: ${OUTCOMES[m.state]
+    }${m.reason ? ` (${REASONS[m.reason] || m.reason})` : ''}`;
+    const item = el('li', text, `outcome ${m.state}`);
 
-            item.dataset.move = m.id;
-            list.appendChild(item);
-        });
+    item.dataset.move = m.id;
+    list.appendChild(item);
+});
     }
 
     /**
@@ -392,17 +409,17 @@
      * @returns {void}
      */
     function refresh() {
-        var token = sessionStorage.getItem(TOKEN_KEY);
+        const token = sessionStorage.getItem(TOKEN_KEY);
 
         if (!token) {
             showSignIn();
 
             return;
         }
-        fetch('/screen/api/state', { headers: { Authorization: 'Bearer ' + token } })
-            .then(function (response) {
+        fetch('/screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
+            .then(response => {
                 if (response.status === 401 || response.status === 403) {
-                    return response.json().then(function (body) {
+                    return response.json().then(body => {
                         showSignIn(ERRORS[body.error] || 'เข้าสู่ระบบไม่ได้');
                     });
                 }
@@ -410,13 +427,13 @@
                     throw new Error('state');
                 }
 
-                return response.json().then(function (state) {
+                return response.json().then(state => {
                     $('signin').hidden = true;
                     $('board').hidden = false;
                     $('who').hidden = false;
                     $('who-name').textContent = state.coordinator.name || state.coordinator.id;
                     $('problem').hidden = true;
-                    latest = state;
+
                     // A list that is being chosen from would close if it were drawn again.
                     if (!document.activeElement || document.activeElement.tagName !== 'SELECT') {
                         drawQueues(state.queues);
@@ -425,11 +442,11 @@
                     drawOutcomes(state.moves);
                 });
             })
-            .catch(function () {
+            .catch(() => {
                 $('problem').hidden = false;
                 $('problem').textContent = 'ติดต่อระบบไม่ได้ กำลังลองใหม่';
             })
-            .then(function () {
+            .then(() => {
                 clearTimeout(timer);
                 if (sessionStorage.getItem(TOKEN_KEY)) {
                     timer = setTimeout(refresh, REFRESH_MS);
@@ -437,22 +454,23 @@
             });
     }
 
-    $('signin-form').addEventListener('submit', function (event) {
+    $('signin-form').addEventListener('submit', event => {
         event.preventDefault();
         sessionStorage.setItem(TOKEN_KEY, $('signin-token').value.trim());
         $('signin-token').value = '';
         refresh();
     });
-    $('sign-out').addEventListener('click', function () {
+    $('sign-out').addEventListener('click', () => {
         showSignIn();
     });
 
-    // A single sign-on can send the coordinator here with the token in the address's fragment, which a server never sees.
-    var fromFragment = /[#&]jwt=([^&]+)/.exec(location.hash);
+    // A single sign-on can send the coordinator here with the token in the address's fragment, which a server never
+    // sees.
+    const fromFragment = /[#&]jwt=([^&]+)/.exec(location.hash);
 
     if (fromFragment) {
         sessionStorage.setItem(TOKEN_KEY, decodeURIComponent(fromFragment[1]));
         history.replaceState(null, '', location.pathname);
     }
     refresh();
-}());
+})();

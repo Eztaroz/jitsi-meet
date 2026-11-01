@@ -86,7 +86,7 @@ describe('Coordinator: audit log and retention', () => {
         expect((await postStage(encounterId, 'intake')).status).toBe(200);
         expect((await postStage(encounterId, 'lunch')).status).toBe(400);
 
-        const entries = await getAudit();
+        const entries = await getAudit(1000);
         const moves = entries.filter(e => e.kind === 'move' && e.participantId === staffIdentity.id);
         const stage = entries.find(e => e.kind === 'stage' && e.encounterId === encounterId);
 
@@ -96,7 +96,7 @@ describe('Coordinator: audit log and retention', () => {
     });
 
     it('names a patient\'s room by a keyed reference, never by the HN', async () => {
-        const entries = await getAudit();
+        const entries = await getAudit(1000);
         const cancelled = entries.find(e => e.kind === 'move' && e.participantId === staffIdentity.id)!;
 
         expect(cancelled.issuer).toBe('system');

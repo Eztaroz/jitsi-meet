@@ -74,7 +74,7 @@ From the screen the coordinator can also act. Every action goes through the same
 
 A participant being moved shows as "กำลังย้าย" on every coordinator's screen, and what came of each move is listed in Thai with its reason: moved, cancelled by the participant, refused, or failed. A refusal is also shown at once where the coordinator asked.
 
-It refreshes every three seconds. Serve the service on the hospital's internal network only; put TLS in front of it if the coordinators' tokens cross a network you do not control.
+It refreshes every two seconds. Serve the service on the hospital's internal network only; put TLS in front of it if the coordinators' tokens cross a network you do not control.
 
 ## Web only
 

@@ -37,3 +37,9 @@ set -a; . ../recorder-bot/test-deployment/tests.env; . ../recorder-bot/test-depl
 ```bash
 npm run test-single -- 'specs/coordinator/*.spec.ts'
 ```
+
+All the specs but one run together. `specs/coordinator/moveCapacity.spec.ts` fills the recorder bot to see a move fail when it is at capacity, so run it on its own:
+
+```bash
+npm run test-single -- specs/coordinator/moveCapacity.spec.ts
+```

@@ -39,6 +39,11 @@ services:
         environment:
             ENABLE_BREAKOUT_ROOMS: 'false'
 
+    recorder-bot:
+        environment:
+            # Room for the specs that record at the same time; moveCapacity.spec.ts fills it, and runs alone.
+            RECORDER_BOT_MAX_CONSULTATIONS: 12
+
     coordinator:
         image: coordinator:local
         build: ../../coordinator

@@ -21,18 +21,18 @@ moving on every coordinator\'s screen, and what came of the move is shown in Tha
 participant, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
 Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service \
 on top of it.',
-    usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
+    usesBrowsers: [ 'p1', 'p2', 'p4' ]
 });
 
 describe('Coordinator: acting from the screen', () => {
     const coordinatorA = { id: `coordinator-a-${uuidv4()}`, name: 'ผู้ประสานงาน เอ' };
     const coordinatorB = { id: `coordinator-b-${uuidv4()}`, name: 'ผู้ประสานงาน บี' };
-    const staff = { id: `staff-${uuidv4()}`, name: 'Staff S' };
-    const patient = { id: `patient-${uuidv4()}`, name: 'Patient P' };
+    // The screen shows every recent move, other specs' too: a name of its own tells this one's.
+    const patient = { id: `patient-${uuidv4()}`, name: `Patient ${uuidv4().slice(0, 8)}` };
     let hn: string;
     let a: Participant;
     let b: Participant;
-    let staffBrowser: Participant;
+    let patientBrowser: Participant;
 
     /**
      * Opens the screen in a participant's browser and signs a coordinator in.
@@ -74,20 +74,14 @@ describe('Coordinator: acting from the screen', () => {
         }
 
         hn = uniqueHn('ACT');
-        await joinMuc({
+        patientBrowser = await joinMuc({
             name: 'p4',
             token: generateToken({
                 displayName: patient.name,
+                room: encodeURIComponent(hn.toLowerCase()).toLowerCase(),
                 userClaims: { ...expectations.recorderBot.patientClaims, id: patient.id }
             })
         }, { roomName: patientLinkRoom(hn) });
-        staffBrowser = await joinMuc({
-            name: 'p3',
-            token: generateToken({
-                displayName: staff.name,
-                userClaims: { ...expectations.recorderBot.staffClaims, id: staff.id }
-            })
-        }, { roomName: 'lounge-1' });
         a = await joinMuc({ name: 'p1', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
         b = await joinMuc({ name: 'p2', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
         await openScreen(a, coordinatorA);
@@ -135,33 +129,35 @@ describe('Coordinator: acting from the screen', () => {
         await act('.stage-done');
         await a.driver.waitUntil(
             async () => !Object.values(await getQueues()).flat().some(e => e.encounterId === id), { timeoutMsg: 'not done' });
-        expect((await getAudit()).find(e => e.kind === 'stage' && e.encounterId === id && e.to === 'done')?.issuer)
+        expect((await getAudit(1000)).find(e => e.kind === 'stage' && e.encounterId === id && e.to === 'done')?.issuer)
             .toBe(coordinatorA.id);
     });
 
     it('moves a participant to a chosen room: both screens show them moving, and the participant can cancel', async () => {
         const room = hn.toLowerCase();
+        const closed = uniqueHn('ACTCLOSED').toLowerCase();
 
-        await a.driver.waitUntil(async () => (await roomText(a, 'lounge-1')).includes(staff.name));
-        await a.driver.execute((to: string) => {
-            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === 'lounge-1')!;
-            const select = card.querySelector('.occupant[data-role="staff"] select.move-to') as HTMLSelectElement;
+        await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
+        await a.driver.execute((name: string, to: string) => {
+            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
+            const typed = card.querySelector('.occupant[data-role="patient"] input.move-hn') as HTMLInputElement;
 
-            select.value = to;
-            select.dispatchEvent(new Event('change'));
-            (card.querySelector('.occupant[data-role="staff"] .move-go') as HTMLElement).click();
-        }, room);
+            // A room that is closed is in no list: a coordinator names a patient's own room by the HN.
+            typed.value = to;
+            (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();
+        }, room, closed);
+
+        // The recorder bot is asked to open the destination before the patient is told: that takes a while.
+        await Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
+            async () => (await roomText(screen, room)).includes('กำลังย้าย'),
+            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' })));
+
+        await (await patientBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
+        await (await patientBrowser.driver.$('#coordinator-move-cancel')).click();
 
         for (const screen of [ a, b ]) {
-            await screen.driver.waitUntil(async () => (await roomText(screen, 'lounge-1')).includes('กำลังย้าย'),
-                { timeout: 10_000, timeoutMsg: 'the move is not shown on a screen' });
-        }
-
-        await (await staffBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 10_000 });
-        await (await staffBrowser.driver.$('#coordinator-move-cancel')).click();
-
-        for (const screen of [ a, b ]) {
-            await screen.driver.waitUntil(async () => (await (await screen.driver.$('#outcomes')).getText()).includes('ผู้ถูกย้ายกดยกเลิก'),
+            await screen.driver.waitUntil(
+                async () => (await (await screen.driver.$('#outcomes')).getText()).includes(`${patient.name}: ผู้ถูกย้ายกดยกเลิก`),
                 { timeout: 15_000, timeoutMsg: 'the cancellation is not shown' });
         }
     });
@@ -182,10 +178,10 @@ describe('Coordinator: acting from the screen', () => {
     });
 
     it('names the coordinator in the audit log for what they did, not the system', async () => {
-        const entries = await getAudit();
-        const mine = entries.filter(e => e.kind === 'move' && [ staff.id, patient.id ].includes(e.participantId ?? ''));
+        const entries = await getAudit(1000);
+        const mine = entries.filter(e => e.kind === 'move' && e.participantId === patient.id);
 
-        expect(mine.length).toBeGreaterThanOrEqual(2);
+        expect(mine.length).toBe(2);
         expect(mine.every(e => e.issuer === coordinatorA.id || e.issuer === coordinatorB.id)).toBe(true);
         expect(mine.find(e => e.outcome === 'cancelled')?.issuer).toBe(coordinatorA.id);
         expect(mine.find(e => e.outcome === 'refused')?.issuer).toBe(coordinatorB.id);

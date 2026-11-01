@@ -1,14 +1,5 @@
 import { COORDINATOR_MOVE_MESSAGE_TYPE, DEFAULT_COUNTDOWN_SECONDS } from './constants';
-
-/** A move the server told this participant about. */
-export interface IMove {
-    countdownSeconds: number;
-    destination: string;
-    moveId: string;
-
-    /** The token that lets this participant into the destination, and only there. */
-    token: string;
-}
+import { IMove } from './types';
 
 /**
  * Reads a move command from a message.
