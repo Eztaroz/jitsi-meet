@@ -61,7 +61,18 @@ describe('the coordinator service', () => {
         recorded = [];
         botStatus = 'starting';
         store = new Store(mkdtempSync(join(tmpdir(), 'service-')));
-        service = new CoordinatorService({
+        service = makeService();
+    });
+
+    /**
+     * Creates the service over the fakes.
+     *
+     * @param {Object} extra - Settings that differ from the defaults.
+     * @returns {CoordinatorService}
+     */
+    function makeService(extra: { prepareWaitMs?: number; } = {}): CoordinatorService {
+        return new CoordinatorService({
+            ...extra,
             auditKey: 'audit-key',
             layout: { lounges: [], stations: [] },
             prosody: {
@@ -90,7 +101,7 @@ describe('the coordinator service', () => {
             timeZone: 'UTC',
             token: { audience: 'jitsi', issuer: 'coordinator', subject: 'meet' }
         });
-    });
+    }
 
     afterEach(() => {
         service.stop();
@@ -155,6 +166,22 @@ describe('the coordinator service', () => {
             await advance(500);
         }
 
+        assert.equal(stateOf(move.id)?.state, 'failed');
+        assert.equal(stateOf(move.id)?.reason, 'recorder_bot_not_ready');
+        assert.deepEqual(sent, []);
+    });
+
+    it('fails a move at the configured prepare wait, not at the default', async () => {
+        service.stop();
+        service = makeService({ prepareWaitMs: 3000 });
+        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
+
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+
+        await advance(2500);
+        assert.equal(stateOf(move.id)?.state, 'preparing');
+
+        await advance(500);
         assert.equal(stateOf(move.id)?.state, 'failed');
         assert.equal(stateOf(move.id)?.reason, 'recorder_bot_not_ready');
         assert.deepEqual(sent, []);

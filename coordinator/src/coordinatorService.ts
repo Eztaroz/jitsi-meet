@@ -32,6 +32,7 @@ export class CoordinatorService {
     private readonly _opts: {
         auditKey: string;
         layout: ILayout;
+        prepareWaitMs?: number;
         prosody: Prosody;
         recorderBot: RecorderBot;
         retentionMs: number;
@@ -249,7 +250,7 @@ export class CoordinatorService {
      * @returns {Promise<IStep>}
      */
     private async _apply(event: RulesEvent, rooms: IRoom[], newId?: () => string): Promise<IStep> {
-        const result = step(this._state, event, newId);
+        const result = step(this._state, event, newId, this._opts.prepareWaitMs);
 
         this._commit(result.state);
         for (const command of result.commands) {
