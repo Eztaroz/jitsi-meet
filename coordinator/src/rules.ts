@@ -431,10 +431,12 @@ export function step(
         };
     }
     case 'close_day':
+        // The day's encounters end, and with them what was learned about where their patients' rooms are.
         return {
             commands: [],
             state: {
                 ...state,
+                patientRooms: {},
                 encounters: state.encounters.map(e => e.stage === 'done'
                     ? e
                     : { ...enter(e, 'done', event.at), unfinished: true as const })

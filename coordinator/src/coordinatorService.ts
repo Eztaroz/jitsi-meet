@@ -22,7 +22,7 @@ import {
     queues,
     step
 } from './rules.ts';
-import type { Store } from './store.ts';
+import type { IMoveRecord, Store } from './store.ts';
 
 /** The states of a move that is under way: it has no audit entry until it ends. */
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
@@ -44,11 +44,11 @@ export class CoordinatorService {
         token: { audience: string; issuer: string; subject: string; };
     };
 
-    /** The moves whose end is in the audit log. */
-    private readonly _audited = new Set<string>();
+    /** What is kept about each move beside the rules state: who asked, whether it is audited, its deadlines. */
+    private readonly _records: Map<string, IMoveRecord>;
 
-    /** Who asked for each move. */
-    private readonly _issuers = new Map<string, string>();
+    /** The running timers of the moves, by move id and timer. */
+    private readonly _timers = new Map<string, NodeJS.Timeout>();
     private _retention?: NodeJS.Timeout;
 
     private readonly _effects: MoveEffects;
@@ -65,7 +65,16 @@ export class CoordinatorService {
     constructor(opts: CoordinatorService['_opts']) {
         this._opts = opts;
         this._state = opts.store.load();
+        this._records = opts.store.loadMoveRecords();
         this._effects = new MoveEffects(opts, {
+            consultation: (moveId, consultationId) => {
+                const record = this._records.get(moveId);
+
+                if (record) {
+                    this._records.set(moveId, { ...record, consultationId });
+                    this._persist();
+                }
+            },
             failSend: moveId => this._commit(step(this._state, {
                 at: new Date(), moveId, reason: 'could_not_send_move', type: 'destination_failed'
             }).state),
@@ -203,7 +212,7 @@ export class CoordinatorService {
                 ?.name ?? name;
             const moveId = randomUUID();
 
-            this._issuers.set(moveId, issuer);
+            this._records.set(moveId, { audited: false, deadlines: {}, issuer });
 
             const result = await this._apply({
                 at: new Date(),
@@ -221,6 +230,54 @@ export class CoordinatorService {
     }
 
     /**
+     * Picks up the moves that were under way when the service last stopped: restarts each pending timer for the time
+     * left, and settles at once, the way a normal timeout does, any whose deadline passed while the service was down.
+     * Call it once after creating the service.
+     *
+     * @returns {Promise<void>}
+     */
+    resume(): Promise<void> {
+        return this._serial(async () => {
+            const active = this._state.moves.filter(m => ACTIVE_MOVE.has(m.state));
+
+            if (active.some(m => m.state === 'counting_down')) {
+                // A participant may have arrived while the service was down.
+                const rooms = await this.rooms().catch(() => undefined);
+
+                if (rooms) {
+                    await this._apply({ at: new Date(), rooms, type: 'rooms_snapshot' }, rooms);
+                }
+            }
+            for (const saved of active) {
+                const move = this._state.moves.find(m => m.id === saved.id);
+                const timer = move?.state === 'counting_down' ? 'move_arrival' : 'move_prepare';
+
+                if (!move || !ACTIVE_MOVE.has(move.state)) {
+                    continue;
+                }
+
+                const record = this._records.get(move.id);
+                const deadline = record?.deadlines[timer];
+
+                if (record?.consultationId) {
+                    this._effects.restore(move.id, record.consultationId);
+                }
+                if (!deadline || deadline.getTime() <= Date.now()) {
+                    await this._apply({ at: new Date(), moveId: move.id, timer, type: 'timer_fired' }, []);
+                    continue;
+                }
+                this._startTimer(move.id, timer, deadline);
+                if (move.state === 'preparing' && !move.station) {
+                    this._effects.prepareDestination(move.id, move.destination);
+                }
+            }
+            if (this._state.moves.some(m => ACTIVE_MOVE.has(m.state))) {
+                this._ensurePolling();
+            }
+        });
+    }
+
+    /**
      * Stops everything that runs on its own: the sweep, the end of the day and the polling.
      *
      * @returns {void}
@@ -228,6 +285,10 @@ export class CoordinatorService {
     stop(): void {
         clearInterval(this._retention);
         clearTimeout(this._midnight);
+        for (const timer of this._timers.values()) {
+            clearTimeout(timer);
+        }
+        this._timers.clear();
         this._stopPolling();
     }
 
@@ -268,10 +329,46 @@ export class CoordinatorService {
      */
     private _commit(state: IState): void {
         if (state !== this._state) {
-            this._opts.store.save(state);
             this._state = state;
             this._auditEndedMoves();
+            this._persist();
         }
+    }
+
+    /**
+     * Saves the state and what is kept about each move.
+     *
+     * @returns {void}
+     */
+    private _persist(): void {
+        this._opts.store.save(this._state, this._records);
+    }
+
+    /**
+     * Starts the timer of a move to fire at a deadline, and keeps the deadline so that a restart can resume it.
+     *
+     * @param {string} moveId - The move.
+     * @param {string} timer - Which timer.
+     * @param {Date} deadline - When it fires.
+     * @returns {void}
+     */
+    private _startTimer(moveId: string, timer: 'move_arrival' | 'move_prepare', deadline: Date): void {
+        const key = `${moveId}:${timer}`;
+        const record = this._records.get(moveId) ?? { audited: false, deadlines: {}, issuer: 'system' };
+
+        this._records.set(moveId, { ...record, deadlines: { ...record.deadlines, [timer]: deadline } });
+        this._persist();
+        clearTimeout(this._timers.get(key));
+
+        const handle = setTimeout(() => {
+            this._timers.delete(key);
+            this._serial(() => this._apply({
+                at: new Date(), moveId, timer, type: 'timer_fired'
+            }, [])).catch(error => log.error('a timer failed', { error: (error as Error).name }));
+        }, Math.max(0, deadline.getTime() - Date.now()));
+
+        handle.unref();
+        this._timers.set(key, handle);
     }
 
     /**
@@ -281,15 +378,16 @@ export class CoordinatorService {
      */
     private _auditEndedMoves(): void {
         for (const move of this._state.moves) {
-            if (!ACTIVE_MOVE.has(move.state) && !this._audited.has(move.id)) {
-                this._audited.add(move.id);
+            const record = this._records.get(move.id) ?? { audited: false, deadlines: {}, issuer: 'system' };
+
+            if (!ACTIVE_MOVE.has(move.state) && !record.audited) {
                 this._audit(moveEntry(move, {
                     at: new Date(),
-                    issuer: this._issuers.get(move.id) ?? 'system',
+                    issuer: record.issuer,
                     key: this._opts.auditKey,
                     layout: this._opts.layout
                 }));
-                this._issuers.delete(move.id);
+                this._records.set(move.id, { ...record, audited: true, deadlines: {} });
             }
         }
     }
@@ -321,9 +419,15 @@ export class CoordinatorService {
             this._state = {
                 ...this._state,
                 encounters: this._state.encounters.filter(e => e.startedAt >= cutoff),
-                moves: this._state.moves.filter(m => m.startedAt >= cutoff)
+                moves: this._state.moves.filter(m => m.startedAt >= cutoff),
+                patientRooms: this._opts.store.patientRooms()
             };
-            if (removed.audit || removed.encounters) {
+            for (const id of this._records.keys()) {
+                if (!this._state.moves.some(m => m.id === id)) {
+                    this._records.delete(id);
+                }
+            }
+            if (removed.audit || removed.encounters || removed.moves || removed.patientRooms) {
                 log.info('retention sweep', removed);
             }
         }).catch(error => log.error('the retention sweep failed', { error: (error as Error).name }));
@@ -346,11 +450,7 @@ export class CoordinatorService {
             await this._opts.recorderBot.recordRoom(command.hn);
             break;
         case 'start_timer':
-            setTimeout(() => {
-                this._serial(() => this._apply({
-                    at: new Date(), moveId: command.moveId, timer: command.timer, type: 'timer_fired'
-                }, [])).catch(error => log.error('a timer failed', { error: (error as Error).name }));
-            }, command.afterMs).unref();
+            this._startTimer(command.moveId, command.timer, new Date(Date.now() + command.afterMs));
             break;
         case 'prepare_destination':
             this._effects.prepareDestination(command.moveId, command.hn, command.station);

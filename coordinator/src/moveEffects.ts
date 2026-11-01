@@ -20,6 +20,9 @@ const BOT_IN_ROOM = new Set([ 'waiting_for_participants', 'recording' ]);
 /** What the move effects need from the service that owns the state. */
 export interface IMoveEffectsHooks {
 
+    /** The consultation started in a station for a move, or `undefined` once it is no longer to be stopped. */
+    consultation: (moveId: string, consultationId: string | undefined) => void;
+
     /** Fails a move whose command could not be sent. */
     failSend: (moveId: string) => void;
 
@@ -61,6 +64,17 @@ export class MoveEffects {
     }
 
     /**
+     * Takes back the consultation a move started in a station before a restart, so that it can still be stopped.
+     *
+     * @param {string} moveId - The move.
+     * @param {string} consultationId - The consultation.
+     * @returns {void}
+     */
+    restore(moveId: string, consultationId: string): void {
+        this._stationConsultations.set(moveId, consultationId);
+    }
+
+    /**
      * Stops the consultation started in a station for a move that did not bring the patient. Nothing is kept.
      *
      * @param {string} moveId - The move.
@@ -70,6 +84,7 @@ export class MoveEffects {
         const consultationId = this._stationConsultations.get(moveId);
 
         this._stationConsultations.delete(moveId);
+        this._hooks.consultation(moveId, undefined);
         if (consultationId) {
             this._opts.recorderBot.stop(consultationId).catch(error => log.warn('could not stop a station consultation', {
                 error: error instanceof RecorderBotUnavailableError ? error.code : 'unknown'
@@ -140,9 +155,11 @@ export class MoveEffects {
 
             if (station) {
                 this._stationConsultations.set(moveId, consultationId);
+                this._hooks.consultation(moveId, consultationId);
                 if (!this._hooks.isPreparing(moveId)) {
                     // The move ended while the recorder bot was answering: nobody is coming.
                     this._stationConsultations.delete(moveId);
+                    this._hooks.consultation(moveId, undefined);
                     await this._opts.recorderBot.stop(consultationId);
 
                     return;
