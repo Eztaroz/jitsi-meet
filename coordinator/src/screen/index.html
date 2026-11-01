@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="th">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ศูนย์ควบคุมการย้ายห้อง</title>
+    <link rel="stylesheet" href="/screen/screen.css">
+</head>
+<body>
+    <header>
+        <h1>ศูนย์ควบคุมการย้ายห้อง</h1>
+        <div id="who" hidden>
+            <span id="who-name"></span>
+            <button id="sign-out" type="button">ออกจากระบบ</button>
+        </div>
+    </header>
+
+    <main id="signin">
+        <form id="signin-form">
+            <label for="signin-token">โทเคนของผู้ประสานงาน</label>
+            <textarea id="signin-token" rows="4" autocomplete="off" spellcheck="false"></textarea>
+            <button id="signin-submit" type="submit">เข้าสู่ระบบ</button>
+            <p id="signin-error" role="alert" hidden></p>
+        </form>
+    </main>
+
+    <main id="board" hidden>
+        <p id="problem" role="alert" hidden></p>
+        <p id="notice" role="status" hidden></p>
+        <section id="queues">
+            <h2>คิว</h2>
+            <div id="queue-list"></div>
+        </section>
+        <section>
+            <h2>ห้องที่เปิดอยู่</h2>
+            <div id="rooms"></div>
+        </section>
+    </main>
+
+    <script src="/screen/screen.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { type ILayout, type IRoleMarkers, parseRoleMarker } from './rooms.ts';
+import { type ILayout, type IRoleMarker, type IRoleMarkers, parseRoleMarker } from './rooms.ts';
 
 /**
  * The coordinator service's settings, read from environment variables. `coordinator/deploy/README.md` documents each.
@@ -40,6 +40,17 @@ export interface IConfig {
 
     /** Which verified identities are patients and which staff. */
     roleMarkers: IRoleMarkers;
+
+    /**
+     * How coordinators sign in to the screen. Unset, there is no screen. `keys` is where the hospital issuer's public
+     * keys are: a directory, or the URL of a key server, as `<source>/<SHA-256 of the key id>.pem`.
+     */
+    screen?: {
+        acceptedAudiences: string[];
+        acceptedIssuers: string[];
+        keys: string;
+        marker: IRoleMarker;
+    };
 
     /** The service's key id and its PEM private key; Prosody has the public key (ADR 0009). */
     signingKey: { kid: string; privateKey: string; };
@@ -82,6 +93,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         auditKey: env.COORDINATOR_AUDIT_KEY?.trim() || required(env, 'COORDINATOR_API_SECRET'),
         retentionMs: Number(env.COORDINATOR_RETENTION_DAYS ?? 90) * 24 * 60 * 60 * 1000,
         retentionSweepMs: Number(env.COORDINATOR_RETENTION_SWEEP_SECONDS ?? 3600) * 1000,
+        screen: env.COORDINATOR_ISSUER_KEYS?.trim()
+            ? {
+                acceptedAudiences: (env.COORDINATOR_ACCEPTED_AUDIENCES ?? 'jitsi').split(',').map(a => a.trim()).filter(Boolean),
+                acceptedIssuers: (env.COORDINATOR_ACCEPTED_ISSUERS ?? 'chat').split(',').map(a => a.trim()).filter(Boolean),
+                keys: env.COORDINATOR_ISSUER_KEYS.trim(),
+                marker: parseRoleMarker(env.COORDINATOR_COORDINATOR_MARKER ?? 'user.hospital_role=coordinator',
+                    'COORDINATOR_COORDINATOR_MARKER') as IRoleMarker
+            }
+            : undefined,
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),

@@ -49,6 +49,8 @@ services:
             - coordinator-data:/var/lib/coordinator
             - ../../coordinator/test-deployment/keys/private.pem:/run/keys/private.pem:ro
             - ../../coordinator/test-deployment/rooms.json:/etc/coordinator/rooms.json:ro
+            # The hospital issuer's public keys, which sign the coordinators in to the screen.
+            - ../../recorder-bot/test-deployment/jwt/asap:/etc/coordinator/issuer-keys:ro
         environment:
             COORDINATOR_API_PORT: 8094
             COORDINATOR_API_SECRET: coordinator-test-secret
@@ -56,6 +58,7 @@ services:
             # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
             COORDINATOR_RETENTION_SWEEP_SECONDS: 2
             COORDINATOR_PROSODY_URL: http://localhost:5280
+            COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
             COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
             COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
             COORDINATOR_RECORDER_BOT_URL: http://localhost:8090

@@ -4,13 +4,27 @@
  * what is read back.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
+
 
 import type { Flow } from './flow.ts';
 import { errorCode, log } from './log.ts';
 import { type IEncounter, type IMove, STAGES, type Stage } from './patientFlow.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
+import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
+
+/** The files of the coordinator screen, read once. */
+const SCREEN_FILES: Record<string, { body: Buffer; type: string; }> = {};
+
+for (const [ route, file, type ] of [
+    [ '/screen', 'index.html', 'text/html; charset=utf-8' ],
+    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ],
+    [ '/screen/screen.js', 'screen.js', 'text/javascript; charset=utf-8' ]
+]) {
+    SCREEN_FILES[route] = { body: readFileSync(new URL(`./screen/${file}`, import.meta.url)), type };
+}
 
 /** Who the audit log names for a call with the shared bearer secret. */
 const SYSTEM = 'system';
@@ -160,10 +174,79 @@ function moveFrom(body: unknown): { endpointId: string; fromRoom: string; toRoom
  *
  * @param {Object} options - Options.
  * @param {Flow} options.flow - The patient-flow runner.
+ * @param {ICoordinatorAuth} options.screen - How coordinators sign in; without it there is no screen.
  * @param {string} options.secret - The shared bearer secret.
  * @returns {Server}
  */
-export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Server {
+export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoordinatorAuth; secret: string; }): Server {
+    /**
+     * Handles a request for the coordinator screen. The page and its files are public: they are a form to sign in.
+     * What the page shows comes from the screen's own API, which only a coordinator's token opens; the shared bearer
+     * secret does not.
+     *
+     * @param {IncomingMessage} req - The request.
+     * @param {ServerResponse} res - The response.
+     * @param {string|undefined} token - The bearer token, if there is one.
+     * @returns {Promise<void>}
+     */
+    async function handleScreen(req: IncomingMessage, res: ServerResponse, token: string | undefined) {
+        const { pathname } = new URL(req.url ?? '/', 'http://localhost');
+
+        if (!screen || req.method !== 'GET') {
+            throw new HttpError(404, 'not found');
+        }
+
+        const file = SCREEN_FILES[pathname];
+
+        if (file) {
+            res.writeHead(200, {
+                'cache-control': 'no-store',
+                'content-security-policy': 'default-src \'self\'; frame-ancestors \'none\'',
+                'content-type': file.type
+            });
+            res.end(file.body);
+
+            return;
+        }
+        if (pathname !== '/screen/api/state') {
+            throw new HttpError(404, 'not found');
+        }
+        if (!token) {
+            res.setHeader('www-authenticate', 'Bearer');
+            throw new HttpError(401, 'sign in with a coordinator token');
+        }
+
+        let coordinator;
+
+        try {
+            coordinator = await verifyCoordinator(token, screen);
+        } catch (error) {
+            if (error instanceof SignInError) {
+                send(res, 403, { error: error.code });
+
+                return;
+            }
+            throw error;
+        }
+
+        try {
+            const queues = flow.queues();
+            const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
+
+            send(res, 200, {
+                coordinator,
+                queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
+                    [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
+                rooms: await flow.rooms()
+            });
+        } catch (error) {
+            if (error instanceof ProsodyUnavailableError) {
+                throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
+            }
+            throw error;
+        }
+    }
+
     /**
      * Handles one request.
      *
@@ -173,6 +256,12 @@ export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Se
      */
     async function handle(req: IncomingMessage, res: ServerResponse) {
         const [ scheme, token ] = (req.headers.authorization ?? '').split(' ');
+
+        if (new URL(req.url ?? '/', 'http://localhost').pathname.startsWith('/screen')) {
+            await handleScreen(req, res, scheme === 'Bearer' ? token : undefined);
+
+            return;
+        }
 
         if (scheme !== 'Bearer' || !token || !sameSecret(token, secret)) {
             res.setHeader('www-authenticate', 'Bearer');

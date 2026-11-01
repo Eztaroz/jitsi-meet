@@ -7,6 +7,7 @@ import { Flow } from './flow.ts';
 import { log } from './log.ts';
 import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
+import { keyLookup } from './screenAuth.ts';
 import { Store } from './store.ts';
 
 const config = loadConfig();
@@ -27,7 +28,16 @@ const flow = new Flow({
 
 flow.startDayEnds();
 flow.startRetention();
-const api = createApi({ flow, secret: config.apiSecret });
+const api = createApi({
+    flow,
+    screen: config.screen && {
+        acceptedAudiences: config.screen.acceptedAudiences,
+        acceptedIssuers: config.screen.acceptedIssuers,
+        keyFor: keyLookup(config.screen.keys),
+        marker: config.screen.marker
+    },
+    secret: config.apiSecret
+});
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));
 

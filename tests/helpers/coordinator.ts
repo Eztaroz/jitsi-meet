@@ -224,6 +224,15 @@ export async function restartCoordinator(): Promise<void> {
     await waitForCoordinator();
 }
 
+/**
+ * Returns the address of the coordinator screen.
+ *
+ * @returns {string}
+ */
+export function screenUrl(): string {
+    return `${config.coordinator.apiUrl}/screen`;
+}
+
 /** An audit entry as the API reports it. */
 export interface IAuditEntry {
     at: string;

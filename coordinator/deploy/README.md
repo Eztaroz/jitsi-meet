@@ -1,6 +1,6 @@
 # Coordinator service: operator guide
 
-The coordinator service owns encounters, stages and queues, and moves participants between rooms (`GLOSSARY.md`, ADR 0008). This guide covers what exists so far: starting an encounter, listing the open rooms with who is in them, moving a participant, patients included, to another room, the participant cancelling it, the stages and queues, and the audit log. The hospital's system calls the service instead of the recorder bot; the service asks the recorder bot to record the patient's room.
+The coordinator service owns encounters, stages and queues, and moves participants between rooms (`GLOSSARY.md`, ADR 0008). This guide covers what exists so far: starting an encounter, listing the open rooms with who is in them, moving a participant, patients included, to another room, the participant cancelling it, the stages and queues, the audit log, and the coordinator screen. The hospital's system calls the service instead of the recorder bot; the service asks the recorder bot to record the patient's room.
 
 It is for the hospital's internal network only. Never expose its port to the internet.
 
@@ -22,6 +22,9 @@ It is for the hospital's internal network only. Never expose its port to the int
 | `COORDINATOR_AUDIT_KEY` | The key of the references to patients' rooms in the audit log. Defaults to the API secret. Whoever has it can tell which entries are of one room; keep it away from the people who read the log. |
 | `COORDINATOR_RETENTION_DAYS` | How long encounters and audit entries are kept: `90` by default, as for evidence recordings. Older ones are deleted. |
 | `COORDINATOR_RETENTION_SWEEP_SECONDS` | How often the service deletes them: `3600` by default; it also does at start-up. |
+| `COORDINATOR_ISSUER_KEYS` | Turns the coordinator screen on: where the hospital issuer's public keys are, a directory or the URL of a key server, as `<source>/<SHA-256 of the key id>.pem`, the layout of the key server your participants' tokens use. Without it there is no screen. |
+| `COORDINATOR_ACCEPTED_ISSUERS`, `COORDINATOR_ACCEPTED_AUDIENCES` | Which `iss` and `aud` a coordinator's token may have, comma-separated. Defaults `chat` and `jitsi`, as docker-jitsi-meet's. |
+| `COORDINATOR_COORDINATOR_MARKER` | The claim that marks a coordinator, written like the role markers. Default `user.hospital_role=coordinator`. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
 | `COORDINATOR_DATA_DIR` | Where the database is. Default `/var/lib/coordinator`; mount a volume there. |
 
@@ -53,6 +56,17 @@ A move sends the participant to another room with a token the service signs: it 
 - serve the service's public key from the key server of your participants' tokens (`JWT_ASAP_KEYSERVER`), at `<URL>/<sha256 of the key id>.pem`. A key server has one set of accepted issuers, so anyone who can write to it can add keys that sign tokens for any room: protect it.
 
 Mind the room claim: it is the room name as Prosody names it, lower-case and URL-encoded.
+
+## The coordinator screen
+
+`<service address>/screen` is the coordinator's screen, in Thai, when `COORDINATOR_ISSUER_KEYS` is set. A coordinator signs in with a token from the hospital's issuer, the same issuer as the participants', that carries the coordinator role marker (`COORDINATOR_COORDINATOR_MARKER`) and a verified `id`. The screen is a form to sign in until then; the data behind it, `GET /screen/api/state`, answers only to such a token: the shared bearer secret does not open it (`403`), and neither does a call without a token (`401`). A single sign-on can send the coordinator to `/screen#jwt=<token>`; the fragment never reaches a server.
+
+Signed in, the coordinator sees:
+
+- the queue of each stage, the longest-waiting first, with the time each patient has waited and the next patient suggested;
+- every open room with who is in it, by the name in their token (a patient's room is named by the HN), labelled as a patient's room, a station with its stage, or a lounge; the configured rooms nobody is in are listed as closed; a patient's room that has no open encounter is marked.
+
+It refreshes every three seconds. Serve the service on the hospital's internal network only; put TLS in front of it if the coordinators' tokens cross a network you do not control.
 
 ## Web only
 

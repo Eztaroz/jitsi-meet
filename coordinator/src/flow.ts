@@ -90,7 +90,16 @@ export class Flow {
      * @returns {Promise<IRoom[]>}
      */
     async rooms(): Promise<IRoom[]> {
-        return describeRooms(await this._opts.prosody.rooms(), this._opts.roleMarkers, this._opts.layout);
+        const rooms = describeRooms(await this._opts.prosody.rooms(), this._opts.roleMarkers, this._opts.layout);
+
+        return rooms.map(room => {
+            const encounter = room.kind === 'patient'
+                ? this._state.encounters.find(e => e.stage !== 'done'
+                    && backendSafeRoomName(e.hn) === backendSafeRoomName(room.name))
+                : undefined;
+
+            return encounter ? { ...room, encounterId: encounter.id } : room;
+        });
     }
 
     /**

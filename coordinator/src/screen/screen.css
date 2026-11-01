@@ -1,0 +1,47 @@
+:root {
+    --bg: #f4f6f8;
+    --card: #fff;
+    --text: #1d2733;
+    --muted: #5b6b7a;
+    --line: #d5dce3;
+    --accent: #0b5cad;
+    --suggest: #e6f3e6;
+    --warn: #fdecea;
+    --warn-text: #8a1c14;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #12171c;
+        --card: #1b232b;
+        --text: #e6ebf0;
+        --muted: #9fb0bf;
+        --line: #2c3a46;
+        --accent: #6aa9f0;
+        --suggest: #1d3a22;
+        --warn: #3d1b18;
+        --warn-text: #f4a29a;
+    }
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, 'Noto Sans Thai', sans-serif; margin: 0; }
+header { align-items: center; background: var(--card); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; padding: 12px 16px; }
+h1 { font-size: 1.2rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 16px 0 8px; }
+main { margin: 0 auto; max-width: 1100px; padding: 0 16px 32px; }
+[hidden] { display: none !important; }
+button { background: var(--accent); border: 0; border-radius: 6px; color: #fff; cursor: pointer; font: inherit; padding: 8px 14px; }
+button.secondary { background: transparent; border: 1px solid var(--line); color: var(--text); }
+textarea { background: var(--card); border: 1px solid var(--line); border-radius: 6px; color: var(--text); display: block; font: 13px monospace; margin: 8px 0; padding: 8px; width: 100%; }
+#signin { max-width: 560px; padding-top: 24px; }
+#signin-error, #problem { background: var(--warn); border-radius: 6px; color: var(--warn-text); padding: 8px 12px; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.card h3 { font-size: 1rem; margin: 0 0 6px; }
+.badge { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: .8rem; margin-left: 6px; padding: 1px 8px; }
+.badge.warn { background: var(--warn); color: var(--warn-text); }
+.queue-entry { border-top: 1px solid var(--line); display: flex; justify-content: space-between; padding: 4px 0; }
+.queue-entry.suggested { background: var(--suggest); font-weight: 600; }
+.occupant { color: var(--muted); font-size: .92rem; }
+.empty { color: var(--muted); font-style: italic; }

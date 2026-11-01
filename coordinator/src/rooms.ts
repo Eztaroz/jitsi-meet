@@ -43,6 +43,9 @@ export interface ILayout {
 }
 
 export interface IRoom {
+
+    /** For a patient's room, the open encounter of that HN, if there is one. */
+    encounterId?: string;
     kind: 'lounge' | 'patient' | 'station';
 
     /** The room name, which for a patient's room is the HN. */
