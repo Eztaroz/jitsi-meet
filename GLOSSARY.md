@@ -21,11 +21,11 @@ The patient's hospital number, the hospital's identifier for the patient; also t
 _Avoid_: Patient ID, MRN
 
 **Room**:
-The conference named after a patient's HN; every consultation for that patient takes place in it.
+A conference participants meet in: either a patient's own room, named after their HN, or a station.
 _Avoid_: Meeting, channel
 
 **Consultation**:
-One occurrence of a patient's room being open, from when it opens until it closes; typically under 30 minutes.
+One stretch of a patient's time in one room, recorded as its own evidence recording: in their own room, from when it opens until it closes; in a station, from when the patient arrives until they leave. Typically under 30 minutes.
 _Avoid_: Call, session, meeting, visit
 
 **Staff visit**:
@@ -69,6 +69,24 @@ _Avoid_: Expiry, TTL
 **Gap**:
 A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or the consultation stopped.
 _Avoid_: Outage, hole, downtime
+
+### Patient flow
+
+**Encounter**:
+One patient's single attendance at the hospital, across rooms and stages, from when it starts until it is done; it holds many consultations.
+_Avoid_: Visit, appointment, case
+
+**Stage**:
+One step of an encounter, such as seeing the doctor. The patient waits in their own room between stages.
+_Avoid_: Step, phase, status
+
+**Queue**:
+The patients waiting for one stage, longest-waiting first.
+_Avoid_: Waiting list, backlog
+
+**Station**:
+A fixed room, belonging to one stage, where staff receive the patients moved in to them, one patient at a time.
+_Avoid_: Staff room, desk, booth
 
 ### Moves
 
