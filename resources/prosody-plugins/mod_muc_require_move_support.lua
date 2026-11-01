@@ -4,8 +4,11 @@
 --
 -- Load it on the MUC component (XMPP_MUC_MODULES=require_move_support in docker-jitsi-meet).
 --
--- Exempt are the accounts that are not on the main domain: the recorder bot on the hidden domain, and the
--- deployment's own components such as Jicofo, Jibri and the transcriber, which are never moved.
+-- Exempt are only the XMPP hosts listed in the option "muc_require_move_support_exempt_hosts", set on the MUC
+-- component (XMPP_MUC_CONFIGURATION in docker-jitsi-meet). It defaults to the auth domain (Jicofo) and the recorder
+-- bot's hidden domain, as docker-jitsi-meet names them, "auth.<domain>" and "recorder.<domain>". Every other host,
+-- the main domain and the guest domain included, must announce move support. A component added later, such as a
+-- SIP gateway (Jigasi), is refused until its host is added to the list.
 
 local jid = require "util.jid";
 local st = require "util.stanza";
@@ -17,10 +20,13 @@ if not muc_domain_base then
     return ;
 end
 
+local exempt_hosts = module:get_option_set("muc_require_move_support_exempt_hosts",
+    { "auth." .. muc_domain_base, "recorder." .. muc_domain_base });
+
 module:hook("muc-occupant-pre-join", function (event)
     local room, occupant, stanza, origin = event.room, event.occupant, event.stanza, event.origin;
 
-    if is_healthcheck_room(room.jid) or jid.host(occupant.bare_jid) ~= muc_domain_base then
+    if is_healthcheck_room(room.jid) or exempt_hosts:contains(jid.host(occupant.bare_jid)) then
         return;
     end
     if stanza:get_child_text('jitsi_participant_coordinatorMoveSupport') == 'true' then

@@ -269,7 +269,7 @@
     },
     "coordinatorMove": {
         "cancel": "Stay here",
-        "notice": "You are being moved to another room in {{seconds}}…"
+        "notice": "You are being moved to another room in {{seconds}} seconds…"
     },
     "customPanel": {
         "close": "Close",

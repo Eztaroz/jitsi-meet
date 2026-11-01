@@ -1,5 +1,4 @@
 
-
 /*
  * The coordinator screen. It shows the queues and the open rooms, and refreshes every few seconds. Everything it shows
  * is put in the page as text, never as markup: names come from the participants' tokens.
@@ -7,19 +6,19 @@
 (function() {
     const TOKEN_KEY = 'coordinator-token';
     const REFRESH_MS = 2000;
-    const STAGES = [
+    const STAGES: [string, string][] = [
         [ 'waiting', 'รอคิว' ],
         [ 'intake', 'ให้ข้อมูลก่อนพบแพทย์' ],
         [ 'examination', 'พบแพทย์' ],
         [ 'aftercare', 'หลังพบแพทย์' ]
     ];
-    const STAGE_NAMES = { aftercare: 'หลังพบแพทย์',
+    const STAGE_NAMES: Record<string, string> = { aftercare: 'หลังพบแพทย์',
         intake: 'ให้ข้อมูลก่อนพบแพทย์' };
-    const ROLES = { hidden: 'ระบบบันทึก',
+    const ROLES: Record<string, string> = { hidden: 'ระบบบันทึก',
         patient: 'ผู้ป่วย',
         staff: 'เจ้าหน้าที่',
         unknown: 'ไม่ทราบตัวตน' };
-    const ERRORS = {
+    const ERRORS: Record<string, string> = {
         'bad_signature': 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล',
         expired: 'โทเคนหมดอายุแล้ว',
         malformed: 'โทเคนไม่ถูกต้อง',
@@ -31,7 +30,7 @@
         'wrong_audience': 'โทเคนนี้ไม่ใช่สำหรับระบบนี้',
         'wrong_issuer': 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล'
     };
-    const REASONS = {
+    const REASONS: Record<string, string> = {
         'already_being_moved': 'กำลังย้ายผู้นี้อยู่แล้ว',
         'could_not_send_move': 'ส่งคำสั่งย้ายไม่ได้',
         'destination_holds_a_patient': 'ห้องปลายทางมีผู้ป่วยอยู่แล้ว',
@@ -45,18 +44,55 @@
         'recorder_bot_not_ready': 'ระบบบันทึกไม่พร้อมภายใน 30 วินาที',
         'recorder_bot_unreachable': 'ติดต่อระบบบันทึกไม่ได้'
     };
-    const OUTCOMES = { cancelled: 'ผู้ถูกย้ายกดยกเลิก',
+    const OUTCOMES: Record<string, string> = { cancelled: 'ผู้ถูกย้ายกดยกเลิก',
         done: 'ย้ายสำเร็จ',
         failed: 'ย้ายไม่สำเร็จ',
         refused: 'ไม่อนุญาตให้ย้าย' };
-    const ALL_STAGES = STAGES.concat([ [ 'done', 'เสร็จสิ้น' ] ]);
+    const ALL_STAGES: [string, string][] = STAGES.concat([ [ 'done', 'เสร็จสิ้น' ] ]);
+
+    interface IOccupant {
+        displayName?: string;
+        endpointId: string;
+        identity?: { name?: string; };
+        role: string;
+    }
+
+    interface IRoom {
+        encounterId?: string;
+        kind: string;
+        name: string;
+        occupants: IOccupant[];
+        open: boolean;
+        stage?: string;
+    }
+
+    interface IMove {
+        endpointId: string;
+        id: string;
+        origin: string;
+        reason?: string;
+        startedAt: string;
+        state: string;
+    }
+
+    interface IQueueEntry {
+        encounterId: string;
+        hn?: string;
+        suggested?: boolean;
+        waitedSeconds: number;
+    }
+
+    interface IResult {
+        body: { reason?: string; state?: string; };
+        status: number;
+    }
 
     /** What the coordinator has chosen in the lists, kept across the redraws. */
-    const choices = {};
+    const choices: Record<string, string> = {};
 
     /** The name of everyone seen, by endpoint, so that a move can be described after the person has gone. */
-    const names = {};
-    let timer;
+    const names: Record<string, string> = {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     /**
      * Finds an element.
@@ -64,8 +100,8 @@
      * @param {string} id - Its id.
      * @returns {HTMLElement}
      */
-    function $(id) {
-        return document.getElementById(id);
+    function $<T extends HTMLElement = HTMLElement>(id: string): T {
+        return document.getElementById(id) as T;
     }
 
     /**
@@ -75,7 +111,7 @@
      * @param {Object} body - What to send.
      * @returns {Promise<Object>} The status and the body.
      */
-    function act(path, body) {
+    function act(path: string, body: object): Promise<IResult> {
         return fetch(`/screen/api${path}`, {
             body: JSON.stringify(body),
             headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY)}`,
@@ -96,7 +132,7 @@
      * @param {string} text - What.
      * @returns {void}
      */
-    function say(text) {
+    function say(text?: string): void {
         $('notice').hidden = !text;
         $('notice').textContent = text || '';
     }
@@ -109,7 +145,8 @@
      * @param {string} className - The class.
      * @returns {HTMLElement}
      */
-    function el(tag, text, className) {
+    function el<K extends keyof HTMLElementTagNameMap>(
+            tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
         const node = document.createElement(tag);
 
         if (text !== undefined) {
@@ -128,7 +165,7 @@
      * @param {number} seconds - How long.
      * @returns {string}
      */
-    function waited(seconds) {
+    function waited(seconds: number): string {
         if (seconds < 60) {
             return `${seconds} วินาที`;
         }
@@ -142,7 +179,7 @@
      * @param {string} message - Why, or nothing.
      * @returns {void}
      */
-    function showSignIn(message) {
+    function showSignIn(message?: string): void {
         clearTimeout(timer);
         sessionStorage.removeItem(TOKEN_KEY);
         $('signin').hidden = false;
@@ -158,14 +195,14 @@
      * @param {Object} queues - The queues by stage.
      * @returns {void}
      */
-    function drawQueues(queues) {
+    function drawQueues(queues: Record<string, IQueueEntry[]>): void {
         const list = $('queue-list');
 
         list.textContent = '';
         list.className = 'grid';
         STAGES.forEach(stage => {
             const card = el('div', undefined, 'card');
-            const entries = queues[stage[0]] || [];
+            const entries = queues[stage[0]] ?? [];
 
             card.id = `queue-${stage[0]}`;
             const title = el('h3', stage[1]);
@@ -228,12 +265,12 @@
      * @param {Object} room - The room.
      * @returns {string}
      */
-    function kindName(room) {
+    function kindName(room: IRoom): string {
         if (room.kind === 'lounge') {
             return 'ห้องพักเจ้าหน้าที่';
         }
         if (room.kind === 'station') {
-            return `จุดบริการ: ${STAGE_NAMES[room.stage] || ''}`;
+            return `จุดบริการ: ${STAGE_NAMES[room.stage ?? ''] || ''}`;
         }
 
         return 'ห้องผู้ป่วย';
@@ -247,7 +284,7 @@
      * @param {string} destination - The room to send them to.
      * @returns {void}
      */
-    function move(room, endpointId, destination) {
+    function move(room: string, endpointId: string, destination: string): void {
         if (!destination) {
             return;
         }
@@ -257,7 +294,7 @@
             if (result.status >= 400) {
                 say(result.status === 503 ? 'ติดต่อระบบไม่ได้ ย้ายไม่สำเร็จ' : 'ย้ายไม่สำเร็จ');
             } else if (result.body.state === 'refused') {
-                say(`${OUTCOMES.refused}: ${REASONS[result.body.reason] || result.body.reason}`);
+                say(`${OUTCOMES.refused}: ${REASONS[result.body.reason ?? ''] || result.body.reason}`);
             } else {
                 say('');
             }
@@ -272,7 +309,7 @@
      * @param {string} stage - The stage.
      * @returns {void}
      */
-    function changeStage(encounterId, stage) {
+    function changeStage(encounterId: string, stage: string): void {
         act(`/encounters/${encodeURIComponent(encounterId)}/stage`, { stage }).then(result => {
             if (result.status === 409) {
                 say('encounter นี้เสร็จสิ้นแล้ว');
@@ -290,7 +327,7 @@
      * @param {Object[]} moves - The moves under way and recent.
      * @returns {void}
      */
-    function drawRooms(rooms, moves) {
+    function drawRooms(rooms: IRoom[], moves: IMove[]): void {
         const list = $('rooms');
 
         list.textContent = '';
@@ -322,7 +359,7 @@
                 card.appendChild(start);
             }
             room.occupants.forEach(o => {
-                const who = (o.identity && o.identity.name) || o.displayName || 'ไม่ระบุชื่อ';
+                const who = (o.identity?.name) || o.displayName || 'ไม่ระบุชื่อ';
                 const line = el('div', undefined, 'occupant');
                 const moving = moves.some(m => (m.state === 'counting_down' || m.state === 'preparing')
                     && m.origin === room.name && m.endpointId === o.endpointId);
@@ -388,11 +425,11 @@
      * @param {Object[]} moves - The moves under way and recent.
      * @returns {void}
      */
-    function drawOutcomes(moves) {
+    function drawOutcomes(moves: IMove[]): void {
         const list = $('outcomes');
 
         list.textContent = '';
-        moves.filter(m => OUTCOMES[m.state]).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt))
+        moves.filter(m => OUTCOMES[m.state]).sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
 .forEach(m => {
     const text = `${names[m.endpointId] || 'ผู้เข้าร่วม'}: ${OUTCOMES[m.state]
     }${m.reason ? ` (${REASONS[m.reason] || m.reason})` : ''}`;
@@ -408,7 +445,7 @@
      *
      * @returns {void}
      */
-    function refresh() {
+    function refresh(): void {
         const token = sessionStorage.getItem(TOKEN_KEY);
 
         if (!token) {
@@ -419,7 +456,7 @@
         fetch('/screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
             .then(response => {
                 if (response.status === 401 || response.status === 403) {
-                    return response.json().then(body => {
+                    return response.json().then((body: { error: string; }) => {
                         showSignIn(ERRORS[body.error] || 'เข้าสู่ระบบไม่ได้');
                     });
                 }
@@ -427,7 +464,12 @@
                     throw new Error('state');
                 }
 
-                return response.json().then(state => {
+                return response.json().then((state: {
+                    coordinator: { id: string; name?: string; };
+                    moves: IMove[];
+                    queues: Record<string, IQueueEntry[]>;
+                    rooms: IRoom[];
+                }) => {
                     $('signin').hidden = true;
                     $('board').hidden = false;
                     $('who').hidden = false;
@@ -456,8 +498,8 @@
 
     $('signin-form').addEventListener('submit', event => {
         event.preventDefault();
-        sessionStorage.setItem(TOKEN_KEY, $('signin-token').value.trim());
-        $('signin-token').value = '';
+        sessionStorage.setItem(TOKEN_KEY, $<HTMLInputElement>('signin-token').value.trim());
+        $<HTMLInputElement>('signin-token').value = '';
         refresh();
     });
     $('sign-out').addEventListener('click', () => {
@@ -469,7 +511,7 @@
     const fromFragment = /[#&]jwt=([^&]+)/.exec(location.hash);
 
     if (fromFragment) {
-        sessionStorage.setItem(TOKEN_KEY, decodeURIComponent(fromFragment[1]));
+        sessionStorage.setItem(TOKEN_KEY, decodeURIComponent(fromFragment[1] ?? ''));
         history.replaceState(null, '', location.pathname);
     }
     refresh();

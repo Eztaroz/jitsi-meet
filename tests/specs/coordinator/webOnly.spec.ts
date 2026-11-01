@@ -10,10 +10,12 @@ import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
     description: 'The deployment is web only. A client that does not announce that it obeys moves, as the mobile apps \
-and other clients do not, is refused when it tries to join, while the fork\'s web client is let in. Breakout rooms are \
-disabled, so a moderator has no way to create one, and deep linking is off so that a phone opens the link in its \
-browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator \
-service on top of it.',
+and other clients do not, is refused when it tries to join, on the main domain and on the guest domain alike, while the fork\'s web client is \
+let in. Only the hosts listed in muc_require_move_support_exempt_hosts (the auth domain and the recorder bot\'s hidden \
+domain) may join without announcing it, which the recorder bot and jicofo showing up in other specs prove. Breakout rooms are \
+disabled, so a moderator finds no button for one in the participants pane, and deep linking is off so that a phone opens \
+the link in its browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the \
+coordinator service on top of it.',
     usesBrowsers: [ 'p1' ]
 });
 
@@ -23,14 +25,16 @@ service on top of it.',
  *
  * @param {Participant} participant - Whose page opens the websocket.
  * @param {string} room - The room, as Prosody names it.
- * @param {string} jwt - The token.
+ * @param {string} jwt - The token, or an empty string to join as an anonymous guest.
  * @param {boolean} announce - Whether to announce move support.
+ * @param {string} domain - The XMPP domain to sign in to: the main domain, or the guest domain.
  * @returns {Promise<string>} `joined`, `refused`, or what went wrong.
  */
-function tryToJoin(participant: Participant, room: string, jwt: string, announce: boolean): Promise<string> {
-    return participant.driver.executeAsync((r: string, token: string, support: boolean, done: (result: string) => void) => {
-        const ws = new WebSocket(`wss://${location.host}/xmpp-websocket?room=${encodeURIComponent(r)}&token=${token}`, 'xmpp');
-        const OPEN = '<open xmlns=\'urn:ietf:params:xml:ns:xmpp-framing\' to=\'meet.jitsi\' version=\'1.0\'/>';
+function tryToJoin(
+        participant: Participant, room: string, jwt: string, announce: boolean, domain = 'meet.jitsi'): Promise<string> {
+    return participant.driver.executeAsync((r: string, token: string, support: boolean, xmppDomain: string, done: (result: string) => void) => {
+        const ws = new WebSocket(`wss://${location.host}/xmpp-websocket?room=${encodeURIComponent(r)}${token ? `&token=${token}` : ''}`, 'xmpp');
+        const OPEN = `<open xmlns=\'urn:ietf:params:xml:ns:xmpp-framing\' to=\'${xmppDomain}\' version=\'1.0\'/>`;
         let step = 0;
         const timer = setTimeout(() => done(`timeout at step ${step}`), 20000);
         const finish = (result: string) => {
@@ -65,7 +69,7 @@ function tryToJoin(participant: Participant, room: string, jwt: string, announce
                 finish('joined');
             }
         };
-    }, room, jwt, announce);
+    }, room, jwt, announce, domain);
 }
 
 describe('Coordinator: the web client only', () => {
@@ -113,6 +117,21 @@ describe('Coordinator: the web client only', () => {
         expect(await host.isInMuc()).toBe(true);
     });
 
+    it('refuses a guest-domain client that does not announce that it obeys moves', async () => {
+        const room = encodeURIComponent(hn.toLowerCase()).toLowerCase();
+
+        const result = await tryToJoin(host, room, '', false, 'guest.meet.jitsi');
+
+        expect(result).toMatch(/^refused/u);
+        expect(result).toContain('cannot be moved');
+    });
+
+    it('lets in a guest-domain client that announces it', async () => {
+        const room = encodeURIComponent(hn.toLowerCase()).toLowerCase();
+
+        expect(await tryToJoin(host, room, '', true, 'guest.meet.jitsi')).toBe('joined');
+    });
+
     it('has the web client announce it in its first presence', async () => {
         const announced = await host.execute(() => APP.conference._room.room.presMap.nodes
             .some((n: { tagName?: string; }) => n.tagName === 'jitsi_participant_coordinatorMoveSupport'));
@@ -124,6 +143,18 @@ describe('Coordinator: the web client only', () => {
         expect(await host.execute(() => APP.conference._room.getBreakoutRooms().isSupported())).toBe(false);
         expect(await host.execute(() => APP.store.getState()['features/base/config'].hideAddRoomButton)).toBe(true);
         expect(await (await host.driver.$('.breakout-room-container')).isExisting()).toBe(false);
+    });
+
+    it('shows no breakout-rooms button in the participants pane', async () => {
+        // ADR 0007, checked where users would see it. The staff member is the moderator of the room.
+        expect(await host.isModerator()).toBe(true);
+
+        const pane = host.getParticipantsPane();
+
+        await pane.open();
+        expect(await host.driver.$('[aria-label="Add breakout room"]').isExisting()).toBe(false);
+        expect(await host.driver.$('.breakout-room-container').isExisting()).toBe(false);
+        await pane.close();
     });
 
     it('has deep linking off, so that a phone opens the link in its browser', async () => {

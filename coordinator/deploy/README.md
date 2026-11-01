@@ -83,21 +83,21 @@ The deployment supports the fork's web client only (ADR 0010, ADR 0007). On dock
 
 1. **Breakout rooms off:** set `ENABLE_BREAKOUT_ROOMS=false` on `web`, `prosody` and `jicofo`. The client then has no way to create a breakout room: the buttons are hidden because the server does not support them.
 2. **Deep linking off:** set `DISABLE_DEEP_LINKING=true` on `web`, so that a phone opens the link in its browser and not in the mobile app.
-3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms". Accounts that are not on the main domain are exempt: the recorder bot on the hidden domain, and Jicofo, Jibri and the transcriber. A SIP gateway (Jigasi) that joins on the main domain would be refused.
+3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms".
+
+   Only the hosts in `muc_require_move_support_exempt_hosts` are exempt, set through `XMPP_MUC_CONFIGURATION` (add it to any `token_verification_allowlist` line you already have there):
+
+   ```
+   muc_require_move_support_exempt_hosts = { "auth.meet.example.org", "recorder.meet.example.org" }
+   ```
+
+   List the auth domain (Jicofo, which also covers Jibri) and the recorder bot's hidden domain (`XMPP_HIDDEN_DOMAIN`), written out in full. Without the option the module assumes `auth.<domain>` and `recorder.<domain>`. Every other host must announce move support, the guest domain included. No dial-in is deployed: **adding dial-in (Jigasi) later means adding its host to this list**, otherwise it is refused.
 
 The mobile apps' code stays in the repository; only the deployment refuses them.
 
 ### Checking a phone's browser by hand
 
-The move notice and its countdown are web features, but nothing in the automated suite runs on a phone's browser: only Chrome on desktop. Support is for Chrome on Android and Safari on iOS, current versions. Before relying on a deployment, run through this on each, with a staff member in a lounge and a coordinator moving them, and then with a patient:
-
-- [ ] The room link opens in the browser, with no offer of the app.
-- [ ] The patient or staff member joins with their token, and the camera and microphone work.
-- [ ] A move shows the notice, counting down from 5, and does not name the destination.
-- [ ] "Stay here" keeps them in the room, and the coordinator sees the move cancelled.
-- [ ] Letting the countdown end opens the destination without the prejoin page, with the microphone and camera as they were, and the camera and microphone work there.
-
-This checklist has not been run on a phone yet: it needs real devices.
+Nothing in the automated suite runs on a phone's browser. Before relying on a deployment, run the [mobile-browser checklist](mobile-browser-checklist.md) on real devices: iOS Safari (current and previous iOS) and Chrome on Android. It has not been run yet.
 
 ## API
 
@@ -118,5 +118,9 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 Encounters are identified by an opaque id. The HN appears only in the body that starts an encounter and in what `GET /encounters/<id>` returns, never in a path or in the service's logs (ADR 0005).
 
 With token authentication (Jicofo authentication), the recorder bot cannot start a room itself: "ready" means it is waiting for the room, and it joins as soon as the patient has opened it. Without it, the bot is in the room before the patient arrives.
+
+### Waits that must be ordered
+
+The recorder bot waits for a station's patient for `RECORDER_BOT_PATIENT_WAIT_SECONDS` (ADR 0006). That wait must be longer than the countdown plus the arrival wait of this service, 5 + 30 = 35 seconds, so that this service gives up first and has the station consultation discarded. The bot's default of 60 seconds satisfies it. Never set it to 35 or less in production.
 
 A patient moved into a station is recorded there as a consultation of their own (ADR 0006). If they cancel the move, do not arrive, or the move fails, the service stops that consultation and nothing is kept. Their own room keeps being recorded while anyone is still in it. The service finds a patient's HN from the patient's room it saw them in, and keeps it in memory: after a restart, a patient in a station must be seen in their own room again before they can be moved into a station.
