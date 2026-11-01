@@ -73,12 +73,24 @@ _Avoid_: Outage, hole, downtime
 ### Patient flow
 
 **Encounter**:
-One patient's single attendance at the hospital, across rooms and stages, from when it starts until it is done; it holds many consultations.
+One patient's single attendance at the hospital, across rooms and stages, from when it starts until a coordinator marks it done; it holds many consultations.
 _Avoid_: Visit, appointment, case
 
 **Stage**:
-One step of an encounter, such as seeing the doctor. The patient waits in their own room between stages.
-_Avoid_: Step, phase, status
+One step of an encounter: waiting, intake, examination, aftercare, then done. The patient waits in their own room between stages.
+_Avoid_: Step, phase, status, pre-consultation, post-consultation
+
+**Intake**:
+The stage before the doctor, in which a nurse gives the patient information.
+_Avoid_: Pre-consultation, triage
+
+**Examination**:
+The stage in which the doctor sees the patient, in the patient's own room.
+_Avoid_: Consultation, doctor visit
+
+**Aftercare**:
+The stage after the doctor, in which staff explain what happens next.
+_Avoid_: Post-consultation, discharge
 
 **Queue**:
 The patients waiting for one stage, longest-waiting first.
@@ -87,6 +99,10 @@ _Avoid_: Waiting list, backlog
 **Station**:
 A fixed room, belonging to one stage, where staff receive the patients moved in to them, one patient at a time.
 _Avoid_: Staff room, desk, booth
+
+**Lounge**:
+A fixed room where staff wait between patients; no patient is ever in it, so nothing in it is recorded.
+_Avoid_: Break room, home room
 
 ### Moves
 
