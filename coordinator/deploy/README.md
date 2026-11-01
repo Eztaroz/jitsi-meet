@@ -82,7 +82,15 @@ The deployment supports the fork's web client only (ADR 0010, ADR 0007). On dock
 
 1. **Breakout rooms off:** set `ENABLE_BREAKOUT_ROOMS=false` on `web`, `prosody` and `jicofo`. The client then has no way to create a breakout room: the buttons are hidden because the server does not support them.
 2. **Deep linking off:** set `DISABLE_DEEP_LINKING=true` on `web`, so that a phone opens the link in its browser and not in the mobile app.
-3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms". Accounts that are not on the main domain are exempt: the recorder bot on the hidden domain, and Jicofo, Jibri and the transcriber. A SIP gateway (Jigasi) that joins on the main domain would be refused.
+3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms".
+
+   Only the hosts in `muc_require_move_support_exempt_hosts` are exempt, set through `XMPP_MUC_CONFIGURATION` (add it to any `token_verification_allowlist` line you already have there):
+
+   ```
+   muc_require_move_support_exempt_hosts = { "auth.meet.example.org", "recorder.meet.example.org" }
+   ```
+
+   List the auth domain (Jicofo, which also covers Jibri) and the recorder bot's hidden domain (`XMPP_HIDDEN_DOMAIN`), written out in full. Without the option the module assumes `auth.<domain>` and `recorder.<domain>`. Every other host must announce move support, the guest domain included. No dial-in is deployed: **adding dial-in (Jigasi) later means adding its host to this list**, otherwise it is refused.
 
 The mobile apps' code stays in the repository; only the deployment refuses them.
 
