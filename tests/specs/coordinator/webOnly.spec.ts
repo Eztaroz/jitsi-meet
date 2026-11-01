@@ -11,8 +11,8 @@ import { generateToken } from '../../helpers/token';
 setTestProperties(__filename, {
     description: 'The deployment is web only. A client that does not announce that it obeys moves, as the mobile apps \
 and other clients do not, is refused when it tries to join, while the fork\'s web client is let in. Breakout rooms are \
-disabled, so a moderator has no way to create one, and deep linking is off so that a phone opens the link in its \
-browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator \
+disabled, so a moderator finds no button for one in the participants pane, and deep linking is off so that a phone \
+opens the link in its browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator \
 service on top of it.',
     usesBrowsers: [ 'p1' ]
 });
@@ -124,6 +124,18 @@ describe('Coordinator: the web client only', () => {
         expect(await host.execute(() => APP.conference._room.getBreakoutRooms().isSupported())).toBe(false);
         expect(await host.execute(() => APP.store.getState()['features/base/config'].hideAddRoomButton)).toBe(true);
         expect(await (await host.driver.$('.breakout-room-container')).isExisting()).toBe(false);
+    });
+
+    it('shows no breakout-rooms button in the participants pane', async () => {
+        // ADR 0007, checked where users would see it. The staff member is the moderator of the room.
+        expect(await host.isModerator()).toBe(true);
+
+        const pane = host.getParticipantsPane();
+
+        await pane.open();
+        expect(await host.driver.$('[aria-label="Add breakout room"]').isExisting()).toBe(false);
+        expect(await host.driver.$('.breakout-room-container').isExisting()).toBe(false);
+        await pane.close();
     });
 
     it('has deep linking off, so that a phone opens the link in its browser', async () => {
