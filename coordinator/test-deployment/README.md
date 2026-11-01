@@ -6,9 +6,16 @@ The recorder bot's JWT test deployment (`recorder-bot/test-deployment`, with `do
 |---|---|
 | Jitsi web | https://localhost:8443 |
 | Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret` |
+| Prosody's HTTP port, for the coordinator service only (localhost) | http://localhost:5280 |
 | Coordinator API | http://localhost:8094, bearer secret `coordinator-test-secret` |
 
-Follow `recorder-bot/test-deployment/README.md` to build the web bundles and the recorder bot's image and to generate the JWT keys. Then build the coordinator's image and start both:
+Follow `recorder-bot/test-deployment/README.md` to build the web bundles and the recorder bot's image and to generate the JWT keys. Generate the coordinator service's own key pair, which Prosody uses to verify the service's calls:
+
+```bash
+./keys/generate-keys.sh
+```
+
+Then build the coordinator's image and start both:
 
 ```bash
 docker build -t coordinator:local coordinator/
@@ -18,6 +25,8 @@ docker build -t coordinator:local coordinator/
 cd coordinator/test-deployment
 docker compose -f ../../recorder-bot/test-deployment/docker-compose.yml -f ../../recorder-bot/test-deployment/docker-compose.jwt.yml -f docker-compose.yml up -d
 ```
+
+Prosody loads `resources/prosody-plugins/mod_coordinator_api.lua`. After a change to it, restart `prosody`, then `jicofo` and `jvb`, which lose their connection when it restarts.
 
 Run the specs from `tests/`, loading the recorder bot's settings and then this one's:
 

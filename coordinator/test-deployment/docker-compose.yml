@@ -4,23 +4,47 @@
 #   docker compose -f ../../recorder-bot/test-deployment/docker-compose.yml \
 #       -f ../../recorder-bot/test-deployment/docker-compose.jwt.yml -f docker-compose.yml up -d
 #
-# See README.md. Relative paths below are relative to the first file's directory, recorder-bot/test-deployment.
+# Generate the keys first with keys/generate-keys.sh. See README.md. Relative paths below are relative to the first
+# file's directory, recorder-bot/test-deployment.
 services:
+    web:
+        volumes:
+            # Prosody fetches the coordinator service's public key from here:
+            # http://web/.well-known/coordinator/<sha256 of the key id>.pem.
+            - ../../coordinator/test-deployment/keys/asap:/usr/share/jitsi-meet/.well-known/coordinator:ro
+
+    prosody:
+        # The coordinator service reaches Prosody's HTTP port on the host. Never publish it beyond localhost.
+        ports:
+            - '127.0.0.1:5280:5280'
+        volumes:
+            - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
+        environment:
+            XMPP_MODULES: presence_identity,coordinator_api
+            XMPP_CONFIGURATION: coordinator_api_key_server = "http://web/.well-known/coordinator"
+
     coordinator:
         image: coordinator:local
         build: ../../coordinator
         restart: unless-stopped
-        # On the host network the service reaches the recorder bot on localhost, as the tests do.
+        # On the host network the service reaches the recorder bot and Prosody on localhost, as the tests do.
         network_mode: host
         volumes:
             - coordinator-data:/var/lib/coordinator
+            - ../../coordinator/test-deployment/keys/private.pem:/run/keys/private.pem:ro
         environment:
             COORDINATOR_API_PORT: 8094
             COORDINATOR_API_SECRET: coordinator-test-secret
-            COORDINATOR_RECORDER_BOT_URL: http://localhost:8090
+            COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
+            COORDINATOR_PROSODY_URL: http://localhost:5280
             COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
+            COORDINATOR_RECORDER_BOT_URL: http://localhost:8090
+            COORDINATOR_SIGNING_KEY_FILE: /run/keys/private.pem
+            COORDINATOR_SIGNING_KID: coordinator-test/key
+            COORDINATOR_STAFF_MARKER: user.hospital_role=staff
         depends_on:
             - recorder-bot
+            - prosody
 
 volumes:
     coordinator-data:

@@ -8,7 +8,9 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 
 import { errorCode, log } from './log.ts';
 import { type IState, step } from './patientFlow.ts';
+import { Prosody, ProsodyUnavailableError } from './prosody.ts';
 import { RecorderBot, RecorderBotUnavailableError } from './recorderBot.ts';
+import { type IRoleMarkers, describeRooms } from './rooms.ts';
 import type { Store } from './store.ts';
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -108,13 +110,17 @@ function hnFrom(body: unknown): string {
  * Creates the API server.
  *
  * @param {Object} options - Options.
+ * @param {Prosody} options.prosody - The Prosody client.
  * @param {RecorderBot} options.recorderBot - The recorder bot client.
+ * @param {IRoleMarkers} options.roleMarkers - Which identities are patients and which staff.
  * @param {string} options.secret - The shared bearer secret.
  * @param {Store} options.store - The storage.
  * @returns {Server}
  */
-export function createApi({ recorderBot, secret, store }: {
+export function createApi({ prosody, recorderBot, roleMarkers, secret, store }: {
+    prosody: Prosody;
     recorderBot: RecorderBot;
+    roleMarkers: IRoleMarkers;
     secret: string;
     store: Store;
 }): Server {
@@ -186,6 +192,20 @@ export function createApi({ recorderBot, secret, store }: {
                 if (error instanceof RecorderBotUnavailableError) {
                     log.warn('could not start an encounter', { error: error.code });
                     throw new HttpError(503, `the recorder bot cannot record the room now (${error.code})`);
+                }
+                throw error;
+            }
+
+            return;
+        }
+
+        if (pathname === '/rooms' && req.method === 'GET') {
+            try {
+                send(res, 200, { rooms: describeRooms(await prosody.rooms(), roleMarkers) });
+            } catch (error) {
+                if (error instanceof ProsodyUnavailableError) {
+                    log.warn('could not read the rooms', { error: error.code });
+                    throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
                 }
                 throw error;
             }
