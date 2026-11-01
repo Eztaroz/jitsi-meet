@@ -112,7 +112,7 @@
      * @returns {Promise<Object>} The status and the body.
      */
     function act(path: string, body: object): Promise<IResult> {
-        return fetch(`/screen/api${path}`, {
+        return fetch(`screen/api${path}`, {
             body: JSON.stringify(body),
             headers: { Authorization: `Bearer ${sessionStorage.getItem(TOKEN_KEY)}`,
                 'Content-Type': 'application/json' },
@@ -453,7 +453,7 @@
 
             return;
         }
-        fetch('/screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
+        fetch('screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
             .then(response => {
                 if (response.status === 401 || response.status === 403) {
                     return response.json().then((body: { error: string; }) => {
