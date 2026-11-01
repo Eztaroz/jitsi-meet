@@ -34,6 +34,7 @@ export interface IMoveEffectsHooks {
 }
 
 export interface IMoveEffectsOptions {
+    prepareWaitMs?: number;
     prosody: Prosody;
     recorderBot: RecorderBot;
     roleMarkers: IRoleMarkers;
@@ -132,7 +133,7 @@ export class MoveEffects {
             .catch(error => log.error('could not report on a destination', { error: (error as Error).name }));
 
         (async () => {
-            const deadline = Date.now() + PREPARE_WAIT_MS;
+            const deadline = Date.now() + (this._opts.prepareWaitMs ?? PREPARE_WAIT_MS);
             // The room's name has lost the HN's case; the encounter kept the HN as the hospital wrote it.
             const known = this._hooks.knownHn(hn);
             const consultationId = await this._opts.recorderBot.recordRoom(station ? known ?? hn : hn, station);

@@ -74,6 +74,9 @@ services:
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
             # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
             COORDINATOR_RETENTION_SWEEP_SECONDS: 2
+            # Short, so that the spec of a destination the recorder bot cannot open in time does not take half a minute;
+            # long enough for the recorder bot to open a room in the other specs. Production waits 30 seconds.
+            COORDINATOR_PREPARE_WAIT_SECONDS: 15
             COORDINATOR_PROSODY_URL: http://prosody:5280
             COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
             COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json

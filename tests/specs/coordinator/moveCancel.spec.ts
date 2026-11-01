@@ -93,6 +93,12 @@ describe('Coordinator: cancelled, conflicting and forged moves', () => {
         await (await staff.driver.$('#coordinator-move-notice')).waitForExist({ timeout: 10_000 });
     });
 
+    it('tells the participant the unit of the countdown', async () => {
+        // The countdown counts down from 5 to 1; the text must read "in N seconds…".
+        expect(await (await staff.driver.$('#coordinator-move-notice')).getText())
+            .toMatch(/^You are being moved to another room in [1-5] seconds…/u);
+    });
+
     it('stays in the room and ends the move as cancelled when the participant cancels', async () => {
         await (await staff.driver.$('#coordinator-move-cancel')).click();
         await waitForMove(firstMove, 'cancelled', 15_000);
