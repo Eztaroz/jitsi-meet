@@ -40,6 +40,8 @@ services:
             COORDINATOR_API_PORT: 8094
             COORDINATOR_API_SECRET: coordinator-test-secret
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
+            # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
+            COORDINATOR_RETENTION_SWEEP_SECONDS: 2
             COORDINATOR_PROSODY_URL: http://localhost:5280
             COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
             COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret

@@ -220,7 +220,73 @@ export async function postStage(id: string, stage: string): Promise<{ body: IEnc
  */
 export async function restartCoordinator(): Promise<void> {
     execFileSync('docker', [ 'restart', config.coordinator.container ?? '' ], { stdio: 'pipe' });
+    await waitForCoordinator();
+}
 
+/** An audit entry as the API reports it. */
+export interface IAuditEntry {
+    at: string;
+    destination?: string;
+    encounterId?: string;
+    issuer: string;
+    kind: 'move' | 'stage';
+    outcome: string;
+    participantId?: string;
+    reason?: string;
+    source?: string;
+}
+
+/**
+ * Reads the newest audit entries.
+ *
+ * @param {number} limit - How many.
+ * @returns {Promise<IAuditEntry[]>}
+ */
+export async function getAudit(limit = 200): Promise<IAuditEntry[]> {
+    return (await (await callCoordinator(`/audit?limit=${limit}`)).json() as { entries: IAuditEntry[]; }).entries;
+}
+
+/**
+ * Stops the service, writes an old encounter and old and recent audit entries straight into its database, and starts
+ * it again: its retention sweep then has something to delete, and something to leave.
+ *
+ * @param {Object} seed - What to write.
+ * @param {string} seed.encounterId - The id of the old encounter.
+ * @param {string} seed.oldParticipant - The participant of the old audit entry.
+ * @param {string} seed.recentParticipant - The participant of the recent audit entry.
+ * @returns {Promise<void>}
+ */
+export async function seedOldData(seed: { encounterId: string; oldParticipant: string; recentParticipant: string; }): Promise<void> {
+    const container = config.coordinator.container ?? '';
+    const volume = execFileSync('docker', [ 'inspect', '-f',
+        '{{range .Mounts}}{{if eq .Destination "/var/lib/coordinator"}}{{.Name}}{{end}}{{end}}', container ], { encoding: 'utf8' }).trim();
+    const script = `
+        const { DatabaseSync } = require('node:sqlite');
+        const db = new DatabaseSync('/var/lib/coordinator/coordinator.sqlite');
+        const old = new Date(Date.now() - 100 * 86400000).toISOString();
+        const recent = new Date(Date.now() - 86400000).toISOString();
+        const seed = ${JSON.stringify(seed)};
+        db.prepare('INSERT INTO encounters (id, hn, stage, started_at, stage_started_at, history) VALUES (?, ?, ?, ?, ?, ?)')
+            .run(seed.encounterId, 'OLD-PATIENT', 'waiting', old, old, JSON.stringify([ { at: old, stage: 'waiting' } ]));
+        for (const [ at, participantId ] of [ [ old, seed.oldParticipant ], [ recent, seed.recentParticipant ] ]) {
+            db.prepare('INSERT INTO audit (at, entry) VALUES (?, ?)').run(at, JSON.stringify(
+                { at, issuer: 'system', kind: 'move', outcome: 'done', participantId }));
+        }
+        db.close();`;
+
+    execFileSync('docker', [ 'stop', container ], { stdio: 'pipe' });
+    execFileSync('docker', [ 'run', '--rm', '--user', 'node', '--entrypoint', 'node', '-v', `${volume}:/var/lib/coordinator`,
+        'coordinator:local', '--disable-warning=ExperimentalWarning', '-e', script ], { stdio: 'pipe' });
+    execFileSync('docker', [ 'start', container ], { stdio: 'pipe' });
+    await waitForCoordinator();
+}
+
+/**
+ * Waits until the coordinator service's API answers.
+ *
+ * @returns {Promise<void>}
+ */
+async function waitForCoordinator(): Promise<void> {
     const deadline = Date.now() + 30_000;
 
     while (Date.now() < deadline) {

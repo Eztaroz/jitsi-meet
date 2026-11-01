@@ -2,6 +2,9 @@
  * Runs the patient-flow module: applies events one at a time, carries out the commands it returns, and feeds the
  * outcomes back as events. It is the only place with I/O and timers.
  */
+import { randomUUID } from 'node:crypto';
+
+import { type IAuditEntry, moveEntry, stageEntry } from './audit.ts';
 import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
@@ -24,6 +27,8 @@ import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './ro
 import type { Store } from './store.ts';
 import { destinationClaims } from './tokens.ts';
 
+/** The states of a move that is under way: it has no audit entry until it ends. */
+const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
 const POLL_MS = 1000;
 const READY_POLL_MS = 500;
 const TOKEN_LIFETIME_MS = 5 * 60_000;
@@ -33,15 +38,25 @@ const BOT_IN_ROOM = new Set([ 'waiting_for_participants', 'recording' ]);
 
 export class Flow {
     private readonly _opts: {
+        auditKey: string;
         layout: ILayout;
         prosody: Prosody;
         recorderBot: RecorderBot;
+        retentionMs: number;
+        retentionSweepMs: number;
         roleMarkers: IRoleMarkers;
         signingKey: { kid: string; privateKey: string; };
         store: Store;
         timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
     };
+
+    /** The moves whose end is in the audit log. */
+    private readonly _audited = new Set<string>();
+
+    /** Who asked for each move. */
+    private readonly _issuers = new Map<string, string>();
+    private _retention?: NodeJS.Timeout;
 
     /** The consultation each move started in a station, so that it can be stopped. */
     private readonly _stationConsultations = new Map<string, string>();
@@ -104,16 +119,32 @@ export class Flow {
      *
      * @param {string} encounterId - The encounter.
      * @param {Stage} stage - The stage.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
      * @returns {Promise<IStep>}
      */
-    changeStage(encounterId: string, stage: Stage): Promise<IStep> {
+    changeStage(encounterId: string, stage: Stage, issuer: string): Promise<IStep> {
         return this._serial(async () => {
-            const result = step(this._state, { at: new Date(), encounterId, stage, type: 'change_stage' });
+            const at = new Date();
+            const from = this._state.encounters.find(e => e.id === encounterId)?.stage;
+            const result = step(this._state, { at, encounterId, stage, type: 'change_stage' });
 
             this._commit(result.state);
+            this._audit(stageEntry({
+                at, encounterId, from, issuer, outcome: result.refused ? 'refused' : 'ok', reason: result.refused, to: stage
+            }));
 
             return result;
         });
+    }
+
+    /**
+     * The newest audit entries.
+     *
+     * @param {number} limit - How many.
+     * @returns {IAuditEntry[]}
+     */
+    audit(limit: number): IAuditEntry[] {
+        return this._opts.store.audit(limit);
     }
 
     /**
@@ -149,13 +180,18 @@ export class Flow {
      * Asks to move a participant.
      *
      * @param {Object} request - Who to move, from which room to which.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
      * @returns {Promise<IMove>}
      */
-    requestMove(request: { endpointId: string; fromRoom: string; toRoom: string; }): Promise<IMove> {
+    requestMove(request: { endpointId: string; fromRoom: string; toRoom: string; }, issuer: string): Promise<IMove> {
         return this._serial(async () => {
             const rooms = await this.rooms();
             const named = (name: string) => rooms.find(r => backendSafeRoomName(r.name) === backendSafeRoomName(name))
                 ?.name ?? name;
+            const moveId = randomUUID();
+
+            this._issuers.set(moveId, issuer);
+
             const result = await this._apply({
                 at: new Date(),
                 endpointId: request.endpointId,
@@ -163,7 +199,7 @@ export class Flow {
                 rooms,
                 toRoom: named(request.toRoom),
                 type: 'request_move'
-            }, rooms);
+            }, rooms, () => moveId);
 
             this._ensurePolling();
 
@@ -177,6 +213,7 @@ export class Flow {
      * @returns {void}
      */
     stop(): void {
+        clearInterval(this._retention);
         clearTimeout(this._midnight);
         clearInterval(this._poll);
         this._poll = undefined;
@@ -187,10 +224,11 @@ export class Flow {
      *
      * @param {FlowEvent} event - The event.
      * @param {IRoom[]} rooms - The rooms at the time, for the commands that need the participant's identity.
+     * @param {Function} newId - Makes the opaque id of a new move.
      * @returns {Promise<IStep>}
      */
-    private async _apply(event: FlowEvent, rooms: IRoom[]): Promise<IStep> {
-        const result = step(this._state, event);
+    private async _apply(event: FlowEvent, rooms: IRoom[], newId?: () => string): Promise<IStep> {
+        const result = step(this._state, event, newId);
 
         this._commit(result.state);
         for (const command of result.commands) {
@@ -210,7 +248,67 @@ export class Flow {
         if (state !== this._state) {
             this._opts.store.save(state);
             this._state = state;
+            this._auditEndedMoves();
         }
+    }
+
+    /**
+     * Writes the audit entry of every move that has ended and has none yet.
+     *
+     * @returns {void}
+     */
+    private _auditEndedMoves(): void {
+        for (const move of this._state.moves) {
+            if (!ACTIVE_MOVE.has(move.state) && !this._audited.has(move.id)) {
+                this._audited.add(move.id);
+                this._audit(moveEntry(move, {
+                    at: new Date(),
+                    issuer: this._issuers.get(move.id) ?? 'system',
+                    key: this._opts.auditKey,
+                    layout: this._opts.layout
+                }));
+                this._issuers.delete(move.id);
+            }
+        }
+    }
+
+    /**
+     * Writes an audit entry.
+     *
+     * @param {IAuditEntry} entry - The entry.
+     * @returns {void}
+     */
+    private _audit(entry: IAuditEntry): void {
+        try {
+            this._opts.store.addAudit(entry);
+        } catch (error) {
+            log.error('could not write an audit entry', { error: (error as Error).name });
+        }
+    }
+
+    /**
+     * Deletes the encounters and audit entries older than the retention period, now and then.
+     *
+     * @returns {void}
+     */
+    startRetention(): void {
+        const sweep = () => this._serial(async () => {
+            const cutoff = new Date(Date.now() - this._opts.retentionMs);
+            const removed = this._opts.store.sweep(cutoff);
+
+            this._state = {
+                ...this._state,
+                encounters: this._state.encounters.filter(e => e.startedAt >= cutoff),
+                moves: this._state.moves.filter(m => m.startedAt >= cutoff)
+            };
+            if (removed.audit || removed.encounters) {
+                log.info('retention sweep', removed);
+            }
+        }).catch(error => log.error('the retention sweep failed', { error: (error as Error).name }));
+
+        sweep();
+        this._retention = setInterval(sweep, this._opts.retentionSweepMs);
+        this._retention.unref();
     }
 
     /**

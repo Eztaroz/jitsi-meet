@@ -5,6 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
+import type { IAuditEntry } from './audit.ts';
 import type { IEncounter, IState } from './patientFlow.ts';
 
 export class Store {
@@ -23,6 +24,12 @@ export class Store {
             hn TEXT NOT NULL,
             stage TEXT NOT NULL,
             started_at TEXT NOT NULL
+        )`);
+
+        this._db.exec(`CREATE TABLE IF NOT EXISTS audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at TEXT NOT NULL,
+            entry TEXT NOT NULL
         )`);
 
         // A database made before stages gets the columns added.
@@ -92,6 +99,47 @@ export class Store {
             this._db.exec('ROLLBACK');
             throw error;
         }
+    }
+
+    /**
+     * Adds an entry to the audit log.
+     *
+     * @param {IAuditEntry} entry - The entry.
+     * @returns {void}
+     */
+    addAudit(entry: IAuditEntry): void {
+        this._db.prepare('INSERT INTO audit (at, entry) VALUES (?, ?)').run(entry.at.toISOString(), JSON.stringify(entry));
+    }
+
+    /**
+     * Reads the newest audit entries.
+     *
+     * @param {number} limit - How many.
+     * @returns {IAuditEntry[]} The newest first.
+     */
+    audit(limit: number): IAuditEntry[] {
+        const rows = this._db.prepare('SELECT entry FROM audit ORDER BY at DESC, id DESC LIMIT ?').all(limit) as { entry: string; }[];
+
+        return rows.map(r => {
+            const entry = JSON.parse(r.entry) as IAuditEntry;
+
+            return { ...entry, at: new Date(entry.at) };
+        });
+    }
+
+    /**
+     * Deletes the encounters and the audit entries older than a time.
+     *
+     * @param {Date} cutoff - What is older than this goes.
+     * @returns {Object} How many of each.
+     */
+    sweep(cutoff: Date): { audit: number; encounters: number; } {
+        const at = cutoff.toISOString();
+
+        return {
+            audit: Number(this._db.prepare('DELETE FROM audit WHERE at < ?').run(at).changes),
+            encounters: Number(this._db.prepare('DELETE FROM encounters WHERE started_at < ?').run(at).changes)
+        };
     }
 
     /**

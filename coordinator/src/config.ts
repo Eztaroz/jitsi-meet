@@ -14,6 +14,9 @@ export interface IConfig {
     /** The shared bearer secret the hospital's system must send. */
     apiSecret: string;
 
+    /** The key of the references to patients' rooms in the audit log (`COORDINATOR_AUDIT_KEY`; the API secret by default). */
+    auditKey: string;
+
     /** The directory holding the database; mount a volume here. */
     dataDir: string;
 
@@ -28,6 +31,12 @@ export interface IConfig {
 
     /** The recorder bot service's base URL. */
     recorderBotUrl: string;
+
+    /** How long encounters and audit entries are kept, in milliseconds. Older ones are deleted. */
+    retentionMs: number;
+
+    /** How often the retention sweep runs, in milliseconds. */
+    retentionSweepMs: number;
 
     /** Which verified identities are patients and which staff. */
     roleMarkers: IRoleMarkers;
@@ -70,6 +79,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
         dataDir: env.COORDINATOR_DATA_DIR?.trim() || '/var/lib/coordinator',
+        auditKey: env.COORDINATOR_AUDIT_KEY?.trim() || required(env, 'COORDINATOR_API_SECRET'),
+        retentionMs: Number(env.COORDINATOR_RETENTION_DAYS ?? 90) * 24 * 60 * 60 * 1000,
+        retentionSweepMs: Number(env.COORDINATOR_RETENTION_SWEEP_SECONDS ?? 3600) * 1000,
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),

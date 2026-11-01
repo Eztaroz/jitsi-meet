@@ -45,3 +45,35 @@ describe('the store', () => {
         assert.deepEqual(encounter.history, [ { at: T0, stage: 'waiting' } ]);
     });
 });
+
+describe('the audit log and the retention sweep', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const entry = (at: Date) => ({ at, issuer: 'system', kind: 'stage' as const, outcome: 'ok', encounterId: 'e', from: 'waiting' as const, to: 'intake' as const });
+
+    it('keeps audit entries, the newest first', () => {
+        const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
+
+        store.addAudit(entry(new Date('2030-01-01T08:00:00Z')));
+        store.addAudit(entry(new Date('2030-01-01T09:00:00Z')));
+
+        assert.deepEqual(store.audit(10).map(e => e.at.toISOString()), [ '2030-01-01T09:00:00.000Z', '2030-01-01T08:00:00.000Z' ]);
+    });
+
+    it('deletes the audit entries and encounters older than the retention period and leaves the rest', () => {
+        const now = new Date('2030-06-01T00:00:00Z');
+        const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
+        const old = step(initialState(), { at: new Date(now.getTime() - 100 * DAY), hn: 'OLD', type: 'start_encounter' });
+        const fresh = step(old.state, { at: new Date(now.getTime() - 10 * DAY), hn: 'NEW', type: 'start_encounter' });
+
+        store.save(fresh.state);
+        store.addAudit(entry(new Date(now.getTime() - 100 * DAY)));
+        store.addAudit(entry(new Date(now.getTime() - 10 * DAY)));
+
+        const removed = store.sweep(new Date(now.getTime() - 90 * DAY));
+
+        assert.equal(removed.audit, 1);
+        assert.equal(removed.encounters, 1);
+        assert.deepEqual(store.load().encounters.map(e => e.hn), [ 'NEW' ]);
+        assert.equal(store.audit(10).length, 1);
+    });
+});

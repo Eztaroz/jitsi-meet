@@ -12,6 +12,8 @@ import { type IEncounter, type IMove, STAGES, type Stage } from './patientFlow.t
 import { ProsodyUnavailableError } from './prosody.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
 
+/** Who the audit log names for a call with the shared bearer secret. */
+const SYSTEM = 'system';
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_HN_LENGTH = 128;
 
@@ -222,7 +224,7 @@ export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Se
             const request = moveFrom(await readJson(req));
 
             try {
-                const move = await flow.requestMove(request);
+                const move = await flow.requestMove(request, SYSTEM);
 
                 send(res, move.state === 'refused' ? 200 : 202, moveBody(move));
             } catch (error) {
@@ -236,6 +238,13 @@ export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Se
             return;
         }
 
+        if (pathname === '/audit' && req.method === 'GET') {
+            const limit = Math.min(Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('limit')) || 100, 1000);
+
+            send(res, 200, { entries: flow.audit(limit) });
+
+            return;
+        }
         if (pathname === '/queues' && req.method === 'GET') {
             const queues = flow.queues();
             const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
@@ -268,7 +277,7 @@ export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Se
                 throw new HttpError(400, `stage must be one of ${STAGES.join(', ')}`);
             }
 
-            const { encounter, refused } = await flow.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage);
+            const { encounter, refused } = await flow.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage, SYSTEM);
 
             if (refused === 'unknown_encounter') {
                 throw new HttpError(404, 'no such encounter');
