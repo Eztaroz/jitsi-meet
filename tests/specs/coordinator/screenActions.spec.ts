@@ -129,11 +129,11 @@ describe('Coordinator: acting from the screen', () => {
             (controls.querySelector(sel) as HTMLElement).click();
         }, id, selector, value);
 
-        await a.driver.waitUntil(async () => (await a.driver.$$('.queue-entry')).length > 0);
+        await a.driver.waitUntil(async () => await a.driver.$$('.queue-entry').length > 0);
         await act('.stage-go', 'intake');
         await a.driver.waitUntil(async () => (await getQueues()).intake.some(e => e.encounterId === id), { timeoutMsg: 'not in intake' });
 
-        await a.driver.waitUntil(async () => (await a.driver.$$('#queue-intake .queue-entry')).length > 0);
+        await a.driver.waitUntil(async () => await a.driver.$$('#queue-intake .queue-entry').length > 0);
         await act('.stage-done');
         await a.driver.waitUntil(
             async () => !Object.values(await getQueues()).flat().some(e => e.encounterId === id), { timeoutMsg: 'not done' });

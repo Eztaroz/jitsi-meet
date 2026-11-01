@@ -250,6 +250,7 @@ export interface IAuditEntry {
     participantId?: string;
     reason?: string;
     source?: string;
+    to?: string;
 }
 
 /**
