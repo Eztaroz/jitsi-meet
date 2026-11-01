@@ -10,12 +10,35 @@ export type Stage = 'waiting' | 'intake' | 'examination' | 'aftercare' | 'done';
 
 export interface IEncounter {
 
+    /** Every stage the encounter has been in, with when it entered it. */
+    history: { at: Date; stage: Stage; }[];
     hn: string;
+
     /** Opaque; never derived from the HN. */
     id: string;
     stage: Stage;
+
+    /** When the encounter entered its current stage: the queue is ordered by it. */
+    stageStartedAt: Date;
     startedAt: Date;
+
+    /** True for an encounter that was closed at the end of the day, not marked done. */
+    unfinished?: true;
 }
+
+export const STAGES: readonly Stage[] = [ 'waiting', 'intake', 'examination', 'aftercare', 'done' ];
+
+/** One patient's place in a stage's queue. */
+export interface IQueueEntry {
+    encounterId: string;
+    enteredAt: Date;
+
+    /** The first of its queue: who the system suggests is next. */
+    suggested: boolean;
+    waitedSeconds: number;
+}
+
+export type Queues = Record<Exclude<Stage, 'done'>, IQueueEntry[]>;
 
 /** How long the moved participant's notice counts down before their client leaves, in milliseconds. */
 export const COUNTDOWN_MS = 5000;
@@ -73,6 +96,10 @@ export interface IRoomView {
 
 export type FlowEvent = { at: Date; } & (
     | { hn: string; type: 'start_encounter'; }
+    | { encounterId: string; stage: Stage; type: 'change_stage'; }
+
+    /** The day ends: the encounters still open are closed as unfinished. */
+    | { type: 'close_day'; }
     | { endpointId: string; fromRoom: string; rooms: IRoomView[]; toRoom: string; type: 'request_move'; }
     | { rooms: IRoomView[]; type: 'rooms_snapshot'; }
     | { moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'timer_fired'; }
@@ -107,6 +134,9 @@ export interface IStep {
 
     /** The move a move request returns, refused or not. */
     move?: IMove;
+
+    /** Why a request to change a stage was refused. */
+    refused?: 'encounter_closed' | 'unknown_encounter';
     state: IState;
 }
 
@@ -135,7 +165,14 @@ function startEncounter(state: IState, hn: string, at: Date, newId: () => string
         return { commands: [], encounter: { ...open, created: false }, state };
     }
 
-    const encounter: IEncounter = { hn, id: newId(), stage: 'waiting', startedAt: at };
+    const encounter: IEncounter = {
+        history: [ { at, stage: 'waiting' } ],
+        hn,
+        id: newId(),
+        stage: 'waiting',
+        stageStartedAt: at,
+        startedAt: at
+    };
 
     return {
         commands: [ { hn, type: 'record_room' } ],
@@ -203,6 +240,44 @@ function sameParticipant(a: IMove, b: Pick<IMove, 'endpointId' | 'identityId' | 
     const sameEndpoint = a.origin === b.origin && a.endpointId === b.endpointId;
 
     return sameIdentity || sameEndpoint;
+}
+
+/**
+ * Puts an encounter in a stage.
+ *
+ * @param {IEncounter} encounter - The encounter.
+ * @param {Stage} stage - The stage.
+ * @param {Date} at - When.
+ * @returns {IEncounter}
+ */
+function enter(encounter: IEncounter, stage: Stage, at: Date): IEncounter {
+    return { ...encounter, history: [ ...encounter.history, { at, stage } ], stage, stageStartedAt: at };
+}
+
+/**
+ * Returns the queues: for each stage, the open encounters in it, the longest-waiting first.
+ *
+ * @param {IState} state - The state.
+ * @param {Date} now - When.
+ * @returns {Queues}
+ */
+export function queues(state: IState, now: Date): Queues {
+    const result: Queues = { aftercare: [], examination: [], intake: [], waiting: [] };
+
+    for (const stage of Object.keys(result) as (keyof Queues)[]) {
+        result[stage] = state.encounters
+            .filter(e => e.stage === stage)
+            .map((e, index) => ({ e, index }))
+            .sort((x, y) => x.e.stageStartedAt.getTime() - y.e.stageStartedAt.getTime() || x.index - y.index)
+            .map(({ e }, i) => ({
+                encounterId: e.id,
+                enteredAt: e.stageStartedAt,
+                suggested: i === 0,
+                waitedSeconds: Math.max(0, Math.floor((now.getTime() - e.stageStartedAt.getTime()) / 1000))
+            }));
+    }
+
+    return result;
 }
 
 /**
@@ -313,6 +388,34 @@ export function step(state: IState, event: FlowEvent, newId: () => string = rand
         return startEncounter(state, event.hn, event.at, newId);
     case 'request_move':
         return requestMove(state, event, newId);
+    case 'change_stage': {
+        const encounter = state.encounters.find(e => e.id === event.encounterId);
+
+        if (!encounter) {
+            return { commands: [], refused: 'unknown_encounter', state };
+        }
+        if (encounter.stage === 'done') {
+            return { commands: [], refused: 'encounter_closed', state };
+        }
+
+        const changed = enter(encounter, event.stage, event.at);
+
+        return {
+            commands: [],
+            encounter: { ...changed, created: false },
+            state: { ...state, encounters: state.encounters.map(e => e === encounter ? changed : e) }
+        };
+    }
+    case 'close_day':
+        return {
+            commands: [],
+            state: {
+                ...state,
+                encounters: state.encounters.map(e => e.stage === 'done'
+                    ? e
+                    : { ...enter(e, 'done', event.at), unfinished: true as const })
+            }
+        };
     case 'rooms_snapshot': {
         const learned = learnPatientRooms(state, event.rooms);
         const arrived = (m: IMove) => m.identityId !== undefined

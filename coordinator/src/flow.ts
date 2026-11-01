@@ -4,6 +4,7 @@
  */
 import { signToken } from './jwt.ts';
 import { log } from './log.ts';
+import { nextMidnight } from './midnight.ts';
 import {
     COUNTDOWN_MS,
     type Command,
@@ -12,6 +13,8 @@ import {
     type IState,
     type IStep,
     PREPARE_WAIT_MS,
+    type Stage,
+    queues,
     step
 } from './patientFlow.ts';
 import { type Prosody, ProsodyUnavailableError } from './prosody.ts';
@@ -36,11 +39,13 @@ export class Flow {
         roleMarkers: IRoleMarkers;
         signingKey: { kid: string; privateKey: string; };
         store: Store;
+        timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
     };
 
     /** The consultation each move started in a station, so that it can be stopped. */
     private readonly _stationConsultations = new Map<string, string>();
+    private _midnight?: NodeJS.Timeout;
     private _poll?: NodeJS.Timeout;
     private _queue: Promise<unknown> = Promise.resolve();
     private _state: IState;
@@ -95,6 +100,52 @@ export class Flow {
     }
 
     /**
+     * Puts an encounter in a stage, forward or back; `done` closes it.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {Stage} stage - The stage.
+     * @returns {Promise<IStep>}
+     */
+    changeStage(encounterId: string, stage: Stage): Promise<IStep> {
+        return this._serial(async () => {
+            const result = step(this._state, { at: new Date(), encounterId, stage, type: 'change_stage' });
+
+            this._commit(result.state);
+
+            return result;
+        });
+    }
+
+    /**
+     * The queues of the stages: the open encounters in each, the longest-waiting first.
+     *
+     * @returns {Queues}
+     */
+    queues() {
+        return queues(this._state, new Date());
+    }
+
+    /**
+     * Closes the day's encounters at every midnight of the configured time zone, from now on.
+     *
+     * @returns {void}
+     */
+    startDayEnds(): void {
+        const arm = () => {
+            const delay = nextMidnight(new Date(), this._opts.timeZone).getTime() - Date.now();
+
+            this._midnight = setTimeout(() => {
+                this._serial(async () => this._commit(step(this._state, { at: new Date(), type: 'close_day' }).state))
+                    .catch(error => log.error('could not close the day', { error: (error as Error).name }))
+                    .finally(arm);
+            }, delay);
+            this._midnight.unref();
+        };
+
+        arm();
+    }
+
+    /**
      * Asks to move a participant.
      *
      * @param {Object} request - Who to move, from which room to which.
@@ -126,6 +177,7 @@ export class Flow {
      * @returns {void}
      */
     stop(): void {
+        clearTimeout(this._midnight);
         clearInterval(this._poll);
         this._poll = undefined;
     }

@@ -35,6 +35,9 @@ export interface IConfig {
     /** The service's key id and its PEM private key; Prosody has the public key (ADR 0009). */
     signingKey: { kid: string; privateKey: string; };
 
+    /** The IANA time zone whose midnight closes the day's encounters. */
+    timeZone: string;
+
     /** What the destination tokens claim, as Prosody is set to accept them (ADR 0009). */
     token: { audience: string; issuer: string; subject: string; };
 }
@@ -67,6 +70,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
         dataDir: env.COORDINATOR_DATA_DIR?.trim() || '/var/lib/coordinator',
+        timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
         recorderBotSecret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
@@ -118,4 +122,23 @@ export function loadLayout(file: string | undefined): ILayout {
             return { room: s.room, stage: s.stage };
         })
     };
+}
+
+/**
+ * Checks a time zone.
+ *
+ * @param {string|undefined} zone - An IANA time zone; unset for UTC.
+ * @returns {string}
+ * @throws {Error} When it is not a time zone.
+ */
+export function loadTimeZone(zone: string | undefined): string {
+    const timeZone = zone || 'UTC';
+
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone });
+    } catch {
+        throw new Error(`COORDINATOR_TIME_ZONE must be an IANA time zone, got "${timeZone}"`);
+    }
+
+    return timeZone;
 }

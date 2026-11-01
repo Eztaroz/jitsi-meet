@@ -183,6 +183,36 @@ export async function waitForMove(id: string, state: IMove['state'], timeout = 6
     }
 }
 
+/** One place in a stage's queue as the API reports it. */
+export interface IQueueEntry {
+    encounterId: string;
+    hn?: string;
+    suggested: boolean;
+    waitedSeconds: number;
+}
+
+/**
+ * Reads the queues of the stages.
+ *
+ * @returns {Promise<Record<string, IQueueEntry[]>>}
+ */
+export async function getQueues(): Promise<Record<string, IQueueEntry[]>> {
+    return (await (await callCoordinator('/queues')).json() as { queues: Record<string, IQueueEntry[]>; }).queues;
+}
+
+/**
+ * Puts an encounter in a stage.
+ *
+ * @param {string} id - The encounter's id.
+ * @param {string} stage - The stage.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postStage(id: string, stage: string): Promise<{ body: IEncounter & { history?: Array<{ stage: string; }>; }; status: number; }> {
+    const response = await callCoordinator(`/encounters/${id}/stage`, { body: JSON.stringify({ stage }), method: 'POST' });
+
+    return { body: await response.json(), status: response.status };
+}
+
 /**
  * Restarts the coordinator service's container and waits until its API answers.
  *

@@ -18,8 +18,11 @@ const flow = new Flow({
     roleMarkers: config.roleMarkers,
     signingKey: config.signingKey,
     store,
+    timeZone: config.timeZone,
     token: config.token
 });
+
+flow.startDayEnds();
 const api = createApi({ flow, secret: config.apiSecret });
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));

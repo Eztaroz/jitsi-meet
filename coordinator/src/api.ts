@@ -8,7 +8,7 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 
 import type { Flow } from './flow.ts';
 import { errorCode, log } from './log.ts';
-import type { IMove } from './patientFlow.ts';
+import { type IEncounter, type IMove, STAGES, type Stage } from './patientFlow.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
 
@@ -103,6 +103,24 @@ function hnFrom(body: unknown): string {
     }
 
     return hn;
+}
+
+/**
+ * Describes an encounter for the API; the HN is only in what is read, never in the id.
+ *
+ * @param {IEncounter} e - The encounter.
+ * @returns {Object}
+ */
+function encounterBody(e: IEncounter) {
+    return {
+        history: e.history,
+        hn: e.hn,
+        id: e.id,
+        stage: e.stage,
+        stageStartedAt: e.stageStartedAt,
+        startedAt: e.startedAt,
+        unfinished: e.unfinished
+    };
 }
 
 /**
@@ -218,6 +236,16 @@ export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Se
             return;
         }
 
+        if (pathname === '/queues' && req.method === 'GET') {
+            const queues = flow.queues();
+            const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
+
+            send(res, 200, { queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
+                [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])) });
+
+            return;
+        }
+
         const encounterMatch = /^\/encounters\/([^/]+)$/.exec(pathname);
 
         if (encounterMatch && req.method === 'GET') {
@@ -226,7 +254,29 @@ export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Se
             if (!encounter) {
                 throw new HttpError(404, 'no such encounter');
             }
-            send(res, 200, { hn: encounter.hn, id: encounter.id, stage: encounter.stage, startedAt: encounter.startedAt });
+            send(res, 200, encounterBody(encounter));
+
+            return;
+        }
+
+        const stageMatch = /^\/encounters\/([^/]+)\/stage$/.exec(pathname);
+
+        if (stageMatch && req.method === 'POST') {
+            const stage = (await readJson(req) as { stage?: unknown; } | null)?.stage;
+
+            if (typeof stage !== 'string' || !(STAGES as readonly string[]).includes(stage)) {
+                throw new HttpError(400, `stage must be one of ${STAGES.join(', ')}`);
+            }
+
+            const { encounter, refused } = await flow.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage);
+
+            if (refused === 'unknown_encounter') {
+                throw new HttpError(404, 'no such encounter');
+            }
+            if (refused === 'encounter_closed') {
+                throw new HttpError(409, 'the encounter is done');
+            }
+            send(res, 200, encounterBody(flow.state.encounters.find(e => e.id === encounter?.id) as IEncounter));
 
             return;
         }
