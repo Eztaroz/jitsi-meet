@@ -334,6 +334,9 @@ function requestMove(
         reason = 'participant_not_movable';
     } else if (isPatient && toLounge) {
         reason = 'patient_into_lounge';
+    } else if (isPatient && !toStation && (!base.identityId || state.patientRooms[base.identityId] !== event.toRoom)) {
+        // Anything that is neither a station nor a lounge is a patient's own room (ADR 0005).
+        reason = 'not_the_patients_room';
     } else if (isPatient && destinationOpen
             && destination.occupants.some(o => o.role === 'patient' && o.identity?.id !== occupant.identity?.id)) {
         reason = 'destination_holds_a_patient';

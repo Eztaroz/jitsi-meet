@@ -74,7 +74,7 @@ describe('the coordinator service', () => {
         return new CoordinatorService({
             ...extra,
             auditKey: 'audit-key',
-            layout: { lounges: [], stations: [] },
+            layout: { lounges: [], stations: [ { room: 'st-1', stage: 'intake' } ] },
             prosody: {
                 rooms: async () => ({ rooms }),
                 sendMove: async ({ endpointId, room }: { endpointId: string; room: string; }) => {
@@ -109,6 +109,13 @@ describe('the coordinator service', () => {
         mock.timers.reset();
     });
 
+    /** Lets the service see the patient in their own room, as it does when a staff member is moved there. */
+    const learnPatientRoom = async (room: string) => {
+        rooms = [ { name: 'lounge-x', occupants: [ staff ] }, { name: room, occupants: [ patient ] } ];
+        await service.requestMove({ endpointId: 'e-staff', fromRoom: 'lounge-x', toRoom: room }, 'system');
+        sent = [];
+    };
+
     const stateOf = (moveId: string) => service.state.moves.find(m => m.id === moveId);
 
     it('sends a participant to an open room and fails the move when they do not arrive in time', async () => {
@@ -139,9 +146,10 @@ describe('the coordinator service', () => {
     });
 
     it('opens a closed patient room through the recorder bot and sends the patient once the bot is in it', async () => {
-        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
+        await learnPatientRoom('hn-b');
+        rooms = [ { name: 'st-1', occupants: [ patient ] } ];
 
-        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'st-1', toRoom: 'hn-b' }, 'system');
 
         await settle();
         assert.equal(move.state, 'preparing');
@@ -157,10 +165,35 @@ describe('the coordinator service', () => {
         assert.equal(stateOf(move.id)?.state, 'counting_down');
     });
 
-    it('fails the move when the recorder bot is not in the opened room within the wait', async () => {
-        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
+    it('refuses to move a patient into a closed room of another HN, and does not ask the recorder bot to open it', async () => {
+        await learnPatientRoom('hn-b');
+        rooms = [ { name: 'st-1', occupants: [ patient ] } ];
 
-        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'st-1', toRoom: 'hn-other' }, 'system');
+
+        assert.equal(move.state, 'refused');
+        assert.equal(move.reason, 'not_the_patients_room');
+        assert.deepEqual(recorded, []);
+        assert.deepEqual(sent, []);
+    });
+
+    it('audits the refusal like other refused moves, without the HN', async () => {
+        await learnPatientRoom('hn-b');
+        rooms = [ { name: 'st-1', occupants: [ patient ] } ];
+
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'st-1', toRoom: 'hn-other' }, 'system');
+        const entry = service.audit(10).find(e => JSON.stringify(e).includes(move.id) || e.reason === 'not_the_patients_room');
+
+        assert.equal(entry?.outcome, 'refused');
+        assert.equal(entry?.reason, 'not_the_patients_room');
+        assert.doesNotMatch(JSON.stringify(entry), /hn-/u);
+    });
+
+    it('fails the move when the recorder bot is not in the opened room within the wait', async () => {
+        await learnPatientRoom('hn-b');
+        rooms = [ { name: 'st-1', occupants: [ patient ] } ];
+
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'st-1', toRoom: 'hn-b' }, 'system');
 
         for (let waited = 0; waited < PREPARE_WAIT_MS; waited += 500) {
             await advance(500);
