@@ -141,14 +141,15 @@ export class MoveEffects {
      * @param {string} moveId - The move.
      * @param {string} hn - The patient's HN, which is the room, or whose time in a station is recorded.
      * @param {IStationConsultation} station - Set to record one patient's time in a station instead.
+     * @param {Date} until - When to stop waiting for the bot; by default the preparation wait from now. A move picked
+     * up after a restart passes the deadline it stored.
      * @returns {void}
      */
-    prepareDestination(moveId: string, hn: string, station?: IStationConsultation): void {
-        const report = (event: RulesEvent) => this._hooks.report(event)
-            .catch(error => log.error('could not report on a destination', { error: (error as Error).name }));
+    prepareDestination(moveId: string, hn: string, station?: IStationConsultation, until?: Date): void {
+        const report = this._reporter();
 
         (async () => {
-            const deadline = Date.now() + (this._opts.prepareWaitMs ?? PREPARE_WAIT_MS);
+            const deadline = until?.getTime() ?? Date.now() + (this._opts.prepareWaitMs ?? PREPARE_WAIT_MS);
             // The room's name has lost the HN's case; the encounter kept the HN as the hospital wrote it.
             const known = this._hooks.knownHn(hn);
             const consultationId = await this._opts.recorderBot.recordRoom(station ? known ?? hn : hn, station);
@@ -166,24 +167,54 @@ export class MoveEffects {
                 }
             }
 
-            while (Date.now() < deadline) {
-                if (!this._hooks.isPreparing(moveId)) {
-                    return;
-                }
-                if (BOT_IN_ROOM.has(await this._opts.recorderBot.status(consultationId))) {
-                    await report({ at: new Date(), moveId, type: 'destination_ready' });
+            await this._pollReady(moveId, consultationId, deadline, report);
+        })().catch(error => this._reportFailure(error, moveId, report));
+    }
 
-                    return;
-                }
-                await new Promise(resolve => setTimeout(resolve, READY_POLL_MS));
+    /**
+     * Goes on waiting for the recorder bot to be in a destination that a move was preparing before a restart.
+     *
+     * @param {string} moveId - The move.
+     * @param {string} consultationId - The consultation the bot was asked for.
+     * @param {Date} until - When to stop waiting: the deadline stored with the move.
+     * @returns {void}
+     */
+    resumePreparing(moveId: string, consultationId: string, until: Date): void {
+        const report = this._reporter();
+
+        this._pollReady(moveId, consultationId, until.getTime(), report)
+            .catch(error => this._reportFailure(error, moveId, report));
+    }
+
+    private _reporter(): (event: RulesEvent) => Promise<void> {
+        return event => this._hooks.report(event)
+            .catch(error => log.error('could not report on a destination', { error: (error as Error).name }));
+    }
+
+    private async _pollReady(
+            moveId: string, consultationId: string, deadline: number, report: (event: RulesEvent) => Promise<void>
+    ): Promise<void> {
+        while (Date.now() < deadline) {
+            if (!this._hooks.isPreparing(moveId)) {
+                return;
             }
-        })().catch(async error => {
-            const reason = error instanceof RecorderBotUnavailableError && error.code === 'at_capacity'
-                ? 'recorder_bot_at_capacity'
-                : 'recorder_bot_unreachable';
+            if (BOT_IN_ROOM.has(await this._opts.recorderBot.status(consultationId))) {
+                await report({ at: new Date(), moveId, type: 'destination_ready' });
 
-            log.warn('could not open a destination', { error: error instanceof RecorderBotUnavailableError ? error.code : 'unknown' });
-            await report({ at: new Date(), moveId, reason, type: 'destination_failed' });
-        });
+                return;
+            }
+            await new Promise(resolve => setTimeout(resolve, READY_POLL_MS));
+        }
+    }
+
+    private async _reportFailure(
+            error: unknown, moveId: string, report: (event: RulesEvent) => Promise<void>
+    ): Promise<void> {
+        const reason = error instanceof RecorderBotUnavailableError && error.code === 'at_capacity'
+            ? 'recorder_bot_at_capacity'
+            : 'recorder_bot_unreachable';
+
+        log.warn('could not open a destination', { error: error instanceof RecorderBotUnavailableError ? error.code : 'unknown' });
+        await report({ at: new Date(), moveId, reason, type: 'destination_failed' });
     }
 }

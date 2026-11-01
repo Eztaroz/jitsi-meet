@@ -24,6 +24,16 @@ export interface IMoveRecord {
     issuer: string;
 }
 
+/**
+ * The record of a move nothing has been kept about yet.
+ *
+ * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
+ * @returns {IMoveRecord}
+ */
+export function newMoveRecord(issuer = 'system'): IMoveRecord {
+    return { audited: false, deadlines: {}, issuer };
+}
+
 export class Store {
     private readonly _db: DatabaseSync;
 
@@ -162,9 +172,11 @@ export class Store {
      *
      * @param {IState} state - The state.
      * @param {ReadonlyMap<string, IMoveRecord>} records - What is kept about each move, by move id.
+     * @param {IAuditEntry[]} audit - Audit entries to add in the same transaction, so that an entry and the `audited`
+     * flag that says it was written are saved together or not at all.
      * @returns {void}
      */
-    save(state: IState, records: ReadonlyMap<string, IMoveRecord> = new Map()): void {
+    save(state: IState, records: ReadonlyMap<string, IMoveRecord> = new Map(), audit: IAuditEntry[] = []): void {
         const insert = this._db.prepare(`INSERT OR REPLACE INTO encounters
             (id, hn, stage, started_at, stage_started_at, history, unfinished) VALUES (?, ?, ?, ?, ?, ?, ?)`);
 
@@ -176,7 +188,7 @@ export class Store {
         try {
             this._db.exec('DELETE FROM moves');
             for (const m of state.moves) {
-                const record = records.get(m.id) ?? { audited: false, deadlines: {}, issuer: 'system' };
+                const record = records.get(m.id) ?? newMoveRecord();
 
                 this._db.prepare('INSERT INTO moves (id, started_at, move, record) VALUES (?, ?, ?, ?)')
                     .run(m.id, m.startedAt.toISOString(), JSON.stringify(m), JSON.stringify(record));
@@ -192,6 +204,9 @@ export class Store {
             for (const e of state.encounters) {
                 insert.run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
                     JSON.stringify(e.history), e.unfinished ? 1 : 0);
+            }
+            for (const entry of audit) {
+                this.addAudit(entry);
             }
             this._db.exec('COMMIT');
         } catch (error) {
@@ -224,6 +239,21 @@ export class Store {
 
             return { ...entry, at: new Date(entry.at) };
         });
+    }
+
+    /**
+     * Marks the patients' own rooms as seen now, so that a room that is seen again unchanged is not swept as old.
+     *
+     * @param {Record<string, string>} seen - The room each patient was seen in, by verified identity id.
+     * @returns {void}
+     */
+    touchPatientRooms(seen: Record<string, string>): void {
+        const touch = this._db.prepare('UPDATE patient_rooms SET updated_at = ? WHERE identity_id = ? AND room = ?');
+        const at = new Date().toISOString();
+
+        for (const [ identityId, room ] of Object.entries(seen)) {
+            touch.run(at, identityId, room);
+        }
     }
 
     /**
