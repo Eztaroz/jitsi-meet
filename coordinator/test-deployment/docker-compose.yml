@@ -1,0 +1,26 @@
+# The coordinator service on top of the recorder bot's JWT test deployment (docker-jitsi-meet with token
+# authentication, the fork's web build and the recorder bot). Not for production. Start it from this directory:
+#
+#   docker compose -f ../../recorder-bot/test-deployment/docker-compose.yml \
+#       -f ../../recorder-bot/test-deployment/docker-compose.jwt.yml -f docker-compose.yml up -d
+#
+# See README.md. Relative paths below are relative to the first file's directory, recorder-bot/test-deployment.
+services:
+    coordinator:
+        image: coordinator:local
+        build: ../../coordinator
+        restart: unless-stopped
+        # On the host network the service reaches the recorder bot on localhost, as the tests do.
+        network_mode: host
+        volumes:
+            - coordinator-data:/var/lib/coordinator
+        environment:
+            COORDINATOR_API_PORT: 8094
+            COORDINATOR_API_SECRET: coordinator-test-secret
+            COORDINATOR_RECORDER_BOT_URL: http://localhost:8090
+            COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
+        depends_on:
+            - recorder-bot
+
+volumes:
+    coordinator-data:

@@ -56,6 +56,14 @@ export const config = {
         })(),
         privateKeyPath: process.env.JWT_PRIVATE_KEY_PATH?.trim()
     },
+    coordinator: {
+        /** The bearer secret of the coordinator service's API. */
+        apiSecret: process.env.COORDINATOR_API_SECRET?.trim(),
+        /** The coordinator service's API, e.g. http://localhost:8094. */
+        apiUrl: process.env.COORDINATOR_API_URL?.trim()?.replace(/\/+$/, ''),
+        /** The docker container the coordinator service runs in, so that the tests can restart it. */
+        container: process.env.COORDINATOR_CONTAINER?.trim()
+    },
     recorderBot: {
         /** The bearer secret of the recorder bot service's control API. */
         apiSecret: process.env.RECORDER_BOT_API_SECRET?.trim(),
