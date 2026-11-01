@@ -15,6 +15,7 @@ import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './ro
 import {
     type Command,
     type IMove,
+    type IRoomView,
     type IState,
     type IStep,
     type RulesEvent,
@@ -22,11 +23,35 @@ import {
     queues,
     step
 } from './rules.ts';
-import type { IMoveRecord, Store } from './store.ts';
+import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 
 /** The states of a move that is under way: it has no audit entry until it ends. */
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
 const POLL_MS = 1000;
+
+/**
+ * Where the patients whose own room is known were seen in those rooms.
+ *
+ * @param {IState} state - The state.
+ * @param {IRoomView[]} rooms - The rooms.
+ * @returns {Record<string, string>} The room by verified identity id.
+ */
+function seenPatientRooms(state: IState, rooms: IRoomView[]): Record<string, string> {
+    const seen: Record<string, string> = {};
+
+    for (const room of rooms) {
+        if (room.kind !== undefined && room.kind !== 'patient') {
+            continue;
+        }
+        for (const o of room.occupants) {
+            if (o.role === 'patient' && o.identity?.id && state.patientRooms[o.identity.id] === room.name) {
+                seen[o.identity.id] = room.name;
+            }
+        }
+    }
+
+    return seen;
+}
 
 export class CoordinatorService {
     private readonly _opts: {
@@ -212,7 +237,7 @@ export class CoordinatorService {
                 ?.name ?? name;
             const moveId = randomUUID();
 
-            this._records.set(moveId, { audited: false, deadlines: {}, issuer });
+            this._records.set(moveId, newMoveRecord(issuer));
 
             const result = await this._apply({
                 at: new Date(),
@@ -267,8 +292,13 @@ export class CoordinatorService {
                     continue;
                 }
                 this._startTimer(move.id, timer, deadline);
-                if (move.state === 'preparing' && !move.station) {
-                    this._effects.prepareDestination(move.id, move.destination);
+                if (move.state === 'preparing') {
+                    // The wait goes on against the stored deadline, not a fresh one.
+                    if (!move.station) {
+                        this._effects.prepareDestination(move.id, move.destination, undefined, deadline);
+                    } else if (record?.consultationId) {
+                        this._effects.resumePreparing(move.id, record.consultationId, deadline);
+                    }
                 }
             }
             if (this._state.moves.some(m => ACTIVE_MOVE.has(m.state))) {
@@ -314,6 +344,9 @@ export class CoordinatorService {
         const result = step(this._state, event, newId, this._opts.prepareWaitMs);
 
         this._commit(result.state);
+        if (event.type === 'rooms_snapshot' || event.type === 'request_move') {
+            this._opts.store.touchPatientRooms(seenPatientRooms(this._state, event.rooms));
+        }
         for (const command of result.commands) {
             await this._run(command, rooms);
         }
@@ -330,8 +363,15 @@ export class CoordinatorService {
     private _commit(state: IState): void {
         if (state !== this._state) {
             this._state = state;
-            this._auditEndedMoves();
-            this._persist();
+
+            // The entries and the `audited` flags are saved in one transaction, so that a crash cannot leave an entry
+            // that a restart would write again.
+            const { entries, records } = this._endedMoves();
+
+            this._opts.store.save(this._state, records, entries);
+            for (const [ id, record ] of records) {
+                this._records.set(id, record);
+            }
         }
     }
 
@@ -354,7 +394,7 @@ export class CoordinatorService {
      */
     private _startTimer(moveId: string, timer: 'move_arrival' | 'move_prepare', deadline: Date): void {
         const key = `${moveId}:${timer}`;
-        const record = this._records.get(moveId) ?? { audited: false, deadlines: {}, issuer: 'system' };
+        const record = this._records.get(moveId) ?? newMoveRecord();
 
         this._records.set(moveId, { ...record, deadlines: { ...record.deadlines, [timer]: deadline } });
         this._persist();
@@ -372,24 +412,29 @@ export class CoordinatorService {
     }
 
     /**
-     * Writes the audit entry of every move that has ended and has none yet.
+     * Finds the moves that have ended and have no audit entry yet.
      *
-     * @returns {void}
+     * @returns {Object} Their audit entries, and the records to keep once the entries are saved.
      */
-    private _auditEndedMoves(): void {
+    private _endedMoves(): { entries: IAuditEntry[]; records: Map<string, IMoveRecord>; } {
+        const entries: IAuditEntry[] = [];
+        const records = new Map(this._records);
+
         for (const move of this._state.moves) {
-            const record = this._records.get(move.id) ?? { audited: false, deadlines: {}, issuer: 'system' };
+            const record = records.get(move.id) ?? newMoveRecord();
 
             if (!ACTIVE_MOVE.has(move.state) && !record.audited) {
-                this._audit(moveEntry(move, {
+                entries.push(moveEntry(move, {
                     at: new Date(),
                     issuer: record.issuer,
                     key: this._opts.auditKey,
                     layout: this._opts.layout
                 }));
-                this._records.set(move.id, { ...record, audited: true, deadlines: {} });
+                records.set(move.id, { ...record, audited: true, deadlines: {} });
             }
         }
+
+        return { entries, records };
     }
 
     /**

@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 
-import { initialState, step } from '../src/rules.ts';
-import { Store } from '../src/store.ts';
+import { type IMove, initialState, step } from '../src/rules.ts';
+import { Store, newMoveRecord } from '../src/store.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
 
@@ -75,5 +75,33 @@ describe('the audit log and the retention sweep', () => {
         assert.equal(removed.encounters, 1);
         assert.deepEqual(store.load().encounters.map(e => e.hn), [ 'NEW' ]);
         assert.equal(store.audit(10).length, 1);
+    });
+});
+
+describe('saving audit entries with the moves', () => {
+    const move = {
+        destination: 'b', endpointId: 'e', fromRoom: 'a', id: 'm-1', startedAt: new Date('2030-01-01T08:00:00Z'),
+        state: 'done', toRoom: 'b'
+    } as unknown as IMove;
+    const entry = (at: Date) => ({ at, issuer: 'system', kind: 'stage' as const, outcome: 'ok', encounterId: 'e', from: 'waiting' as const, to: 'intake' as const });
+
+    it('saves the entries and the audited flag together', () => {
+        const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
+
+        store.save({ ...initialState(), moves: [ move ] }, new Map([ [ 'm-1', { ...newMoveRecord(), audited: true } ] ]),
+            [ entry(new Date('2030-01-01T09:00:00Z')) ]);
+
+        assert.equal(store.audit(10).length, 1);
+        assert.equal(store.loadMoveRecords().get('m-1')?.audited, true);
+    });
+
+    it('saves neither when one of them cannot be saved', () => {
+        const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
+
+        assert.throws(() => store.save({ ...initialState(), moves: [ move ] },
+            new Map([ [ 'm-1', { ...newMoveRecord(), audited: true } ] ]), [ entry(new Date(NaN)) ]));
+
+        assert.equal(store.audit(10).length, 0);
+        assert.equal(store.loadMoveRecords().size, 0);
     });
 });

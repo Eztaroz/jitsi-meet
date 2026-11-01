@@ -216,6 +216,42 @@ describe('the coordinator service across a restart', () => {
         assert.deepEqual(stopped, [ 'c-1' ]);
     });
 
+    it('resumes the wait for a station consultation the recorder bot is opening, and sends the patient when it is ready', async () => {
+        rooms = [ { name: 'hn-a', occupants: [ patient ] }, { name: 'station-1', occupants: [ staff ] } ];
+
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'station-1' }, 'system');
+
+        await settle();
+        assert.equal(stateOf(move.id)?.state, 'preparing');
+        assert.deepEqual(recorded, [ 'hn-a@station' ]);
+
+        await advance(10_000);
+        await restart();
+        assert.equal(stateOf(move.id)?.state, 'preparing');
+
+        botStatus = 'waiting_for_participants';
+        await advance(500);
+
+        assert.equal(stateOf(move.id)?.state, 'counting_down');
+        assert.equal(sent.length, 1);
+        assert.deepEqual(recorded, [ 'hn-a@station' ]);
+    });
+
+    it('fails a resumed station preparation at its stored deadline when the recorder bot never comes', async () => {
+        rooms = [ { name: 'hn-a', occupants: [ patient ] }, { name: 'station-1', occupants: [ staff ] } ];
+
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'station-1' }, 'system');
+
+        await settle();
+        await advance(10_000);
+        await restart();
+        await advance(PREPARE_WAIT_MS - 10_000 - 1);
+        assert.equal(stateOf(move.id)?.state, 'preparing');
+
+        await advance(1);
+        assert.equal(stateOf(move.id)?.reason, 'recorder_bot_not_ready');
+    });
+
     it('fails a move still waiting for the recorder bot with recorder_bot_not_ready when its deadline passed', async () => {
         const move = await moveToClosedOwnRoom();
 
@@ -285,6 +321,25 @@ describe('the coordinator service across a restart', () => {
         await restart();
 
         assert.equal(moveAudits().length, 1);
+    });
+
+    it('keeps a patient\'s own room that is seen again unchanged out of the retention sweep', async () => {
+        const DAY = 24 * 3600_000;
+
+        rooms = [ { name: 'a', occupants: [ staff ] }, { name: 'hn-a', occupants: [ patient ] } ];
+        await service.requestMove({ endpointId: 'e-staff', fromRoom: 'a', toRoom: 'hn-a' }, 'system');
+        await advance(COUNTDOWN_MS + ARRIVAL_WAIT_MS);
+
+        mock.timers.tick(60 * DAY);
+        await service.requestMove({ endpointId: 'e-staff', fromRoom: 'a', toRoom: 'hn-a' }, 'system');
+        await advance(COUNTDOWN_MS + ARRIVAL_WAIT_MS);
+
+        mock.timers.tick(40 * DAY);
+        service.startRetention();
+        await settle();
+        await restart();
+
+        assert.deepEqual(service.state.patientRooms, { 'p-1': 'hn-a' });
     });
 
     it('deletes stored moves and patients\' own rooms in the retention sweep', async () => {
