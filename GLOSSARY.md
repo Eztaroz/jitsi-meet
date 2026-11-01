@@ -7,7 +7,7 @@ This fork of Jitsi Meet is used for a hospital's telemedicine service: short vid
 ### People
 
 **Patient**:
-The person receiving care, who stays in the consultation from start to end.
+The person receiving care. They wait, and see the doctor, in their own room, and may be moved to other rooms before and after.
 _Avoid_: Client, user, caller
 
 **Staff**:
