@@ -43,3 +43,5 @@ All the specs but one run together. `specs/coordinator/moveCapacity.spec.ts` fil
 ```bash
 npm run test-single -- specs/coordinator/moveCapacity.spec.ts
 ```
+
+`specs/coordinator/movePrepareWait.spec.ts` pauses the recorder bot's container (`RECORDER_BOT_CONTAINER`) so that it cannot open a room within this deployment's 15-second prepare wait (`COORDINATOR_PREPARE_WAIT_SECONDS`), so run it on its own too.

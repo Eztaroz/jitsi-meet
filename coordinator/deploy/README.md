@@ -25,6 +25,7 @@ It is for the hospital's internal network only. Never expose its port to the int
 | `COORDINATOR_ISSUER_KEYS` | Turns the coordinator screen on: where the hospital issuer's public keys are, a directory or the URL of a key server, as `<source>/<SHA-256 of the key id>.pem`, the layout of the key server your participants' tokens use. Without it there is no screen. |
 | `COORDINATOR_ACCEPTED_ISSUERS`, `COORDINATOR_ACCEPTED_AUDIENCES` | Which `iss` and `aud` a coordinator's token may have, comma-separated. Defaults `chat` and `jitsi`, as docker-jitsi-meet's. |
 | `COORDINATOR_COORDINATOR_MARKER` | The claim that marks a coordinator, written like the role markers. Default `user.hospital_role=coordinator`. |
+| `COORDINATOR_PREPARE_WAIT_SECONDS` | How long the recorder bot has to open a closed destination before a move into it fails with `recorder_bot_not_ready` and the participant stays where they are. Default `30`. Shorten it only to test; it must leave the recorder bot time to join a room. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
 | `COORDINATOR_DATA_DIR` | Where the database is. Default `/var/lib/coordinator`; mount a volume there. |
 

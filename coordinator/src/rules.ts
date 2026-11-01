@@ -298,7 +298,12 @@ export function queues(state: IState, now: Date): Queues {
  * @param {() => string} newId - Makes an opaque id.
  * @returns {IStep}
  */
-function requestMove(startState: IState, event: RulesEvent & { type: 'request_move'; }, newId: () => string): IStep {
+function requestMove(
+        startState: IState,
+        event: RulesEvent & { type: 'request_move'; },
+        newId: () => string,
+        prepareWaitMs: number
+): IStep {
     const state = learnPatientRooms(startState, event.rooms);
     const origin = event.rooms.find(r => r.name === event.fromRoom);
     const occupant = origin?.occupants.find(o => o.endpointId === event.endpointId);
@@ -368,7 +373,7 @@ function requestMove(startState: IState, event: RulesEvent & { type: 'request_mo
                         type: 'prepare_destination'
                     }
                     : { hn: event.toRoom, moveId: preparing.id, type: 'prepare_destination' },
-                { afterMs: PREPARE_WAIT_MS, moveId: preparing.id, timer: 'move_prepare', type: 'start_timer' }
+                { afterMs: prepareWaitMs, moveId: preparing.id, timer: 'move_prepare', type: 'start_timer' }
             ],
             move: preparing,
             state: { ...state, moves: [ ...state.moves, preparing ] }
@@ -390,14 +395,20 @@ function requestMove(startState: IState, event: RulesEvent & { type: 'request_mo
  * @param {IState} state - The current state.
  * @param {RulesEvent} event - The event.
  * @param {() => string} newId - Makes an opaque id; replaceable by callers that need determinism.
+ * @param {number} prepareWaitMs - How long a move waits for its closed destination to be opened.
  * @returns {IStep}
  */
-export function step(state: IState, event: RulesEvent, newId: () => string = randomUUID): IStep {
+export function step(
+        state: IState,
+        event: RulesEvent,
+        newId: () => string = randomUUID,
+        prepareWaitMs: number = PREPARE_WAIT_MS
+): IStep {
     switch (event.type) {
     case 'start_encounter':
         return startEncounter(state, event.hn, event.at, newId);
     case 'request_move':
-        return requestMove(state, event, newId);
+        return requestMove(state, event, newId, prepareWaitMs);
     case 'change_stage': {
         const encounter = state.encounters.find(e => e.id === event.encounterId);
 
