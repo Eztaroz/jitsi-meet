@@ -66,6 +66,14 @@ Signed in, the coordinator sees:
 - the queue of each stage, the longest-waiting first, with the time each patient has waited and the next patient suggested;
 - every open room with who is in it, by the name in their token (a patient's room is named by the HN), labelled as a patient's room, a station with its stage, or a lounge; the configured rooms nobody is in are listed as closed; a patient's room that has no open encounter is marked.
 
+From the screen the coordinator can also act. Every action goes through the same routes as the hospital's system, under `/screen/api/` (`POST /moves`, `POST /encounters`, `POST /encounters/<id>/stage`, with the coordinator's token), and the audit log names the coordinator's verified id as the issuer, not `system`:
+
+- start an encounter for a patient's room that has none (the button in the room, marked "ยังไม่มี encounter");
+- move any participant who can be moved, by choosing the destination room beside their name;
+- change an encounter's stage from its place in a queue, or mark it done ("เสร็จสิ้น").
+
+A participant being moved shows as "กำลังย้าย" on every coordinator's screen, and what came of each move is listed in Thai with its reason: moved, cancelled by the participant, refused, or failed. A refusal is also shown at once where the coordinator asked.
+
 It refreshes every three seconds. Serve the service on the hospital's internal network only; put TLS in front of it if the coordinators' tokens cross a network you do not control.
 
 ## Web only

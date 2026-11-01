@@ -180,6 +180,78 @@ function moveFrom(body: unknown): { endpointId: string; fromRoom: string; toRoom
  */
 export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoordinatorAuth; secret: string; }): Server {
     /**
+     * Handles the requests that act: starting an encounter, moving a participant and changing a stage. The system and
+     * the coordinators' screen make the same ones, and the audit log names who made them.
+     *
+     * @param {IncomingMessage} req - The request.
+     * @param {ServerResponse} res - The response.
+     * @param {string} pathname - The path, without the screen's prefix.
+     * @param {string} issuer - Who asks: `system`, or a coordinator's verified identity id.
+     * @returns {Promise<boolean>} Whether it was one of them, and answered.
+     */
+    async function act(req: IncomingMessage, res: ServerResponse, pathname: string, issuer: string): Promise<boolean> {
+        if (pathname === '/encounters' && req.method === 'POST') {
+            const hn = hnFrom(await readJson(req));
+
+            try {
+                const { encounter } = await flow.startEncounter(hn);
+
+                send(res, encounter?.created ? 201 : 200,
+                    { id: encounter?.id, stage: encounter?.stage, startedAt: encounter?.startedAt });
+            } catch (error) {
+                if (error instanceof RecorderBotUnavailableError) {
+                    log.warn('could not start an encounter', { error: error.code });
+                    throw new HttpError(503, `the recorder bot cannot record the room now (${error.code})`);
+                }
+                throw error;
+            }
+
+            return true;
+        }
+        if (pathname === '/moves' && req.method === 'POST') {
+            const request = moveFrom(await readJson(req));
+
+            try {
+                const move = await flow.requestMove(request, issuer);
+
+                send(res, move.state === 'refused' ? 200 : 202, moveBody(move));
+            } catch (error) {
+                if (error instanceof ProsodyUnavailableError) {
+                    log.warn('could not send a move', { error: error.code });
+                    throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
+                }
+                throw error;
+            }
+
+            return true;
+        }
+
+        const stageMatch = /^\/encounters\/([^/]+)\/stage$/.exec(pathname);
+
+        if (stageMatch && req.method === 'POST') {
+            const stage = (await readJson(req) as { stage?: unknown; } | null)?.stage;
+
+            if (typeof stage !== 'string' || !(STAGES as readonly string[]).includes(stage)) {
+                throw new HttpError(400, `stage must be one of ${STAGES.join(', ')}`);
+            }
+
+            const { encounter, refused } = await flow.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage, issuer);
+
+            if (refused === 'unknown_encounter') {
+                throw new HttpError(404, 'no such encounter');
+            }
+            if (refused === 'encounter_closed') {
+                throw new HttpError(409, 'the encounter is done');
+            }
+            send(res, 200, encounterBody(flow.state.encounters.find(e => e.id === encounter?.id) as IEncounter));
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Handles a request for the coordinator screen. The page and its files are public: they are a form to sign in.
      * What the page shows comes from the screen's own API, which only a coordinator's token opens; the shared bearer
      * secret does not.
@@ -192,11 +264,11 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
     async function handleScreen(req: IncomingMessage, res: ServerResponse, token: string | undefined) {
         const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
-        if (!screen || req.method !== 'GET') {
+        if (!screen) {
             throw new HttpError(404, 'not found');
         }
 
-        const file = SCREEN_FILES[pathname];
+        const file = req.method === 'GET' ? SCREEN_FILES[pathname] : undefined;
 
         if (file) {
             res.writeHead(200, {
@@ -208,7 +280,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
 
             return;
         }
-        if (pathname !== '/screen/api/state') {
+        if (!pathname.startsWith('/screen/api/')) {
             throw new HttpError(404, 'not found');
         }
         if (!token) {
@@ -230,15 +302,36 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
         }
 
         try {
-            const queues = flow.queues();
-            const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
+            const route = pathname.slice('/screen/api'.length);
 
-            send(res, 200, {
-                coordinator,
-                queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
-                    [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
-                rooms: await flow.rooms()
-            });
+            if (route === '/state' && req.method === 'GET') {
+                const queues = flow.queues();
+                const hnOf = (id: string) => flow.state.encounters.find(e => e.id === id)?.hn;
+                const recent = Date.now() - 2 * 60_000;
+
+                send(res, 200, {
+                    coordinator,
+                    moves: flow.state.moves
+                        .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down' || m.state === 'preparing')
+                        .map(m => ({
+                            destination: m.destination,
+                            endpointId: m.endpointId,
+                            id: m.id,
+                            origin: m.origin,
+                            reason: m.reason,
+                            startedAt: m.startedAt,
+                            state: m.state
+                        })),
+                    queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
+                        [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
+                    rooms: await flow.rooms()
+                });
+
+                return;
+            }
+            if (!await act(req, res, route, coordinator.id)) {
+                throw new HttpError(404, 'not found');
+            }
         } catch (error) {
             if (error instanceof ProsodyUnavailableError) {
                 throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
@@ -278,22 +371,7 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
 
             return;
         }
-        if (pathname === '/encounters' && req.method === 'POST') {
-            const hn = hnFrom(await readJson(req));
-
-            try {
-                const { encounter } = await flow.startEncounter(hn);
-
-                send(res, encounter?.created ? 201 : 200,
-                    { id: encounter?.id, stage: encounter?.stage, startedAt: encounter?.startedAt });
-            } catch (error) {
-                if (error instanceof RecorderBotUnavailableError) {
-                    log.warn('could not start an encounter', { error: error.code });
-                    throw new HttpError(503, `the recorder bot cannot record the room now (${error.code})`);
-                }
-                throw error;
-            }
-
+        if (await act(req, res, pathname, SYSTEM)) {
             return;
         }
         if (pathname === '/rooms' && req.method === 'GET') {
@@ -309,24 +387,6 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
 
             return;
         }
-        if (pathname === '/moves' && req.method === 'POST') {
-            const request = moveFrom(await readJson(req));
-
-            try {
-                const move = await flow.requestMove(request, SYSTEM);
-
-                send(res, move.state === 'refused' ? 200 : 202, moveBody(move));
-            } catch (error) {
-                if (error instanceof ProsodyUnavailableError) {
-                    log.warn('could not send a move', { error: error.code });
-                    throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
-                }
-                throw error;
-            }
-
-            return;
-        }
-
         if (pathname === '/audit' && req.method === 'GET') {
             const limit = Math.min(Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('limit')) || 100, 1000);
 
@@ -353,28 +413,6 @@ export function createApi({ flow, screen, secret }: { flow: Flow; screen?: ICoor
                 throw new HttpError(404, 'no such encounter');
             }
             send(res, 200, encounterBody(encounter));
-
-            return;
-        }
-
-        const stageMatch = /^\/encounters\/([^/]+)\/stage$/.exec(pathname);
-
-        if (stageMatch && req.method === 'POST') {
-            const stage = (await readJson(req) as { stage?: unknown; } | null)?.stage;
-
-            if (typeof stage !== 'string' || !(STAGES as readonly string[]).includes(stage)) {
-                throw new HttpError(400, `stage must be one of ${STAGES.join(', ')}`);
-            }
-
-            const { encounter, refused } = await flow.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage, SYSTEM);
-
-            if (refused === 'unknown_encounter') {
-                throw new HttpError(404, 'no such encounter');
-            }
-            if (refused === 'encounter_closed') {
-                throw new HttpError(409, 'the encounter is done');
-            }
-            send(res, 200, encounterBody(flow.state.encounters.find(e => e.id === encounter?.id) as IEncounter));
 
             return;
         }

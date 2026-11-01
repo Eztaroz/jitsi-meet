@@ -45,3 +45,15 @@ textarea { background: var(--card); border: 1px solid var(--line); border-radius
 .queue-entry.suggested { background: var(--suggest); font-weight: 600; }
 .occupant { color: var(--muted); font-size: .92rem; }
 .empty { color: var(--muted); font-style: italic; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
+select { background: var(--card); border: 1px solid var(--line); border-radius: 6px; color: var(--text); font: inherit; max-width: 100%; padding: 4px; }
+.occupant { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
+.badge.moving { background: var(--suggest); color: var(--text); }
+#notice { background: var(--warn); border-radius: 6px; color: var(--warn-text); padding: 8px 12px; }
+#outcomes { list-style: none; margin: 8px 0; padding: 0; }
+.outcome { border-left: 4px solid var(--line); margin: 4px 0; padding: 4px 8px; }
+.outcome.done { border-color: #2e8b3d; }
+.outcome.cancelled, .outcome.refused { border-color: #c98a00; }
+.outcome.failed { border-color: #b3261e; }
+.start-encounter { margin: 2px 0 6px; }
