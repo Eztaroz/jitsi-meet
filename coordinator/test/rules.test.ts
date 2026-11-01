@@ -176,6 +176,9 @@ describe('moving a staff member', () => {
 });
 
 describe('moving a patient', () => {
+    // pat-1 was seen in their own room, home-room, which is closed now; they are in a station.
+    const knowingHome = { ...initialState(), patientRooms: { 'pat-1': 'home-room' } };
+    const away = { kind: 'station' as const, name: 'patient-a', occupants: [ { endpointId: 'e-pat', identity: { id: 'pat-1' }, role: 'patient' as const } ] };
     const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
     const here = { name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
     const station = { kind: 'station' as const, name: 'intake-1', occupants: [ occupant('e-nurse', 'n-1', 'staff') ] };
@@ -190,12 +193,56 @@ describe('moving a patient', () => {
         type: 'request_move' as const
     });
 
-    it('is refused a room that holds another patient', () => {
+    it('is refused another patient\'s open room, whoever is in it', () => {
         const { commands, move } = step(initialState(), request([ here, other ], 'patient-b'));
 
         assert.equal(move?.state, 'refused');
-        assert.equal(move?.reason, 'destination_holds_a_patient');
+        assert.equal(move?.reason, 'not_the_patients_room');
         assert.deepEqual(commands, []);
+    });
+
+    it('is refused another HN\'s open room that holds only staff', () => {
+        const staffOnly = { name: 'patient-b', occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
+        const { commands, move } = step(initialState(), request([ here, staffOnly ], 'patient-b'));
+
+        assert.equal(move?.reason, 'not_the_patients_room');
+        assert.deepEqual(commands, []);
+    });
+
+    it('is refused another HN\'s closed room, and the recorder bot is not asked to open it', () => {
+        const { commands, move } = step(initialState(), request([ here ], 'patient-c'));
+
+        assert.equal(move?.state, 'refused');
+        assert.equal(move?.reason, 'not_the_patients_room');
+        assert.deepEqual(commands, []);
+    });
+
+    it('is refused another HN\'s room even when it is configured as closed and empty', () => {
+        const closed = { name: 'patient-c', occupants: [], open: false };
+        const { move } = step(initialState(), request([ here, closed ], 'patient-c'));
+
+        assert.equal(move?.reason, 'not_the_patients_room');
+    });
+
+    it('is refused any patient\'s own room while their own room is not known', () => {
+        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat', 'pat-9', 'patient') ] };
+        const { commands, move } = step(initialState(), {
+            ...request([ inStation, other ], 'patient-b'), fromRoom: 'intake-1'
+        });
+
+        assert.equal(move?.reason, 'not_the_patients_room');
+        assert.deepEqual(commands, []);
+    });
+
+    it('may go back to their own room while it is open', () => {
+        const seen = step(initialState(), { at: T0, rooms: [ here ] as never, type: 'rooms_snapshot' });
+        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat', 'pat-1', 'patient') ] };
+        const back = step(seen.state, {
+            ...request([ inStation, { ...here, occupants: [ occupant('e-doc2', 'd-2', 'staff') ] } ], 'patient-a'),
+            fromRoom: 'intake-1'
+        });
+
+        assert.equal(back.move?.state, 'counting_down');
     });
 
     it('is refused a lounge, open or closed', () => {
@@ -207,7 +254,7 @@ describe('moving a patient', () => {
     });
 
     it('may go back to their own room while it is closed: the recorder bot is asked first, and nothing is sent yet', () => {
-        const { commands, move } = step(initialState(), request([ here ], 'home-room'));
+        const { commands, move } = step(knowingHome, request([ away ], 'home-room'));
 
         assert.equal(move?.state, 'preparing');
         assert.deepEqual(commands, [
@@ -217,7 +264,7 @@ describe('moving a patient', () => {
     });
 
     it('is sent, and waits for the arrival, once the recorder bot is in the destination', () => {
-        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const preparing = step(knowingHome, request([ away ], 'home-room'));
         const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
 
         assert.equal(ready.state.moves[0].state, 'counting_down');
@@ -225,7 +272,7 @@ describe('moving a patient', () => {
     });
 
     it('fails, with its reason, when the recorder bot is at capacity, and nothing is sent', () => {
-        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const preparing = step(knowingHome, request([ away ], 'home-room'));
         const failed = step(preparing.state, {
             at: T0, moveId: preparing.move?.id as string, reason: 'recorder_bot_at_capacity', type: 'destination_failed'
         });
@@ -236,7 +283,7 @@ describe('moving a patient', () => {
     });
 
     it('fails when the recorder bot is not ready in time', () => {
-        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const preparing = step(knowingHome, request([ away ], 'home-room'));
         const failed = step(preparing.state, {
             at: new Date(T0.getTime() + PREPARE_WAIT_MS), moveId: preparing.move?.id as string,
             timer: 'move_prepare', type: 'timer_fired'
@@ -247,7 +294,7 @@ describe('moving a patient', () => {
     });
 
     it('ignores the preparation timer once the move is sent', () => {
-        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const preparing = step(knowingHome, request([ away ], 'home-room'));
         const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
         const late = step(ready.state, { at: T0, moveId: preparing.move?.id as string, timer: 'move_prepare', type: 'timer_fired' });
 
@@ -262,8 +309,8 @@ describe('moving a patient', () => {
     });
 
     it('does not make a second move while one is being prepared', () => {
-        const preparing = step(initialState(), request([ here ], 'home-room'));
-        const second = step(preparing.state, request([ here ], 'home-room'));
+        const preparing = step(knowingHome, request([ away ], 'home-room'));
+        const second = step(preparing.state, request([ away ], 'home-room'));
 
         assert.equal(second.move?.reason, 'already_being_moved');
     });
@@ -278,7 +325,7 @@ describe('moving a patient', () => {
     });
 
     it('fails a move that could not be sent, whichever way it was waiting', () => {
-        const preparing = step(initialState(), request([ here ], 'home-room'));
+        const preparing = step(knowingHome, request([ away ], 'home-room'));
         const sentFail = step(preparing.state, {
             at: T0, moveId: preparing.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
         });

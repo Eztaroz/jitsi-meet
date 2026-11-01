@@ -5,6 +5,7 @@ import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
 import { config } from '../../helpers/TestsConfig';
 import {
+    callCoordinator,
     coordinatorUnavailableReason,
     postEncounter,
     postMove,
@@ -122,9 +123,7 @@ describe('Coordinator: move a patient into a station', () => {
     });
 
     it('records the patient in the station, and the doctor in their own room', async () => {
-        const rooms = await (await fetch(`${config.coordinator.apiUrl}/rooms`, {
-            headers: { 'Authorization': `Bearer ${config.coordinator.apiSecret}` }
-        })).json() as { rooms: { name: string; occupants: { identity?: { id?: string; }; role: string; }[]; }[]; };
+        const rooms = await (await callCoordinator('/rooms')).json() as { rooms: { name: string; occupants: { identity?: { id?: string; }; role: string; }[]; }[]; };
         const station = rooms.rooms.find(r => r.name === 'intake-1')!;
         const own = rooms.rooms.find(r => r.name === hn.toLowerCase())!;
 
@@ -137,9 +136,7 @@ describe('Coordinator: move a patient into a station', () => {
     });
 
     it('stops, and keeps the evidence under the HN with the station named, when the patient is moved back', async () => {
-        const station = (await (await fetch(`${config.coordinator.apiUrl}/rooms`, {
-            headers: { 'Authorization': `Bearer ${config.coordinator.apiSecret}` }
-        })).json() as { rooms: { name: string; occupants: { endpointId: string; identity?: { id?: string; }; }[]; }[]; })
+        const station = (await (await callCoordinator('/rooms')).json() as { rooms: { name: string; occupants: { endpointId: string; identity?: { id?: string; }; }[]; }[]; })
             .rooms.find(r => r.name === 'intake-1')!;
         const endpoint = station.occupants.find(o => o.identity?.id === patientIdentity.id)!.endpointId;
         const { body } = await postMove('intake-1', endpoint, hn.toLowerCase());

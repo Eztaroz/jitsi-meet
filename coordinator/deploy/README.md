@@ -2,7 +2,7 @@
 
 The coordinator service owns encounters, stages and queues, and moves participants between rooms (`GLOSSARY.md`, ADR 0008). This guide covers what exists so far: starting an encounter, listing the open rooms with who is in them, moving a participant, patients included, to another room, the participant cancelling it, the stages and queues, the audit log, and the coordinator screen. The hospital's system calls the service instead of the recorder bot; the service asks the recorder bot to record the patient's room.
 
-It is for the hospital's internal network only. Never expose its port to the internet.
+It is for the hospital's internal network only, and is reached through the web server's TLS (see "Reaching it"). **Never publish its port.**
 
 ## Settings
 
@@ -25,8 +25,20 @@ It is for the hospital's internal network only. Never expose its port to the int
 | `COORDINATOR_ISSUER_KEYS` | Turns the coordinator screen on: where the hospital issuer's public keys are, a directory or the URL of a key server, as `<source>/<SHA-256 of the key id>.pem`, the layout of the key server your participants' tokens use. Without it there is no screen. |
 | `COORDINATOR_ACCEPTED_ISSUERS`, `COORDINATOR_ACCEPTED_AUDIENCES` | Which `iss` and `aud` a coordinator's token may have, comma-separated. Defaults `chat` and `jitsi`, as docker-jitsi-meet's. |
 | `COORDINATOR_COORDINATOR_MARKER` | The claim that marks a coordinator, written like the role markers. Default `user.hospital_role=coordinator`. |
+| `COORDINATOR_PREPARE_WAIT_SECONDS` | How long the recorder bot has to open a closed destination before a move into it fails with `recorder_bot_not_ready` and the participant stays where they are. Default `30`. Shorten it only to test; it must leave the recorder bot time to join a room. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
 | `COORDINATOR_DATA_DIR` | Where the database is. Default `/var/lib/coordinator`; mount a volume there. |
+
+## Reaching it
+
+The service speaks plain HTTP and is reachable only on the deployment's internal network (ADR 0008). The web server proxies `/coordinator/` to it over its own TLS, stripping the prefix:
+
+- a coordinator opens `https://<deployment>/coordinator/screen`;
+- the hospital's system calls `https://<deployment>/coordinator/...`, for example `POST /coordinator/encounters`.
+
+With docker-jitsi-meet, mount `coordinator/deploy/nginx/coordinator.conf` into the `web` container at `/config/nginx-custom/coordinator.conf`; it is included at server level. Change the service's name and port in it (`http://coordinator:8091`) to match your network. The screen uses relative URLs, so it works under the prefix.
+
+**The service's port must never be published** (no `ports:` entry, no host network): nothing but the web server's proxy may reach it, or the hospital's calls, which carry HNs, cross the network unencrypted.
 
 ## Running it
 
@@ -59,7 +71,7 @@ Mind the room claim: it is the room name as Prosody names it, lower-case and URL
 
 ## The coordinator screen
 
-`<service address>/screen` is the coordinator's screen, in Thai, when `COORDINATOR_ISSUER_KEYS` is set. A coordinator signs in with a token from the hospital's issuer, the same issuer as the participants', that carries the coordinator role marker (`COORDINATOR_COORDINATOR_MARKER`) and a verified `id`. The screen is a form to sign in until then; the data behind it, `GET /screen/api/state`, answers only to such a token: the shared bearer secret does not open it (`403`), and neither does a call without a token (`401`). A single sign-on can send the coordinator to `/screen#jwt=<token>`; the fragment never reaches a server.
+`https://<deployment>/coordinator/screen` is the coordinator's screen, in Thai, when `COORDINATOR_ISSUER_KEYS` is set. A coordinator signs in with a token from the hospital's issuer, the same issuer as the participants', that carries the coordinator role marker (`COORDINATOR_COORDINATOR_MARKER`) and a verified `id`. The screen is a form to sign in until then; the data behind it, `GET /screen/api/state`, answers only to such a token: the shared bearer secret does not open it (`403`), and neither does a call without a token (`401`). A single sign-on can send the coordinator to `/coordinator/screen#jwt=<token>`; the fragment never reaches a server.
 
 Signed in, the coordinator sees:
 
@@ -74,7 +86,7 @@ From the screen the coordinator can also act. Every action goes through the same
 
 A participant being moved shows as "กำลังย้าย" on every coordinator's screen, and what came of each move is listed in Thai with its reason: moved, cancelled by the participant, refused, or failed. A refusal is also shown at once where the coordinator asked.
 
-It refreshes every two seconds. Serve the service on the hospital's internal network only; put TLS in front of it if the coordinators' tokens cross a network you do not control.
+It refreshes every two seconds. The coordinators' tokens cross the network over the web server's TLS only.
 
 ## Web only
 
@@ -82,21 +94,21 @@ The deployment supports the fork's web client only (ADR 0010, ADR 0007). On dock
 
 1. **Breakout rooms off:** set `ENABLE_BREAKOUT_ROOMS=false` on `web`, `prosody` and `jicofo`. The client then has no way to create a breakout room: the buttons are hidden because the server does not support them.
 2. **Deep linking off:** set `DISABLE_DEEP_LINKING=true` on `web`, so that a phone opens the link in its browser and not in the mobile app.
-3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms". Accounts that are not on the main domain are exempt: the recorder bot on the hidden domain, and Jicofo, Jibri and the transcriber. A SIP gateway (Jigasi) that joins on the main domain would be refused.
+3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms".
+
+   Only the hosts in `muc_require_move_support_exempt_hosts` are exempt, set through `XMPP_MUC_CONFIGURATION` (add it to any `token_verification_allowlist` line you already have there):
+
+   ```
+   muc_require_move_support_exempt_hosts = { "auth.meet.example.org", "recorder.meet.example.org" }
+   ```
+
+   List the auth domain (Jicofo, which also covers Jibri) and the recorder bot's hidden domain (`XMPP_HIDDEN_DOMAIN`), written out in full. Without the option the module assumes `auth.<domain>` and `recorder.<domain>`. Every other host must announce move support, the guest domain included. No dial-in is deployed: **adding dial-in (Jigasi) later means adding its host to this list**, otherwise it is refused.
 
 The mobile apps' code stays in the repository; only the deployment refuses them.
 
 ### Checking a phone's browser by hand
 
-The move notice and its countdown are web features, but nothing in the automated suite runs on a phone's browser: only Chrome on desktop. Support is for Chrome on Android and Safari on iOS, current versions. Before relying on a deployment, run through this on each, with a staff member in a lounge and a coordinator moving them, and then with a patient:
-
-- [ ] The room link opens in the browser, with no offer of the app.
-- [ ] The patient or staff member joins with their token, and the camera and microphone work.
-- [ ] A move shows the notice, counting down from 5, and does not name the destination.
-- [ ] "Stay here" keeps them in the room, and the coordinator sees the move cancelled.
-- [ ] Letting the countdown end opens the destination without the prejoin page, with the microphone and camera as they were, and the camera and microphone work there.
-
-This checklist has not been run on a phone yet: it needs real devices.
+Nothing in the automated suite runs on a phone's browser. Before relying on a deployment, run the [mobile-browser checklist](mobile-browser-checklist.md) on real devices: iOS Safari (current and previous iOS) and Chrome on Android. It has not been run yet.
 
 ## API
 
@@ -109,7 +121,7 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 | `POST /encounters/<id>/stage` with `{"stage": "intake"}` | Puts the encounter in a stage: `waiting`, `intake`, `examination`, `aftercare` or `done`, forward, skipping, or back. `done` closes it. `200` and the encounter; `400` for an unknown stage; `404` for an unknown encounter; `409` if the encounter is done. Moving a participant never changes a stage. |
 | `GET /queues` | `{queues: {waiting, intake, examination, aftercare}}`: each the open encounters in that stage, the longest-waiting first, each `{encounterId, hn, enteredAt, waitedSeconds, suggested}`. Only the first of a queue is `suggested`: the system suggests, it never moves anyone itself. |
 | `GET /rooms` | `200` and `{rooms: [{name, kind, open, stage, occupants: [{endpointId, displayName, role, identity, supportsMove, cancelledMove}]}]}`: the open rooms, a patient's room named by the HN, and the configured stations and lounges that nobody is in, with `open: false`. `kind` is `patient`, `station` or `lounge`; a station has its `stage`. `role` is `patient` or `staff` by the role markers, `hidden` for the recorder bot and other hidden participants, else `unknown`; `identity` is the verified `{id, name}` when the deployment verifies identities. `503` if Prosody cannot be asked. |
-| `POST /moves` with `{"from": {"room": "...", "endpointId": "..."}, "to": {"room": "..."}}` | Moves the participant `endpointId` from the open room `from.room` to the room `to.room`, both as `GET /rooms` names them. `202` and `{id, state}`: `counting_down` (the participant's page counts down five seconds, then enters the destination with a token for it), or `preparing` (the recorder bot is asked first, and the participant is sent once it is ready: for a patient moved to a patient's room that is closed, to record the room; for a patient moved into a station, to record that patient's time in it, under their HN, with the station named in the evidence recording). Or `200` and `{id, state: "refused", reason}`: `participant_not_found`, `participant_not_movable` (hidden, or unverified), `patient_into_lounge`, `destination_holds_a_patient`, `patient_room_unknown` (a patient to be recorded in a station whose own room the service has not seen them in), `destination_not_open` (a staff member, or any move to a closed station), `already_being_moved` (the participant's earlier move is still under way). `503` if Prosody cannot be asked. |
+| `POST /moves` with `{"from": {"room": "...", "endpointId": "..."}, "to": {"room": "..."}}` | Moves the participant `endpointId` from the open room `from.room` to the room `to.room`, both as `GET /rooms` names them. `202` and `{id, state}`: `counting_down` (the participant's page counts down five seconds, then enters the destination with a token for it), or `preparing` (the recorder bot is asked first, and the participant is sent once it is ready: for a patient moved to a patient's room that is closed, to record the room; for a patient moved into a station, to record that patient's time in it, under their HN, with the station named in the evidence recording). Or `200` and `{id, state: "refused", reason}`: `participant_not_found`, `participant_not_movable` (hidden, or unverified), `patient_into_lounge`, `not_the_patients_room` (a patient may be moved only into a station or into their own room, as the service has seen them in it, never into a room named after another HN, open or closed; while it has not seen a patient in their own room, only into a station), `destination_holds_a_patient` (a station), `patient_room_unknown` (a patient to be recorded in a station whose own room the service has not seen them in), `destination_not_open` (a staff member, or any move to a closed station), `already_being_moved` (the participant's earlier move is still under way). `503` if Prosody cannot be asked. |
 | `GET /moves/<id>` | `{id, state, reason}`: `preparing`, `counting_down`, `done` (the same verified identity is in the destination), `cancelled` (the participant pressed "Stay here" during the countdown) or `failed`: `participant_did_not_arrive` (30 seconds after the countdown), `recorder_bot_at_capacity` (it answered `503`; nobody is moved), `recorder_bot_not_ready` (it was not waiting for the room within 30 seconds), `recorder_bot_unreachable` or `could_not_send_move`. |
 | `GET /audit?limit=100` | `{entries}`: the newest audit entries (at most 1000), the newest first. Every move that has ended (`done`, `cancelled`, `refused`, `failed`, with its `reason`) and every stage change (`from`, `to`, `outcome`) has one: `at`, `issuer` (`system` for a call with the bearer secret), `participantId` (the moved participant's verified identity id), `source` and `destination`, `encounterId`. A station or a lounge is named; a patient's room is a keyed reference, `room:` and 16 hexadecimal digits, never the HN (ADR 0005). The service's logs hold no HN either. |
 | `GET /health` | `200` and the number of open encounters. |
@@ -117,5 +129,9 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 Encounters are identified by an opaque id. The HN appears only in the body that starts an encounter and in what `GET /encounters/<id>` returns, never in a path or in the service's logs (ADR 0005).
 
 With token authentication (Jicofo authentication), the recorder bot cannot start a room itself: "ready" means it is waiting for the room, and it joins as soon as the patient has opened it. Without it, the bot is in the room before the patient arrives.
+
+### Waits that must be ordered
+
+The recorder bot waits for a station's patient for `RECORDER_BOT_PATIENT_WAIT_SECONDS` (ADR 0006). That wait must be longer than the countdown plus the arrival wait of this service, 5 + 30 = 35 seconds, so that this service gives up first and has the station consultation discarded. The bot's default of 60 seconds satisfies it. Never set it to 35 or less in production.
 
 A patient moved into a station is recorded there as a consultation of their own (ADR 0006). If they cancel the move, do not arrive, or the move fails, the service stops that consultation and nothing is kept. Their own room keeps being recorded while anyone is still in it. The service finds a patient's HN from the patient's room it saw them in, and keeps it in memory: after a restart, a patient in a station must be seen in their own room again before they can be moved into a station.

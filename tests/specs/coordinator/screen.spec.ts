@@ -79,9 +79,7 @@ describe('Coordinator: the screen', () => {
     });
 
     it('does not open the screen\'s data to the shared bearer secret, or to no one', async () => {
-        const state = (secret?: string) => fetch(`${config.coordinator.apiUrl}/screen/api/state`, {
-            headers: secret ? { 'Authorization': `Bearer ${secret}` } : {}
-        });
+        const state = (secret = '') => callCoordinator('/screen/api/state', {}, secret);
 
         expect((await state()).status).toBe(401);
         expect((await state(config.coordinator.apiSecret)).status).toBe(403);

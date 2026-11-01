@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { type ILayout, type IRoleMarker, type IRoleMarkers, parseRoleMarker } from './rooms.ts';
+import { PREPARE_WAIT_MS } from './rules.ts';
 
 /**
  * The coordinator service's settings, read from environment variables. `coordinator/deploy/README.md` documents each.
@@ -22,6 +23,9 @@ export interface IConfig {
 
     /** The stations and lounges (`COORDINATOR_ROOMS_FILE`). */
     layout: ILayout;
+
+    /** How long the recorder bot has to open a closed destination before the move fails, in ms (`COORDINATOR_PREPARE_WAIT_SECONDS`). */
+    prepareWaitMs: number;
 
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
@@ -104,6 +108,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
             : undefined,
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
+        prepareWaitMs: loadPrepareWait(env.COORDINATOR_PREPARE_WAIT_SECONDS),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
         recorderBotSecret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
         recorderBotUrl: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, ''),
@@ -173,4 +178,25 @@ export function loadTimeZone(zone: string | undefined): string {
     }
 
     return timeZone;
+}
+
+/**
+ * Reads how long the recorder bot has to open a destination.
+ *
+ * @param {string|undefined} seconds - `COORDINATOR_PREPARE_WAIT_SECONDS`; unset for the default.
+ * @returns {number} Milliseconds.
+ * @throws {Error} When it is not a positive number.
+ */
+export function loadPrepareWait(seconds: string | undefined): number {
+    if (!seconds?.trim()) {
+        return PREPARE_WAIT_MS;
+    }
+
+    const value = Number(seconds);
+
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new Error(`COORDINATOR_PREPARE_WAIT_SECONDS must be a positive number, got "${seconds}"`);
+    }
+
+    return value * 1000;
 }

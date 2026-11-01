@@ -6,8 +6,10 @@ The recorder bot's JWT test deployment (`recorder-bot/test-deployment`, with `do
 |---|---|
 | Jitsi web | https://localhost:8443 |
 | Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret` |
-| Prosody's HTTP port, for the coordinator service only (localhost) | http://localhost:5280 |
-| Coordinator API | http://localhost:8094, bearer secret `coordinator-test-secret` |
+| Coordinator screen | https://localhost:8443/coordinator/screen |
+| Coordinator API | https://localhost:8443/coordinator/, bearer secret `coordinator-test-secret` |
+
+The coordinator service publishes no port: it is on the deployment's internal network, and the web server's nginx proxies `/coordinator/` to it (`coordinator/deploy/nginx/coordinator.conf`). Prosody's HTTP port is not published either. The specs reach the service through the proxy.
 
 Follow `recorder-bot/test-deployment/README.md` to build the web bundles and the recorder bot's image and to generate the JWT keys. Generate the coordinator service's own key pair, which Prosody uses to verify the service's calls:
 
@@ -43,3 +45,5 @@ All the specs but one run together. `specs/coordinator/moveCapacity.spec.ts` fil
 ```bash
 npm run test-single -- specs/coordinator/moveCapacity.spec.ts
 ```
+
+`specs/coordinator/movePrepareWait.spec.ts` pauses the recorder bot's container (`RECORDER_BOT_CONTAINER`) so that it cannot open a room within this deployment's 15-second prepare wait (`COORDINATOR_PREPARE_WAIT_SECONDS`), so run it on its own too.
