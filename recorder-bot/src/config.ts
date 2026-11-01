@@ -47,7 +47,10 @@ export interface IConfig {
      */
     maxRelaunches: number;
 
-    /** In a station: how long the bot waits for the patient after it joined, in milliseconds (ADR 0006). */
+    /**
+     * In a station: how long the bot waits for the patient after it joined, in milliseconds (ADR 0006). It must exceed
+     * the coordinator service's countdown plus arrival wait (35 seconds), so it gives up first.
+     */
     patientWaitMs: number;
 
     /** How long evidence recordings are kept, in milliseconds (ADR 0003). Older ones are deleted. */

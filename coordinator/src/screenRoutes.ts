@@ -3,6 +3,7 @@
  */
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { stripTypeScriptTypes } from 'node:module';
 
 import type { CoordinatorService } from './coordinatorService.ts';
 import { HttpError, send } from './http.ts';
@@ -14,11 +15,16 @@ const SCREEN_FILES: Record<string, { body: Buffer; type: string; }> = {};
 
 for (const [ route, file, type ] of [
     [ '/screen', 'index.html', 'text/html; charset=utf-8' ],
-    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ],
-    [ '/screen/screen.js', 'screen.js', 'text/javascript; charset=utf-8' ]
+    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ]
 ]) {
     SCREEN_FILES[route] = { body: readFileSync(new URL(`./screen/${file}`, import.meta.url)), type };
 }
+
+// The screen's script is TypeScript; browsers get it as JavaScript, with its types stripped once, here.
+SCREEN_FILES['/screen/screen.js'] = {
+    body: Buffer.from(stripTypeScriptTypes(readFileSync(new URL('./screen/screen.ts', import.meta.url), 'utf8'))),
+    type: 'text/javascript; charset=utf-8'
+};
 
 /**
  * Creates the handler of the requests under `/screen`.

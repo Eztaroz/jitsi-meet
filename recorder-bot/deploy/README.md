@@ -213,7 +213,7 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_MAX_RELAUNCHES` | `3` | How many times a consultation's bot may be relaunched after a crash or a lost connection; `0` never relaunches it. See [Crashes](#crashes) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
 | `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join, or from when it started waiting for someone to start the room |
-| `RECORDER_BOT_PATIENT_WAIT_SECONDS` | `60` | In a station (below): how long the bot waits for the patient after it joined |
+| `RECORDER_BOT_PATIENT_WAIT_SECONDS` | `60` | In a station (below): how long the bot waits for the patient after it joined. Must exceed the coordinator service's countdown plus arrival wait (5 + 30 = 35 seconds), so that the coordinator service gives up first and has the consultation discarded (ADR 0006); below that, the bot discards a consultation whose patient is still on the way |
 | `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
 | `RECORDER_BOT_PATIENT_MARKER` | none | Which verified identity is the patient, written the same way |
 | `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
