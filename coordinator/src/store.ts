@@ -38,6 +38,7 @@ export class Store {
 
         return {
             moves: [],
+            patientRooms: {},
             encounters: rows.map(r => {
                 return { hn: r.hn, id: r.id, stage: r.stage, startedAt: new Date(r.started_at) };
             })

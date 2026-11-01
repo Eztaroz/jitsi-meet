@@ -39,6 +39,8 @@ export class Flow {
         token: { audience: string; issuer: string; subject: string; };
     };
 
+    /** The consultation each move started in a station, so that it can be stopped. */
+    private readonly _stationConsultations = new Map<string, string>();
     private _poll?: NodeJS.Timeout;
     private _queue: Promise<unknown> = Promise.resolve();
     private _state: IState;
@@ -179,8 +181,19 @@ export class Flow {
             }, command.afterMs).unref();
             break;
         case 'prepare_destination':
-            this._prepareDestination(command.moveId, command.hn);
+            this._prepareDestination(command.moveId, command.hn, command.station);
             break;
+        case 'stop_station_consultation': {
+            const consultationId = this._stationConsultations.get(command.moveId);
+
+            this._stationConsultations.delete(command.moveId);
+            if (consultationId) {
+                this._opts.recorderBot.stop(consultationId).catch(error => log.warn('could not stop a station consultation', {
+                    error: error instanceof RecorderBotUnavailableError ? error.code : 'unknown'
+                }));
+            }
+            break;
+        }
         case 'send_move':
             await this._sendMove(command, rooms);
             break;
@@ -236,10 +249,13 @@ export class Flow {
      * why it cannot be. It runs on in the background; the module's timer ends the wait.
      *
      * @param {string} moveId - The move.
-     * @param {string} hn - The patient's HN, which is the room.
+     * @param {string} hn - The patient's HN, which is the room, or whose time in a station is recorded.
+     * @param {Object} station - Set to record one patient's time in a station instead.
+     * @param {string} station.patientId - The patient's verified identity id.
+     * @param {string} station.room - The station.
      * @returns {void}
      */
-    private _prepareDestination(moveId: string, hn: string): void {
+    private _prepareDestination(moveId: string, hn: string, station?: { patientId: string; room: string; }): void {
         const report = (event: FlowEvent) => this._serial(async () => {
             const rooms = event.type === 'destination_ready' ? await this.rooms().catch(() => []) : [];
 
@@ -248,7 +264,20 @@ export class Flow {
 
         (async () => {
             const deadline = Date.now() + PREPARE_WAIT_MS;
-            const consultationId = await this._opts.recorderBot.recordRoom(hn);
+            // The room's name has lost the HN's case; the encounter kept the HN as the hospital wrote it.
+            const known = this._state.encounters.find(e => backendSafeRoomName(e.hn) === backendSafeRoomName(hn))?.hn;
+            const consultationId = await this._opts.recorderBot.recordRoom(station ? known ?? hn : hn, station);
+
+            if (station) {
+                this._stationConsultations.set(moveId, consultationId);
+                if (!this._state.moves.some(m => m.id === moveId && m.state === 'preparing')) {
+                    // The move ended while the recorder bot was answering: nobody is coming.
+                    this._stationConsultations.delete(moveId);
+                    await this._opts.recorderBot.stop(consultationId);
+
+                    return;
+                }
+            }
 
             while (Date.now() < deadline) {
                 if (!this._state.moves.some(m => m.id === moveId && m.state === 'preparing')) {

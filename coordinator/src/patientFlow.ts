@@ -39,11 +39,17 @@ export interface IMove {
     reason?: string;
     startedAt: Date;
     state: MoveState;
+
+    /** Set when the move takes a patient into a station, where they are recorded (ADR 0006). */
+    station?: { hn: string; patientId: string; };
 }
 
 export interface IState {
     encounters: IEncounter[];
     moves: IMove[];
+
+    /** Where each patient's own room is, by their verified identity id: learned from where they are seen. */
+    patientRooms: Record<string, string>;
 }
 
 /** A room as the rooms module describes it; only what the rules need. */
@@ -82,7 +88,10 @@ export type Command =
     | { afterMs: number; moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'start_timer'; }
 
     /** Open the destination, a patient's own room, by asking the recorder bot to record it, and report back. */
-    | { hn: string; moveId: string; type: 'prepare_destination'; };
+    | { hn: string; moveId: string; station?: { patientId: string; room: string; }; type: 'prepare_destination'; }
+
+    /** Stop the consultation started in a station for a move that did not bring the patient. Nothing is kept. */
+    | { moveId: string; type: 'stop_station_consultation'; };
 
 export interface IStartResult extends IEncounter {
 
@@ -107,7 +116,7 @@ export interface IStep {
  * @returns {IState}
  */
 export function initialState(): IState {
-    return { encounters: [], moves: [] };
+    return { encounters: [], moves: [], patientRooms: {} };
 }
 
 /**
@@ -133,6 +142,41 @@ function startEncounter(state: IState, hn: string, at: Date, newId: () => string
         encounter: { ...encounter, created: true },
         state: { ...state, encounters: [ ...state.encounters, encounter ] }
     };
+}
+
+/**
+ * Learns where patients' own rooms are: a patient seen in a patient's room is that room's.
+ *
+ * @param {IState} state - The state.
+ * @param {IRoomView[]} rooms - The rooms.
+ * @returns {IState} The state, the same when nothing is new.
+ */
+function learnPatientRooms(state: IState, rooms: IRoomView[]): IState {
+    let learned: Record<string, string> | undefined;
+
+    for (const room of rooms) {
+        if (room.kind !== undefined && room.kind !== 'patient') {
+            continue;
+        }
+        for (const o of room.occupants) {
+            if (o.role === 'patient' && o.identity?.id && state.patientRooms[o.identity.id] !== room.name) {
+                learned ??= { ...state.patientRooms };
+                learned[o.identity.id] = room.name;
+            }
+        }
+    }
+
+    return learned ? { ...state, patientRooms: learned } : state;
+}
+
+/**
+ * The command that stops what a move started in a station, for a move that ended without the patient arriving.
+ *
+ * @param {IMove|undefined} move - The move.
+ * @returns {Command[]}
+ */
+function stopStation(move: IMove | undefined): Command[] {
+    return move?.station ? [ { moveId: move.id, type: 'stop_station_consultation' } ] : [];
 }
 
 /** The states of a move that is under way. */
@@ -169,9 +213,10 @@ function sameParticipant(a: IMove, b: Pick<IMove, 'endpointId' | 'identityId' | 
  * @param {() => string} newId - Makes an opaque id.
  * @returns {IStep}
  */
-function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }, newId: () => string): IStep {
-    const occupant = event.rooms.find(r => r.name === event.fromRoom)?.occupants
-        .find(o => o.endpointId === event.endpointId);
+function requestMove(startState: IState, event: FlowEvent & { type: 'request_move'; }, newId: () => string): IStep {
+    const state = learnPatientRooms(startState, event.rooms);
+    const origin = event.rooms.find(r => r.name === event.fromRoom);
+    const occupant = origin?.occupants.find(o => o.endpointId === event.endpointId);
     const base = {
         destination: event.toRoom,
         endpointId: event.endpointId,
@@ -183,26 +228,33 @@ function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }
     const destination = event.rooms.find(r => r.name === event.toRoom);
     const destinationOpen = destination !== undefined && destination.open !== false;
     const toLounge = destination?.kind === 'lounge';
+    const toStation = destination?.kind === 'station';
+    const isPatient = occupant?.role === 'patient';
+
+    // A patient in a station is recorded under their HN, which is their own room's name.
+    const patientHn = !isPatient ? undefined
+        : origin?.kind === undefined || origin.kind === 'patient' ? event.fromRoom
+            : base.identityId ? state.patientRooms[base.identityId] : undefined;
     let reason: string | undefined;
     let prepare = false;
 
     if (!occupant) {
         reason = 'participant_not_found';
-    } else if (occupant.role === 'hidden') {
+    } else if (occupant.role !== 'staff' && !isPatient) {
         reason = 'participant_not_movable';
-    } else if (occupant.role !== 'staff' && occupant.role !== 'patient') {
-        reason = 'participant_not_movable';
-    } else if (occupant.role === 'patient' && toLounge) {
+    } else if (isPatient && toLounge) {
         reason = 'patient_into_lounge';
-    } else if (occupant.role === 'patient' && destinationOpen
+    } else if (isPatient && destinationOpen
             && destination.occupants.some(o => o.role === 'patient' && o.identity?.id !== occupant.identity?.id)) {
         reason = 'destination_holds_a_patient';
     } else if (!destinationOpen) {
         // Only a patient's own room is opened for a move, and only for a patient.
-        prepare = occupant.role === 'patient' && (destination === undefined || destination.kind === 'patient');
+        prepare = isPatient && (destination === undefined || destination.kind === 'patient');
         if (!prepare) {
             reason = 'destination_not_open';
         }
+    } else if (isPatient && toStation && (!base.identityId || !patientHn)) {
+        reason = base.identityId ? 'patient_room_unknown' : 'participant_not_movable';
     }
     if (!reason && state.moves.some(m => ACTIVE.has(m.state) && sameParticipant(m, base))) {
         reason = 'already_being_moved';
@@ -214,12 +266,23 @@ function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }
         return { commands: [], move: refused, state: { ...state, moves: [ ...state.moves, refused ] } };
     }
 
-    if (prepare) {
-        const preparing: IMove = { ...base, state: 'preparing' };
+    const station = isPatient && toStation && patientHn && base.identityId
+        ? { hn: patientHn, patientId: base.identityId }
+        : undefined;
+
+    if (prepare || station) {
+        const preparing: IMove = { ...base, state: 'preparing', ...station ? { station } : {} };
 
         return {
             commands: [
-                { hn: event.toRoom, moveId: preparing.id, type: 'prepare_destination' },
+                station
+                    ? {
+                        hn: station.hn,
+                        moveId: preparing.id,
+                        station: { patientId: station.patientId, room: event.toRoom },
+                        type: 'prepare_destination'
+                    }
+                    : { hn: event.toRoom, moveId: preparing.id, type: 'prepare_destination' },
                 { afterMs: PREPARE_WAIT_MS, moveId: preparing.id, timer: 'move_prepare', type: 'start_timer' }
             ],
             move: preparing,
@@ -251,10 +314,12 @@ export function step(state: IState, event: FlowEvent, newId: () => string = rand
     case 'request_move':
         return requestMove(state, event, newId);
     case 'rooms_snapshot': {
+        const learned = learnPatientRooms(state, event.rooms);
         const arrived = (m: IMove) => m.identityId !== undefined
             && event.rooms.some(r => r.name === m.destination && r.occupants.some(o => o.identity?.id === m.identityId));
         const cancelled = (m: IMove) => event.rooms.some(r => r.name === m.origin
             && r.occupants.some(o => o.endpointId === m.endpointId && o.cancelledMove === m.id));
+        const commands: Command[] = [];
         const next = (m: IMove): IMove => {
             if (m.state !== 'counting_down') {
                 return m;
@@ -262,11 +327,16 @@ export function step(state: IState, event: FlowEvent, newId: () => string = rand
             if (arrived(m)) {
                 return { ...m, state: 'done' };
             }
+            if (cancelled(m)) {
+                commands.push(...stopStation(m));
 
-            return cancelled(m) ? { ...m, state: 'cancelled' } : m;
+                return { ...m, state: 'cancelled' };
+            }
+
+            return m;
         };
 
-        return { commands: [], state: { ...state, moves: state.moves.map(next) } };
+        return { commands, state: { ...learned, moves: learned.moves.map(next) } };
     }
     case 'destination_ready': {
         const move = state.moves.find(m => m.id === event.moveId && m.state === 'preparing');
@@ -282,28 +352,28 @@ export function step(state: IState, event: FlowEvent, newId: () => string = rand
             state: { ...state, moves: state.moves.map(m => m.id === move.id ? sent : m) }
         };
     }
-    case 'destination_failed':
+    case 'destination_failed': {
+        const move = state.moves.find(m => m.id === event.moveId && ACTIVE.has(m.state));
+
         return {
-            commands: [],
+            commands: stopStation(move),
             state: {
                 ...state,
-                moves: state.moves.map(m => m.id === event.moveId && ACTIVE.has(m.state)
-                    ? { ...m, reason: event.reason, state: 'failed' as const }
-                    : m)
+                moves: state.moves.map(m => m === move ? { ...m, reason: event.reason, state: 'failed' as const } : m)
             }
         };
+    }
     case 'timer_fired': {
         const [ from, reason ] = event.timer === 'move_arrival'
             ? [ 'counting_down', 'participant_did_not_arrive' ] as const
             : [ 'preparing', 'recorder_bot_not_ready' ] as const;
+        const move = state.moves.find(m => m.id === event.moveId && m.state === from);
 
         return {
-            commands: [],
+            commands: stopStation(move),
             state: {
                 ...state,
-                moves: state.moves.map(m => m.id === event.moveId && m.state === from
-                    ? { ...m, reason, state: 'failed' as const }
-                    : m)
+                moves: state.moves.map(m => m === move ? { ...m, reason, state: 'failed' as const } : m)
             }
         };
     }

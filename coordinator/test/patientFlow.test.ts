@@ -190,13 +190,6 @@ describe('moving a patient', () => {
         type: 'request_move' as const
     });
 
-    it('may go to a room that holds only staff', () => {
-        const { commands, move } = step(initialState(), request([ here, station ], 'intake-1'));
-
-        assert.equal(move?.state, 'counting_down');
-        assert.equal(commands[0].type, 'send_move');
-    });
-
     it('is refused a room that holds another patient', () => {
         const { commands, move } = step(initialState(), request([ here, other ], 'patient-b'));
 
@@ -299,5 +292,102 @@ describe('moving a patient', () => {
         });
 
         assert.equal(failed.state.moves[0].state, 'failed');
+    });
+
+});
+
+describe('moving a patient into a station', () => {
+    const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
+    const home = { kind: 'patient' as const, name: 'home-1', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
+    const station = { kind: 'station' as const, name: 'intake-1', occupants: [ occupant('e-nurse', 'n-1', 'staff') ] };
+    const station2 = { kind: 'station' as const, name: 'aftercare-1', occupants: [ occupant('e-nurse2', 'n-2', 'staff') ] };
+    const request = (rooms: unknown[], over = {}) => ({
+        at: T0,
+        endpointId: 'e-pat',
+        fromRoom: 'home-1',
+        rooms: rooms as never,
+        toRoom: 'intake-1',
+        type: 'request_move' as const,
+        ...over
+    });
+
+    it('asks the recorder bot to record the patient in the station first, under their HN, and sends nothing yet', () => {
+        const { commands, move } = step(initialState(), request([ home, station ]));
+
+        assert.equal(move?.state, 'preparing');
+        assert.deepEqual(commands, [
+            {
+                hn: 'home-1', moveId: move?.id, station: { patientId: 'pat-1', room: 'intake-1' }, type: 'prepare_destination'
+            },
+            { afterMs: PREPARE_WAIT_MS, moveId: move?.id, timer: 'move_prepare', type: 'start_timer' }
+        ]);
+    });
+
+    it('is sent once the recorder bot is in the station', () => {
+        const preparing = step(initialState(), request([ home, station ]));
+        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
+
+        assert.deepEqual(ready.commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
+    });
+
+    it('knows the HN of a patient who is in a station, from where it saw them before', () => {
+        const seen = step(initialState(), { at: T0, rooms: [ home, station ] as never, type: 'rooms_snapshot' });
+        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat3', 'pat-1', 'patient') ] };
+        const { commands, move } = step(seen.state, request(
+            [ { ...home, occupants: [] }, inStation, station2 ],
+            { endpointId: 'e-pat3', fromRoom: 'intake-1', toRoom: 'aftercare-1' }));
+
+        assert.equal(move?.state, 'preparing');
+        assert.deepEqual(commands[0], {
+            hn: 'home-1', moveId: move?.id, station: { patientId: 'pat-1', room: 'aftercare-1' }, type: 'prepare_destination'
+        });
+    });
+
+    it('refuses a patient whose room is not known', () => {
+        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat3', 'pat-1', 'patient') ] };
+        const { commands, move } = step(initialState(), request(
+            [ inStation, station2 ], { endpointId: 'e-pat3', fromRoom: 'intake-1', toRoom: 'aftercare-1' }));
+
+        assert.equal(move?.reason, 'patient_room_unknown');
+        assert.deepEqual(commands, []);
+    });
+
+    it('stops the station consultation when the patient cancels', () => {
+        const preparing = step(initialState(), request([ home, station ]));
+        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
+        const cancelling = { ...home, occupants: [ { ...home.occupants[0], cancelledMove: preparing.move?.id } ] };
+        const cancelled = step(ready.state, { at: T0, rooms: [ cancelling, station ] as never, type: 'rooms_snapshot' });
+
+        assert.equal(cancelled.state.moves[0].state, 'cancelled');
+        assert.deepEqual(cancelled.commands, [ { moveId: preparing.move?.id, type: 'stop_station_consultation' } ]);
+    });
+
+    it('stops it when the patient does not arrive, and when the move could not be sent', () => {
+        const preparing = step(initialState(), request([ home, station ]));
+        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
+        const late = step(ready.state, { at: T0, moveId: preparing.move?.id as string, timer: 'move_arrival', type: 'timer_fired' });
+        const unsent = step(ready.state, {
+            at: T0, moveId: preparing.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
+        });
+
+        assert.deepEqual(late.commands, [ { moveId: preparing.move?.id, type: 'stop_station_consultation' } ]);
+        assert.deepEqual(unsent.commands, [ { moveId: preparing.move?.id, type: 'stop_station_consultation' } ]);
+    });
+
+    it('lets the consultation run when the patient arrives', () => {
+        const preparing = step(initialState(), request([ home, station ]));
+        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
+        const arrived = { ...station, occupants: [ ...station.occupants, occupant('e-new', 'pat-1', 'patient') ] };
+        const done = step(ready.state, { at: T0, rooms: [ arrived ] as never, type: 'rooms_snapshot' });
+
+        assert.equal(done.state.moves[0].state, 'done');
+        assert.deepEqual(done.commands, []);
+    });
+
+    it('does not prepare anything for a staff member', () => {
+        const staffInHome = { ...home, occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
+        const { commands } = step(initialState(), request([ staffInHome, station ], { endpointId: 'e-doc' }));
+
+        assert.deepEqual(commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
     });
 });
