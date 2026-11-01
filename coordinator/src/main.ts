@@ -3,6 +3,7 @@
  */
 import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
+import { Flow } from './flow.ts';
 import { log } from './log.ts';
 import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
@@ -10,13 +11,15 @@ import { Store } from './store.ts';
 
 const config = loadConfig();
 const store = new Store(config.dataDir);
-const api = createApi({
+const flow = new Flow({
     prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
     recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
     roleMarkers: config.roleMarkers,
-    secret: config.apiSecret,
-    store
+    signingKey: config.signingKey,
+    store,
+    token: config.token
 });
+const api = createApi({ flow, secret: config.apiSecret });
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));
 
@@ -28,6 +31,7 @@ api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPor
  */
 function shutdown(signal: string) {
     log.info('shutting down', { signal });
+    flow.stop();
     api.close(() => {
         store.close();
         process.exit(0);

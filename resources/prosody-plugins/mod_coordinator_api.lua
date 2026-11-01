@@ -22,9 +22,15 @@
 --         "identity": { "user": { <verified user claims as text> }, "group": <text> }   (when verified)
 --     } ] } ] }
 --     403 missing, malformed or unverifiable token.
+--   POST /coordinator/moves   (Content-Type: application/json)
+--     { "room": <room name in the address>, "endpointId": <occupant resource>, "move": <the json the client gets> }
+--     Sends the occupant a json-message from the room's own address, so that lib-jitsi-meet surfaces it as a message
+--     from the server and not from a participant. The client acts on it only then.
+--     200 sent, 400 bad request, 403 bad token, 404 no such room or occupant.
 
 local jid = require "util.jid";
 local json = require 'cjson.safe';
+local st = require "util.stanza";
 local util = module:require "util";
 local async_handler_wrapper = util.async_handler_wrapper;
 local starts_with = util.starts_with;
@@ -137,11 +143,47 @@ local function handle_get_rooms(event)
     };
 end
 
+local function handle_post_move(event)
+    local request = event.request;
+
+    if not verify_request(request) then
+        return { status_code = 403; };
+    end
+    if request.headers.content_type ~= "application/json" or not request.body or #request.body == 0 then
+        return { status_code = 400; };
+    end
+
+    local params = json.decode(request.body);
+    if not params or type(params.room) ~= "string" or type(params.endpointId) ~= "string"
+            or type(params.move) ~= "table" then
+        return { status_code = 400; };
+    end
+
+    local room = util.get_room_from_jid(jid.join(params.room, muc_domain));
+    if not room then
+        return { status_code = 404; };
+    end
+
+    for _, occupant in room:each_occupant() do
+        if jid.resource(occupant.nick) == params.endpointId and jid.node(occupant.bare_jid) ~= "focus" then
+            local body = json.encode(params.move);
+            -- from = room.jid, as mod_time_restricted does, so that it is a message from the server.
+            room:route_stanza(st.message({ from = room.jid; to = occupant.jid; })
+                :tag('json-message', { xmlns = 'http://jitsi.org/jitmeet' }):text(body):up());
+            module:log("info", "Sent a move to an occupant of a room");
+            return { status_code = 200; };
+        end
+    end
+
+    return { status_code = 404; };
+end
+
 module:log("info", "Adding http handler for /coordinator/rooms on %s", module.host);
 module:depends("http");
 module:provides("http", {
     default_path = "/";
     route = {
         ["GET coordinator/rooms"] = function (event) return async_handler_wrapper(event, handle_get_rooms) end;
+        ["POST coordinator/moves"] = function (event) return async_handler_wrapper(event, handle_post_move) end;
     };
 });

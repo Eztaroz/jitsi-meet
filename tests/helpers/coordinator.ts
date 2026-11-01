@@ -132,6 +132,54 @@ export async function waitForRoom(
     }
 }
 
+/** A move as the API reports it. */
+export interface IMove {
+    id: string;
+    reason?: string;
+    state: 'counting_down' | 'done' | 'failed' | 'refused';
+}
+
+/**
+ * Asks the coordinator service to move a participant, and returns its answer whatever it is.
+ *
+ * @param {string} fromRoom - The room the participant is in, by the name the rooms API gives it.
+ * @param {string} endpointId - The participant's endpoint id.
+ * @param {string} toRoom - The destination room.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postMove(fromRoom: string, endpointId: string, toRoom: string): Promise<{ body: IMove; status: number; }> {
+    const response = await callCoordinator('/moves', {
+        body: JSON.stringify({ from: { endpointId, room: fromRoom }, to: { room: toRoom } }),
+        method: 'POST'
+    });
+
+    return { body: await response.json() as IMove, status: response.status };
+}
+
+/**
+ * Waits until a move reaches a state.
+ *
+ * @param {string} id - The move's id.
+ * @param {string} state - The state.
+ * @param {number} timeout - How long to wait, in milliseconds.
+ * @returns {Promise<IMove>}
+ */
+export async function waitForMove(id: string, state: IMove['state'], timeout = 60_000): Promise<IMove> {
+    const deadline = Date.now() + timeout;
+
+    for (;;) {
+        const move = await (await callCoordinator(`/moves/${id}`)).json() as IMove;
+
+        if (move.state === state) {
+            return move;
+        }
+        if (Date.now() > deadline) {
+            throw new Error(`the move was ${move.state}${move.reason ? ` (${move.reason})` : ''}, not ${state}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+}
+
 /**
  * Restarts the coordinator service's container and waits until its API answers.
  *

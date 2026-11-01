@@ -6,12 +6,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
+import type { Flow } from './flow.ts';
 import { errorCode, log } from './log.ts';
-import { type IState, step } from './patientFlow.ts';
-import { Prosody, ProsodyUnavailableError } from './prosody.ts';
-import { RecorderBot, RecorderBotUnavailableError } from './recorderBot.ts';
-import { type IRoleMarkers, describeRooms } from './rooms.ts';
-import type { Store } from './store.ts';
+import type { IMove } from './patientFlow.ts';
+import { ProsodyUnavailableError } from './prosody.ts';
+import { RecorderBotUnavailableError } from './recorderBot.ts';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_HN_LENGTH = 128;
@@ -107,58 +106,44 @@ function hnFrom(body: unknown): string {
 }
 
 /**
+ * Describes a move for the API.
+ *
+ * @param {IMove} move - The move.
+ * @returns {Object}
+ */
+function moveBody(move: IMove) {
+    return { id: move.id, reason: move.reason, state: move.state };
+}
+
+/**
+ * Reads a move request: who to move, and to which room.
+ *
+ * @param {unknown} body - The request body.
+ * @returns {Object}
+ */
+function moveFrom(body: unknown): { endpointId: string; fromRoom: string; toRoom: string; } {
+    const b = body as { from?: { endpointId?: unknown; room?: unknown; }; to?: { room?: unknown; }; } | null;
+    const endpointId = b?.from?.endpointId;
+    const fromRoom = b?.from?.room;
+    const toRoom = b?.to?.room;
+
+    if (typeof endpointId !== 'string' || typeof fromRoom !== 'string' || typeof toRoom !== 'string'
+            || !endpointId || !fromRoom || !toRoom) {
+        throw new HttpError(400, 'from.room, from.endpointId and to.room must be non-empty strings');
+    }
+
+    return { endpointId, fromRoom, toRoom };
+}
+
+/**
  * Creates the API server.
  *
  * @param {Object} options - Options.
- * @param {Prosody} options.prosody - The Prosody client.
- * @param {RecorderBot} options.recorderBot - The recorder bot client.
- * @param {IRoleMarkers} options.roleMarkers - Which identities are patients and which staff.
+ * @param {Flow} options.flow - The patient-flow runner.
  * @param {string} options.secret - The shared bearer secret.
- * @param {Store} options.store - The storage.
  * @returns {Server}
  */
-export function createApi({ prosody, recorderBot, roleMarkers, secret, store }: {
-    prosody: Prosody;
-    recorderBot: RecorderBot;
-    roleMarkers: IRoleMarkers;
-    secret: string;
-    store: Store;
-}): Server {
-    let state: IState = store.load();
-
-    // Requests are handled one at a time, so a repeated start cannot open two encounters.
-    let queue: Promise<unknown> = Promise.resolve();
-
-    /**
-     * Starts an encounter, or returns the open one.
-     *
-     * @param {string} hn - The patient's HN.
-     * @returns {Promise<{ created: boolean; encounter: object; }>}
-     */
-    function startEncounter(hn: string) {
-        const run = async () => {
-            const { commands, result, state: next } = step(state, { at: new Date(), hn, type: 'start_encounter' });
-
-            // Nothing is saved unless the recorder bot accepted the room, so no encounter goes unrecorded.
-            for (const command of commands) {
-                await recorderBot.recordRoom(command.hn);
-            }
-            if (next !== state) {
-                store.save(next);
-                state = next;
-            }
-
-            const { created, ...encounter } = result!;
-
-            return { created, encounter: { id: encounter.id, stage: encounter.stage, startedAt: encounter.startedAt } };
-        };
-        const answer = queue.then(run, run);
-
-        queue = answer.catch(() => undefined);
-
-        return answer;
-    }
-
+export function createApi({ flow, secret }: { flow: Flow; secret: string; }): Server {
     /**
      * Handles one request.
      *
@@ -177,7 +162,10 @@ export function createApi({ prosody, recorderBot, roleMarkers, secret, store }: 
         const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
         if (pathname === '/health' && req.method === 'GET') {
-            send(res, 200, { openEncounters: state.encounters.filter(e => e.stage !== 'done').length, status: 'ok' });
+            send(res, 200, {
+                openEncounters: flow.state.encounters.filter(e => e.stage !== 'done').length,
+                status: 'ok'
+            });
 
             return;
         }
@@ -185,9 +173,10 @@ export function createApi({ prosody, recorderBot, roleMarkers, secret, store }: 
             const hn = hnFrom(await readJson(req));
 
             try {
-                const { created, encounter } = await startEncounter(hn);
+                const { encounter } = await flow.startEncounter(hn);
 
-                send(res, created ? 201 : 200, encounter);
+                send(res, encounter?.created ? 201 : 200,
+                    { id: encounter?.id, stage: encounter?.stage, startedAt: encounter?.startedAt });
             } catch (error) {
                 if (error instanceof RecorderBotUnavailableError) {
                     log.warn('could not start an encounter', { error: error.code });
@@ -198,10 +187,9 @@ export function createApi({ prosody, recorderBot, roleMarkers, secret, store }: 
 
             return;
         }
-
         if (pathname === '/rooms' && req.method === 'GET') {
             try {
-                send(res, 200, { rooms: describeRooms(await prosody.rooms(), roleMarkers) });
+                send(res, 200, { rooms: await flow.rooms() });
             } catch (error) {
                 if (error instanceof ProsodyUnavailableError) {
                     log.warn('could not read the rooms', { error: error.code });
@@ -212,16 +200,46 @@ export function createApi({ prosody, recorderBot, roleMarkers, secret, store }: 
 
             return;
         }
+        if (pathname === '/moves' && req.method === 'POST') {
+            const request = moveFrom(await readJson(req));
 
-        const match = /^\/encounters\/([^/]+)$/.exec(pathname);
+            try {
+                const move = await flow.requestMove(request);
 
-        if (match && req.method === 'GET') {
-            const encounter = state.encounters.find(e => e.id === decodeURIComponent(match[1]));
+                send(res, move.state === 'refused' ? 200 : 202, moveBody(move));
+            } catch (error) {
+                if (error instanceof ProsodyUnavailableError) {
+                    log.warn('could not send a move', { error: error.code });
+                    throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
+                }
+                throw error;
+            }
+
+            return;
+        }
+
+        const encounterMatch = /^\/encounters\/([^/]+)$/.exec(pathname);
+
+        if (encounterMatch && req.method === 'GET') {
+            const encounter = flow.state.encounters.find(e => e.id === decodeURIComponent(encounterMatch[1]));
 
             if (!encounter) {
                 throw new HttpError(404, 'no such encounter');
             }
             send(res, 200, { hn: encounter.hn, id: encounter.id, stage: encounter.stage, startedAt: encounter.startedAt });
+
+            return;
+        }
+
+        const moveMatch = /^\/moves\/([^/]+)$/.exec(pathname);
+
+        if (moveMatch && req.method === 'GET') {
+            const move = flow.state.moves.find(m => m.id === decodeURIComponent(moveMatch[1]));
+
+            if (!move) {
+                throw new HttpError(404, 'no such move');
+            }
+            send(res, 200, moveBody(move));
 
             return;
         }

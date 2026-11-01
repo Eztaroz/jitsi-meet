@@ -37,6 +37,7 @@ export class Store {
         }[];
 
         return {
+            moves: [],
             encounters: rows.map(r => {
                 return { hn: r.hn, id: r.id, stage: r.stage, startedAt: new Date(r.started_at) };
             })

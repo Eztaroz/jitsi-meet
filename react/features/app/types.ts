@@ -32,6 +32,7 @@ import { IUserInteractionState } from '../base/user-interaction/reducer';
 import { IBreakoutRoomsState } from '../breakout-rooms/reducer';
 import { ICalendarSyncState } from '../calendar-sync/reducer';
 import { IChatState } from '../chat/reducer';
+import { ICoordinatorMoveState } from '../coordinator-move/reducer';
 import { ICustomPanelState } from '../custom-panel/reducer';
 import { IDeepLinkingState } from '../deep-linking/reducer';
 import { IDropboxState } from '../dropbox/reducer';
@@ -126,6 +127,7 @@ export interface IReduxState {
     'features/calendar-sync': ICalendarSyncState;
     'features/call-integration': ICallIntegrationState;
     'features/chat': IChatState;
+    'features/coordinator-move': ICoordinatorMoveState;
     'features/custom-panel': ICustomPanelState;
     'features/deep-linking': IDeepLinkingState;
     'features/dropbox': IDropboxState;

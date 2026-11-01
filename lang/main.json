@@ -267,6 +267,9 @@
         "video_ssrc": "Video SSRC:",
         "yes": "yes"
     },
+    "coordinatorMove": {
+        "notice": "You are being moved to another room in {{seconds}}…"
+    },
     "customPanel": {
         "close": "Close",
         "title": "AI Assist"

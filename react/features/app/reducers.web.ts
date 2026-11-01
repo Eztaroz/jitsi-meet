@@ -17,6 +17,7 @@ import '../screen-share/reducer';
 import '../noise-suppression/reducer';
 import '../screenshot-capture/reducer';
 import '../talk-while-muted/reducer';
+import '../coordinator-move/reducer';
 import '../time-timer/reducer';
 import '../virtual-background/reducer';
 import '../file-sharing/reducer';

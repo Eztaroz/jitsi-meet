@@ -15,6 +15,7 @@ import { setColorAlpha } from '../../../base/util/helpers';
 import { openChat, setFocusedTab } from '../../../chat/actions.web';
 import Chat from '../../../chat/components/web/Chat';
 import { ChatTabs } from '../../../chat/constants';
+import MoveNotice from '../../../coordinator-move/components/web/MoveNotice';
 import CustomPanel from '../../../custom-panel/components/web/CustomPanel';
 import { isFileUploadingEnabled, processFiles } from '../../../file-sharing/functions.any';
 import MainFilmstrip from '../../../filmstrip/components/web/MainFilmstrip';
@@ -265,6 +266,7 @@ class Conference extends AbstractConference<IProps, any> {
                         onMouseMove = { isMobileBrowser() ? undefined : this._onShowToolbar }>
                         <ConferenceInfo />
                         <Notice />
+                        <MoveNotice />
                         <div
                             className = { videospaceClassName }
                             id = 'videospace'
@@ -298,6 +300,7 @@ class Conference extends AbstractConference<IProps, any> {
                     onMouseMove = { isMobileBrowser() ? undefined : this._onShowToolbar }>
                     { _showPrejoin || _showLobby || <ConferenceInfo /> }
                     <Notice />
+                    <MoveNotice />
                     <div
                         className = { videospaceClassName }
                         id = 'videospace'

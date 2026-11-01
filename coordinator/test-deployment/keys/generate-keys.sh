@@ -15,6 +15,10 @@ fi
 mkdir -p asap
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out private.pem 2>/dev/null
 openssl pkey -in private.pem -pubout -out "asap/$(printf %s "$KID" | sha256sum | cut -d' ' -f1).pem"
+# Prosody verifies the tokens the service issues for a move with the key server of the participants' tokens, so the
+# JWT variant's key server needs the service's public key too.
+mkdir -p ../../../recorder-bot/test-deployment/jwt/asap
+cp asap/*.pem ../../../recorder-bot/test-deployment/jwt/asap/
 # nginx in the web container serves the public key; the service runs as a user of its own and reads the private key.
 chmod 644 asap/*.pem private.pem
 echo "generated the keys of $KID"

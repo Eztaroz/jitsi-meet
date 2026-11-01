@@ -31,6 +31,9 @@ export interface IConfig {
 
     /** The service's key id and its PEM private key; Prosody has the public key (ADR 0009). */
     signingKey: { kid: string; privateKey: string; };
+
+    /** What the destination tokens claim, as Prosody is set to accept them (ADR 0009). */
+    token: { audience: string; issuer: string; subject: string; };
 }
 
 /**
@@ -67,6 +70,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         roleMarkers: {
             patient: parseRoleMarker(env.COORDINATOR_PATIENT_MARKER, 'COORDINATOR_PATIENT_MARKER'),
             staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER')
+        },
+        token: {
+            audience: env.COORDINATOR_TOKEN_AUDIENCE?.trim() || 'jitsi',
+            issuer: env.COORDINATOR_TOKEN_ISSUER?.trim() || 'coordinator',
+            subject: required(env, 'COORDINATOR_TOKEN_SUBJECT')
         },
         signingKey: {
             kid: required(env, 'COORDINATOR_SIGNING_KID'),
