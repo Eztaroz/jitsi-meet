@@ -54,6 +54,28 @@ A move sends the participant to another room with a token the service signs: it 
 
 Mind the room claim: it is the room name as Prosody names it, lower-case and URL-encoded.
 
+## Web only
+
+The deployment supports the fork's web client only (ADR 0010, ADR 0007). On docker-jitsi-meet:
+
+1. **Breakout rooms off:** set `ENABLE_BREAKOUT_ROOMS=false` on `web`, `prosody` and `jicofo`. The client then has no way to create a breakout room: the buttons are hidden because the server does not support them.
+2. **Deep linking off:** set `DISABLE_DEEP_LINKING=true` on `web`, so that a phone opens the link in its browser and not in the mobile app.
+3. **Everyone can be moved:** mount `resources/prosody-plugins/mod_muc_require_move_support.lua` into the `prosody` container at `/prosody-plugins-custom/` and set `XMPP_MUC_MODULES=muc_require_move_support`. Prosody then refuses to let a client join a room unless its first presence announces that it obeys moves (the local participant property `coordinatorMoveSupport`, which the fork's web client sets before it joins). The mobile apps and other clients do not, and are refused with "This client cannot be moved between rooms". Accounts that are not on the main domain are exempt: the recorder bot on the hidden domain, and Jicofo, Jibri and the transcriber. A SIP gateway (Jigasi) that joins on the main domain would be refused.
+
+The mobile apps' code stays in the repository; only the deployment refuses them.
+
+### Checking a phone's browser by hand
+
+The move notice and its countdown are web features, but nothing in the automated suite runs on a phone's browser: only Chrome on desktop. Support is for Chrome on Android and Safari on iOS, current versions. Before relying on a deployment, run through this on each, with a staff member in a lounge and a coordinator moving them, and then with a patient:
+
+- [ ] The room link opens in the browser, with no offer of the app.
+- [ ] The patient or staff member joins with their token, and the camera and microphone work.
+- [ ] A move shows the notice, counting down from 5, and does not name the destination.
+- [ ] "Stay here" keeps them in the room, and the coordinator sees the move cancelled.
+- [ ] Letting the countdown end opens the destination without the prejoin page, with the microphone and camera as they were, and the camera and microphone work there.
+
+This checklist has not been run on a phone yet: it needs real devices.
+
 ## API
 
 Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.

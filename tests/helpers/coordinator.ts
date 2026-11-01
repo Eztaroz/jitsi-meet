@@ -12,6 +12,7 @@ import { identityUnavailableReason } from './recorderBot';
 
 /** An encounter as the API reports it. */
 export interface IEncounter {
+    history?: Array<{ at: string; stage: string; }>;
     hn?: string;
     id: string;
     stage: string;

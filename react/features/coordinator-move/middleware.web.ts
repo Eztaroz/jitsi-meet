@@ -1,4 +1,4 @@
-import { CONFERENCE_JOINED, NON_PARTICIPANT_MESSAGE_RECEIVED } from '../base/conference/actionTypes';
+import { CONFERENCE_WILL_JOIN, NON_PARTICIPANT_MESSAGE_RECEIVED } from '../base/conference/actionTypes';
 import { getCurrentConference } from '../base/conference/functions';
 import MiddlewareRegistry from '../base/redux/MiddlewareRegistry';
 
@@ -15,8 +15,9 @@ MiddlewareRegistry.register(store => next => action => {
     const result = next(action);
 
     switch (action.type) {
-    case CONFERENCE_JOINED:
-        // Tells the server this client obeys move commands.
+    case CONFERENCE_WILL_JOIN:
+        // Tells the server this client obeys move commands. It is set before the join, so that it is in the first
+        // presence: the server refuses a client that does not announce it (ADR 0010).
         action.conference.setLocalParticipantProperty(MOVE_SUPPORT_PROPERTY, 'true');
         break;
     case NON_PARTICIPANT_MESSAGE_RECEIVED: {

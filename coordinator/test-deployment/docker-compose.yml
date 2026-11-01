@@ -8,6 +8,10 @@
 # file's directory, recorder-bot/test-deployment.
 services:
     web:
+        environment:
+            # Breakout rooms are disabled (ADR 0007); deep linking too, so that a phone opens the link in its browser
+            # (ADR 0010; the recorder bot's test deployment already disables it).
+            ENABLE_BREAKOUT_ROOMS: 'false'
         volumes:
             # Prosody fetches the coordinator service's public key from here:
             # http://web/.well-known/coordinator/<sha256 of the key id>.pem.
@@ -19,12 +23,21 @@ services:
             - '127.0.0.1:5280:5280'
         volumes:
             - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
+            - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
         environment:
+            ENABLE_BREAKOUT_ROOMS: 'false'
+            # Refuses a client that does not announce that it obeys moves, apart from the accounts that are not on
+            # the main domain: the recorder bot, Jicofo, Jibri (ADR 0010).
+            XMPP_MUC_MODULES: muc_require_move_support
             XMPP_MODULES: presence_identity,coordinator_api
             XMPP_CONFIGURATION: coordinator_api_key_server = "http://web/.well-known/coordinator"
             # Also accepts the tokens the coordinator service issues for a move (ADR 0009). The service's public key
             # is in the same key server as the tests' own (keys/generate-keys.sh copies it to the JWT variant's).
             JWT_ACCEPTED_ISSUERS: chat,coordinator
+
+    jicofo:
+        environment:
+            ENABLE_BREAKOUT_ROOMS: 'false'
 
     coordinator:
         image: coordinator:local
