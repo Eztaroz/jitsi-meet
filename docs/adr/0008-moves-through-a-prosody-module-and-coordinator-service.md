@@ -6,4 +6,4 @@ A move must work across conferences and must not be something a participant can 
 
 - The hospital's room-creation system calls the coordinator service, not the recorder bot: the coordinator service starts the encounter and then asks the recorder bot to record.
 - Moving someone to a room that is not open first asks the recorder bot to record it, and gives up if the recorder bot is at capacity or not ready within 30 seconds.
-- Moves need the fork's web client; mobile apps ignore them until they get the same support.
+- Moves need the fork's web client; the mobile apps are refused instead of ported (ADR 0010).
