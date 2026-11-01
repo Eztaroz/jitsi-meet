@@ -207,9 +207,10 @@ describe('the coordinator service', () => {
     it('fails a move at the configured prepare wait, not at the default', async () => {
         service.stop();
         service = makeService({ prepareWaitMs: 3000 });
-        rooms = [ { name: 'hn-a', occupants: [ patient ] } ];
+        await learnPatientRoom('hn-b');
+        rooms = [ { name: 'st-1', occupants: [ patient ] } ];
 
-        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'hn-a', toRoom: 'hn-b' }, 'system');
+        const move = await service.requestMove({ endpointId: 'e-pat', fromRoom: 'st-1', toRoom: 'hn-b' }, 'system');
 
         await advance(2500);
         assert.equal(stateOf(move.id)?.state, 'preparing');
