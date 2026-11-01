@@ -37,7 +37,9 @@ const MoveNotice = () => {
     const dispatch = useDispatch();
     const { t } = useTranslation();
     const { classes } = useStyles();
-    const [ now, setNow ] = useState(Date.now());
+
+    // Only re-renders the notice every tick; the time left is read at render, so the first frame is right too.
+    const [ , setTick ] = useState(0);
     const onCancel = useCallback(() => dispatch(cancelMove()), [ dispatch ]);
 
     useEffect(() => {
@@ -45,7 +47,7 @@ const MoveNotice = () => {
             return;
         }
 
-        const timer = setInterval(() => setNow(Date.now()), 250);
+        const timer = setInterval(() => setTick(tick => tick + 1), 250);
 
         return () => clearInterval(timer);
     }, [ move ]);
@@ -54,7 +56,7 @@ const MoveNotice = () => {
         return null;
     }
 
-    const seconds = Math.max(0, Math.ceil((move.endsAt - now) / 1000));
+    const seconds = Math.max(0, Math.ceil((move.endsAt - Date.now()) / 1000));
 
     return (
         <div
