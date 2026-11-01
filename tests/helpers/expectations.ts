@@ -71,6 +71,8 @@ const defaultExpectations = {
         emptyRoomGraceSeconds: 60,
         // The service's RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS: how long the bot waits for anyone to join.
         firstJoinWaitSeconds: 600,
+        // The service's RECORDER_BOT_PATIENT_WAIT_SECONDS: how long a station's bot waits for the patient.
+        patientWaitSeconds: 60,
         // The context.user claims, in a participant's token, that make the service see the patient, and staff: what
         // its RECORDER_BOT_PATIENT_MARKER and RECORDER_BOT_STAFF_MARKER look for.
         patientClaims: {},

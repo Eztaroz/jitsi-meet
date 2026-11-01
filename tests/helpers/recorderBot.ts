@@ -13,6 +13,9 @@ import { expectations } from './expectations';
 
 /** A consultation as the control API reports it. */
 export interface IConsultation {
+
+    /** The room the bot is in: the patient's own room, or the station. */
+    conferenceRoom?: string;
     consultationId: string;
     error?: string;
 
@@ -115,6 +118,57 @@ export async function postConsultation(hn: string, apiUrl?: string): Promise<{ b
     }, apiUrl);
 
     return { body: await response.json() as IConsultation, status: response.status };
+}
+
+/**
+ * Asks the service to record one patient's time in a station, and returns its answer whatever it is.
+ *
+ * @param {string} hn - The patient's HN.
+ * @param {string} room - The station.
+ * @param {string} patient - The patient's verified identity id.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postStationConsultation(
+        hn: string, room: string, patient: string): Promise<{ body: IConsultation; status: number; }> {
+    const response = await callApi('/consultations', {
+        body: JSON.stringify({ hn, patient, room }),
+        method: 'POST'
+    });
+
+    return { body: await response.json() as IConsultation, status: response.status };
+}
+
+/**
+ * Asks the service to stop a consultation before its time.
+ *
+ * @param {string} consultationId - The consultation.
+ * @returns {Promise<IConsultation>} The consultation once it has stopped.
+ */
+export async function stopConsultation(consultationId: string): Promise<IConsultation> {
+    const response = await callApi(`/consultations/${consultationId}/stop`, { method: 'POST' });
+
+    if (!response.ok) {
+        throw new Error(`POST /consultations/${consultationId}/stop failed with ${response.status}`);
+    }
+
+    return await response.json() as IConsultation;
+}
+
+/**
+ * Tells whether the main instance still has a consultation's folder in its spool.
+ *
+ * @param {string} consultationId - The consultation.
+ * @returns {boolean}
+ */
+export function spoolHasFolder(consultationId: string): boolean {
+    try {
+        execFileSync('docker', [ 'exec', config.recorderBot.container ?? '', 'test', '-e',
+            `/var/lib/recorder-bot/spool/${consultationId}` ], { stdio: 'pipe' });
+
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -435,6 +489,9 @@ export interface IManifest {
     room: string;
     staffVisits: Array<{ displayName?: string; end: string; endpointId: string; identity?: IIdentity; start: string; }>;
     start: string;
+    /** The station, when the consultation took place in one and not in the patient's own room. */
+    station?: string;
+
     stopReason: string;
 }
 

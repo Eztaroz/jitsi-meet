@@ -26,13 +26,20 @@ export class Consultations {
      * Starts recording a consultation for an HN, unless one is already running in that HN's room: then that one is
      * returned, so that a request can safely be repeated.
      *
+     * With a station, it is the consultation of one patient in that station instead (ADR 0006). One is running per
+     * HN and room together, so a patient's own room and a station can be recorded at the same time.
+     *
      * @param {string} hn - The patient's HN.
+     * @param {Object} station - Set for the consultation of one patient in a station.
+     * @param {string} station.patientId - The patient's verified identity id.
+     * @param {string} station.room - The station.
      * @returns {Object} The consultation, and whether it was started by this call.
      * @throws {AtCapacityError} When the service already runs as many consultations as it may.
      */
-    start(hn: string): { consultation: Consultation; created: boolean; } {
+    start(hn: string, station?: { patientId: string; room: string; }): { consultation: Consultation; created: boolean; } {
         const room = roomNameFromHn(hn);
-        const existing = this.running().find(c => c.room === room);
+        const conferenceRoom = station ? roomNameFromHn(station.room) : room;
+        const existing = this.running().find(c => c.room === room && c.conferenceRoom === conferenceRoom);
 
         if (existing) {
             log.info('consultation already running', { consultationId: existing.id });
@@ -45,7 +52,7 @@ export class Consultations {
             throw new AtCapacityError('at capacity');
         }
 
-        const consultation = new Consultation(hn, this.config);
+        const consultation = new Consultation(hn, this.config, station);
 
         this.byId.set(consultation.id, consultation);
         consultation.start();

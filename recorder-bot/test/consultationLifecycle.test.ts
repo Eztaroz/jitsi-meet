@@ -66,6 +66,7 @@ function consultation(options?: ILifecycleOptions) {
         commands,
         send,
         identities: () => lifecycle.identities(),
+        patientArrived: () => lifecycle.patientArrived(),
         participants: () => lifecycle.participants(),
         staffVisits: () => lifecycle.staffVisits(),
         tracks: () => lifecycle.tracks(),
@@ -841,5 +842,115 @@ describe('identities', () => {
 
         assert.deepEqual(c.identities(), []);
         assert.deepEqual(c.staffVisits(), []);
+    });
+});
+
+describe('a station consultation, for one patient', () => {
+    const patient = { id: 'patient-1@hospital', name: 'Patient P' };
+    const nurse = { id: 'nurse-1@hospital', name: 'Nurse N' };
+    const options = { firstJoinMs: 600_000, patientId: patient.id, patientWaitMs: 20_000 };
+
+    test('stops as soon as the patient leaves, though staff stay', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'nurse1', role: 'staff', identity: nurse });
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        mock.timers.tick(30_000);
+        c.send({ type: 'participant_left', endpointId: 'p1' });
+
+        assert.deepEqual(c.stop, { at: at(30_000), reason: 'patient_left' });
+        assert.deepEqual(c.staffVisits().map(v => v.end), [ at(30_000) ]);
+    });
+
+    test('does not stop when staff leave while the patient stays', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        c.send({ type: 'participant_joined', endpointId: 'nurse1', role: 'staff', identity: nurse });
+        c.send({ type: 'participant_left', endpointId: 'nurse1' });
+        mock.timers.tick(5_000);
+
+        assert.equal(c.stop, undefined);
+    });
+
+    test('only that patient ends it: another patient leaving does not', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        c.send({ type: 'participant_joined', endpointId: 'p2', role: 'patient', identity: { id: 'someone-else', name: 'X' } });
+        c.send({ type: 'participant_left', endpointId: 'p2' });
+
+        assert.equal(c.stop, undefined);
+    });
+
+    test('stops, with the reason, when the patient does not arrive in time, though staff are there', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'nurse1', role: 'staff', identity: nurse });
+        mock.timers.tick(19_999);
+        assert.equal(c.stop, undefined);
+
+        mock.timers.tick(1);
+        assert.deepEqual(c.stop, { at: at(20_000), reason: 'patient_did_not_arrive' });
+    });
+
+    test('the patient arriving cancels the wait', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        mock.timers.tick(10_000);
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        mock.timers.tick(3_600_000);
+
+        assert.equal(c.stop, undefined);
+    });
+
+    test('says whether the patient ever arrived', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        assert.equal(c.patientArrived(), false);
+
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        assert.equal(c.patientArrived(), true);
+    });
+
+    test('an early stop request stops it with its own reason', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        mock.timers.tick(2_000);
+        c.send({ type: 'stop_requested' });
+
+        assert.deepEqual(c.stop, { at: at(2_000), reason: 'stop_requested' });
+    });
+
+    test('a patient who left during an interruption ends it when the bot is back', () => {
+        const c = consultation(options);
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        c.send({ type: 'participant_joined', endpointId: 'nurse1', role: 'staff', identity: nurse });
+        mock.timers.tick(5_000);
+        c.send({ type: 'bot_interrupted' });
+        mock.timers.tick(5_000);
+        c.send({ type: 'participant_joined', endpointId: 'nurse1', role: 'staff', identity: nurse });
+        c.send({ type: 'bot_resumed' });
+
+        assert.deepEqual(c.stop, { at: at(10_000), reason: 'patient_left' });
+    });
+
+    test('a consultation of a patient\'s own room has none of this', () => {
+        const c = consultation({ firstJoinMs: 600_000 });
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'p1', role: 'patient', identity: patient });
+        c.send({ type: 'participant_left', endpointId: 'p1' });
+
+        assert.equal(c.stop, undefined);
     });
 });

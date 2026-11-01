@@ -1,4 +1,4 @@
-import { DEFAULT_EMPTY_ROOM_MS, DEFAULT_FIRST_JOIN_MS } from './consultationLifecycle.ts';
+import { DEFAULT_EMPTY_ROOM_MS, DEFAULT_FIRST_JOIN_MS, DEFAULT_PATIENT_WAIT_MS } from './consultationLifecycle.ts';
 import { type IRoleMarkers, parseRoleMarker } from './identity.ts';
 
 /**
@@ -46,6 +46,9 @@ export interface IConfig {
      * used up, the consultation stops and stores what was recorded.
      */
     maxRelaunches: number;
+
+    /** In a station: how long the bot waits for the patient after it joined, in milliseconds (ADR 0006). */
+    patientWaitMs: number;
 
     /** How long evidence recordings are kept, in milliseconds (ADR 0003). Older ones are deleted. */
     retentionMs: number;
@@ -149,6 +152,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         chromiumPath: env.RECORDER_BOT_CHROMIUM_PATH?.trim() || undefined,
         emptyRoomGraceMs: integer(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', DEFAULT_EMPTY_ROOM_MS / 1000) * 1000,
         firstJoinWaitMs: integer(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', DEFAULT_FIRST_JOIN_MS / 1000) * 1000,
+        patientWaitMs: integer(env, 'RECORDER_BOT_PATIENT_WAIT_SECONDS', DEFAULT_PATIENT_WAIT_MS / 1000) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
         jitsiUrl: required(env, 'RECORDER_BOT_JITSI_URL').replace(/\/+$/, ''),
         maxConsultations: integer(env, 'RECORDER_BOT_MAX_CONSULTATIONS', 2),
