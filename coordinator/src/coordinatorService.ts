@@ -1,6 +1,6 @@
 /**
- * The coordinator service: runs the rules module: applies events one at a time, carries out the commands it returns, and feeds the
- * outcomes back as events. It is the only place with I/O and timers.
+ * The coordinator service: applies the rules module's events one at a time, carries out the commands it returns, and
+ * feeds the outcomes back as events. It owns the timers and the polling; the move side effects are in `moveEffects.ts`.
  */
 import { randomUUID } from 'node:crypto';
 

@@ -36,9 +36,7 @@ export class RecorderBot {
      * Asks the recorder bot to record a patient's room.
      *
      * @param {string} hn - The patient's HN.
-     * @param {Object} station - Set to record one patient's time in a station instead (ADR 0006).
-     * @param {string} station.patientId - The patient's verified identity id.
-     * @param {string} station.room - The station.
+     * @param {IStationConsultation} station - Set to record one patient's time in a station instead (ADR 0006).
      * @returns {Promise<string>} The consultation's id.
      */
     async recordRoom(hn: string, station?: IStationConsultation): Promise<string> {
