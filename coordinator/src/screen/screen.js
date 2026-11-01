@@ -36,6 +36,7 @@
         'could_not_send_move': 'ส่งคำสั่งย้ายไม่ได้',
         'destination_holds_a_patient': 'ห้องปลายทางมีผู้ป่วยอยู่แล้ว',
         'destination_not_open': 'ห้องปลายทางยังไม่เปิด',
+        'not_the_patients_room': 'ย้ายผู้ป่วยเข้าได้เฉพาะห้องของตนเองหรือห้องตรวจ',
         'participant_did_not_arrive': 'ผู้ถูกย้ายไม่ไปถึงห้องปลายทาง',
         'participant_not_found': 'ไม่พบผู้ที่จะย้ายในห้อง',
         'participant_not_movable': 'ย้ายผู้นี้ไม่ได้',

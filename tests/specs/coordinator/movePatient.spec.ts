@@ -5,6 +5,7 @@ import { setTestProperties } from '../../helpers/TestProperties';
 import {
     type IMove,
     coordinatorUnavailableReason,
+    getAudit,
     getRooms,
     postMove,
     waitForMove,
@@ -17,7 +18,7 @@ import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
     description: 'The coordinator moves patients, and keeps them safe: a patient may go to a station that holds only \
-staff, never into a room that holds another patient nor into a lounge. A patient\'s own token opens their own room \
+staff, never into a room that holds another patient nor into a lounge, nor into a room named after another HN, open or closed. A patient\'s own token opens their own room \
 only, and the token a move brings opens its destination only. A patient is moved back to their own room while it is \
 closed: the recorder bot is waiting for the room before they arrive. With the recorder bot at capacity the move fails and the \
 patient stays where they are. Skipped unless the deployment is the JWT variant of the recorder bot\'s test \
@@ -132,6 +133,33 @@ describe('Coordinator: move patients', () => {
 
         expect(intoLounge.body.state).toBe('refused');
         expect(intoLounge.body.reason).toBe('patient_into_lounge');
+    });
+
+    it('refuses a patient another HN\'s room, open or closed, and never asks the recorder bot to record it', async () => {
+        // Patient A is in the station and their own room is closed; patient B is in their own room.
+        const station = (await getRooms()).find(r => r.name === 'intake-1')!;
+        const endpointA = station.occupants.find(o => o.identity?.id === patientA.id)!.endpointId;
+        const roomB = await waitForRoom(r => r?.occupants.length === 1, hnB, 'patient B');
+        const endpointB = roomB!.occupants[0].endpointId;
+        const intoOpen = await postMove('intake-1', endpointA, hnB.toLowerCase());
+        const intoClosed = await postMove(hnB.toLowerCase(), endpointB, hnA.toLowerCase());
+
+        expect(intoOpen.body.state).toBe('refused');
+        expect(intoOpen.body.reason).toBe('not_the_patients_room');
+        expect(intoClosed.body.state).toBe('refused');
+        expect(intoClosed.body.reason).toBe('not_the_patients_room');
+
+        // Nothing was started for the refused moves: patient A's room is still closed, and no HN is in the audit log.
+        const closed = (await getRooms()).find(r => r.name === hnA.toLowerCase());
+
+        expect(closed === undefined || !closed.open || closed.occupants.length === 0).toBe(true);
+
+        const refused = (await getAudit(1000)).filter(e => e.reason === 'not_the_patients_room');
+
+        expect(refused.length).toBeGreaterThanOrEqual(2);
+        expect(JSON.stringify(refused)).not.toContain(hnA);
+        expect(JSON.stringify(refused)).not.toContain(hnB);
+        expect(JSON.stringify(refused).toLowerCase()).not.toContain(hnA.toLowerCase());
     });
 
     it('brings a token that opens its destination only', async () => {
