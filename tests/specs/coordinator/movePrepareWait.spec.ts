@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { v4 as uuidv4 } from 'uuid';
 
 import { Participant } from '../../helpers/Participant';
@@ -14,7 +13,13 @@ import {
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
-import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
+import {
+    botBrowserConsultations,
+    freezeNewBotBrowser,
+    patientLinkRoom,
+    thawBotBrowser,
+    uniqueHn
+} from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
@@ -22,27 +27,18 @@ setTestProperties(__filename, {
 wait (COORDINATOR_PREPARE_WAIT_SECONDS, shortened in the test deployment), the move fails with \
 recorder_bot_not_ready, the participant is never sent, and they stay where they are. The destination is the \
 patient\'s own room, closed after they went to a station. The recorder bot is made unable to open the room by \
-pausing its container before the move back, so run this spec alone: other specs that record a room would stall \
-meanwhile. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment \
+freezing the browser it launches for the move back, so that its service still answers: pausing the whole \
+container would make the service unreachable instead. Run this spec alone, so that no other spec waits on the \
+frozen browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment \
 with the coordinator service on top of it and RECORDER_BOT_CONTAINER is set.',
     usesBrowsers: [ 'p1', 'p2' ]
 });
-
-/**
- * Pauses or resumes the recorder bot's container.
- *
- * @param {'pause'|'unpause'} action - What to do.
- * @returns {void}
- */
-function docker(action: 'pause' | 'unpause'): void {
-    execFileSync('docker', [ action, config.recorderBot.container ?? '' ], { stdio: 'pipe' });
-}
 
 describe('Coordinator: the recorder bot does not open the destination in time', () => {
     const patientIdentity = { id: `patient-${uuidv4()}`, name: 'Patient P' };
     let hn: string;
     let patient: Participant;
-    let paused = false;
+    let frozen: string | undefined;
 
     it('setup', async () => {
         const unavailable = coordinatorUnavailableReason();
@@ -85,13 +81,15 @@ describe('Coordinator: the recorder bot does not open the destination in time', 
         const station = (await getRooms()).find(r => r.name === 'intake-1')!;
         const endpoint = station.occupants.find(o => o.identity?.id === patientIdentity.id)!.endpointId;
 
-        docker('pause');
-        paused = true;
+        const running = botBrowserConsultations();
 
         try {
             const { body } = await postMove('intake-1', endpoint, hn.toLowerCase());
 
             expect(body.state).toBe('preparing');
+
+            // The service launches the bot's browser once it accepts the consultation: freeze it before it joins.
+            frozen = await freezeNewBotBrowser(running);
 
             // The wait is shortened in the test deployment; the move fails when it runs out.
             await waitForMove(body.id, 'failed', 60_000);
@@ -105,15 +103,17 @@ describe('Coordinator: the recorder bot does not open the destination in time', 
             expect(await patient.isInMuc()).toBe(true);
             expect(await patient.driver.getUrl()).not.toContain(encodeURIComponent(hn));
         } finally {
-            docker('unpause');
-            paused = false;
+            if (frozen) {
+                thawBotBrowser(frozen);
+                frozen = undefined;
+            }
         }
     });
 
     after(() => {
-        // Never leave the recorder bot paused for the specs that follow.
-        if (paused) {
-            docker('unpause');
+        // Never leave a bot's browser frozen for the specs that follow.
+        if (frozen) {
+            thawBotBrowser(frozen);
         }
     });
 });

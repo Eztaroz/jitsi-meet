@@ -28,6 +28,8 @@ cd coordinator/test-deployment
 docker compose -f ../../recorder-bot/test-deployment/docker-compose.yml -f ../../recorder-bot/test-deployment/docker-compose.jwt.yml -f docker-compose.yml up -d
 ```
 
+On Docker Desktop (Mac, Windows) the recorder bot's host network is the VM's, and `host-gateway` is the machine itself, so the coordinator service cannot reach the bot there. Set `COORDINATOR_RECORDER_BOT_URL` to `http://<gateway of the recorder-bot-test_meet.jitsi network>:8090` (`docker network inspect recorder-bot-test_meet.jitsi`), and publish the bot ports for the specs on the host, for example with `alpine/socat` containers (the specs' `RECORDER_BOT_*_API_URL` settings).
+
 Prosody loads `resources/prosody-plugins/mod_coordinator_api.lua`. After a change to it, restart `prosody`, then `jicofo` and `jvb`, which lose their connection when it restarts.
 
 Run the specs from `tests/`, loading the recorder bot's settings and then this one's:
@@ -46,4 +48,4 @@ All the specs but one run together. `specs/coordinator/moveCapacity.spec.ts` fil
 npm run test-single -- specs/coordinator/moveCapacity.spec.ts
 ```
 
-`specs/coordinator/movePrepareWait.spec.ts` pauses the recorder bot's container (`RECORDER_BOT_CONTAINER`) so that it cannot open a room within this deployment's 15-second prepare wait (`COORDINATOR_PREPARE_WAIT_SECONDS`), so run it on its own too.
+`specs/coordinator/movePrepareWait.spec.ts` freezes the browser that the recorder bot launches in its container (`RECORDER_BOT_CONTAINER`) for the move back, so that the bot cannot open the room within this deployment's 15-second prepare wait (`COORDINATOR_PREPARE_WAIT_SECONDS`) while its service still answers (a paused container would make it unreachable instead). Run it on its own too, and not straight after `moveCapacity.spec.ts`: wait until the stations are empty.

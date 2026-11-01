@@ -695,6 +695,69 @@ export function killBotBrowser(consultationId: string, container = config.record
 }
 
 /**
+ * Returns the ids of the consultations whose browsers run in the service's container. The service labels each
+ * browser process with its consultation id.
+ *
+ * @param {string} container - The docker container the service runs in.
+ * @returns {Set<string>}
+ */
+export function botBrowserConsultations(container = config.recorderBot.container ?? ''): Set<string> {
+    let processes = '';
+
+    try {
+        processes = docker('exec', container, 'pgrep', '-af', '--', 'recorder-bot-consultation=');
+    } catch {
+        // pgrep exits with 1 when there is no browser.
+    }
+
+    return new Set([ ...processes.matchAll(/recorder-bot-consultation=(\S+)/gu) ].map(match => match[1]));
+}
+
+/**
+ * Freezes the browser of the consultation that starts next, so that the service still answers but its bot never gets
+ * into the room. The service launches a browser only after it accepts a consultation, so this waits for one that is
+ * not among the ones already running.
+ *
+ * @param {Set<string>} running - The consultations whose browsers ran before the consultation was asked for.
+ * @param {number} timeoutMs - How long to wait for the browser.
+ * @param {string} container - The docker container the service runs in.
+ * @returns {Promise<string>} The frozen consultation's id.
+ */
+export async function freezeNewBotBrowser(
+        running: Set<string>, timeoutMs = 15_000, container = config.recorderBot.container ?? ''): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+
+    for (;;) {
+        const [ consultationId ] = [ ...botBrowserConsultations(container) ].filter(id => !running.has(id));
+
+        if (consultationId) {
+            docker('exec', container, 'pkill', '-STOP', '-f', '--', `recorder-bot-consultation=${consultationId}`);
+
+            return consultationId;
+        }
+        if (Date.now() > deadline) {
+            throw new Error('no new bot browser appeared to freeze');
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+}
+
+/**
+ * Lets a browser frozen by freezeNewBotBrowser run again. Does nothing when it has gone.
+ *
+ * @param {string} consultationId - The consultation.
+ * @param {string} container - The docker container the service runs in.
+ * @returns {void}
+ */
+export function thawBotBrowser(consultationId: string, container = config.recorderBot.container ?? ''): void {
+    try {
+        docker('exec', container, 'pkill', '-CONT', '-f', '--', `recorder-bot-consultation=${consultationId}`);
+    } catch {
+        // The browser has gone.
+    }
+}
+
+/**
  * Returns the endpoint ids of the hidden participants a participant sees.
  *
  * @param {Participant} participant - The participant.
