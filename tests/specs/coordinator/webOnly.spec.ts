@@ -12,8 +12,8 @@ setTestProperties(__filename, {
     description: 'The deployment is web only. A client that does not announce that it obeys moves, as the mobile apps \
 and other clients do not, is refused when it tries to join, while the fork\'s web client is let in. Breakout rooms are \
 disabled, so a moderator finds no button for one in the participants pane, and deep linking is off so that a phone \
-opens the link in its browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator \
-service on top of it.',
+opens the link in its browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test \
+deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1' ]
 });
 
