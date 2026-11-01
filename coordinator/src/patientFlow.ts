@@ -120,6 +120,21 @@ function startEncounter(state: IState, hn: string, at: Date, newId: () => string
 }
 
 /**
+ * Tells whether two moves are of the same participant: the same verified identity, or the same endpoint in the same
+ * room.
+ *
+ * @param {IMove} a - One move.
+ * @param {Pick<IMove, 'endpointId' | 'identityId' | 'origin'>} b - The other.
+ * @returns {boolean}
+ */
+function sameParticipant(a: IMove, b: Pick<IMove, 'endpointId' | 'identityId' | 'origin'>): boolean {
+    const sameIdentity = a.identityId !== undefined && a.identityId === b.identityId;
+    const sameEndpoint = a.origin === b.origin && a.endpointId === b.endpointId;
+
+    return sameIdentity || sameEndpoint;
+}
+
+/**
  * Starts a move, or refuses it.
  *
  * @param {IState} state - The current state.
@@ -148,9 +163,7 @@ function requestMove(state: IState, event: FlowEvent & { type: 'request_move'; }
         reason = 'only_staff_can_be_moved';
     } else if (!event.rooms.some(r => r.name === event.toRoom)) {
         reason = 'destination_not_open';
-    } else if (state.moves.some(m => m.state === 'counting_down'
-            && (m.identityId !== undefined && m.identityId === base.identityId
-                || m.origin === base.origin && m.endpointId === base.endpointId))) {
+    } else if (state.moves.some(m => m.state === 'counting_down' && sameParticipant(m, base))) {
         reason = 'already_being_moved';
     }
 
