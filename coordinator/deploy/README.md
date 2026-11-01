@@ -96,15 +96,7 @@ The mobile apps' code stays in the repository; only the deployment refuses them.
 
 ### Checking a phone's browser by hand
 
-The move notice and its countdown are web features, but nothing in the automated suite runs on a phone's browser: only Chrome on desktop. Support is for Chrome on Android and Safari on iOS, current versions. Before relying on a deployment, run through this on each, with a staff member in a lounge and a coordinator moving them, and then with a patient:
-
-- [ ] The room link opens in the browser, with no offer of the app.
-- [ ] The patient or staff member joins with their token, and the camera and microphone work.
-- [ ] A move shows the notice, counting down from 5, and does not name the destination.
-- [ ] "Stay here" keeps them in the room, and the coordinator sees the move cancelled.
-- [ ] Letting the countdown end opens the destination without the prejoin page, with the microphone and camera as they were, and the camera and microphone work there.
-
-This checklist has not been run on a phone yet: it needs real devices.
+Nothing in the automated suite runs on a phone's browser. Before relying on a deployment, run the [mobile-browser checklist](mobile-browser-checklist.md) on real devices: iOS Safari (current and previous iOS) and Chrome on Android. It has not been run yet.
 
 ## API
 
@@ -125,5 +117,9 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 Encounters are identified by an opaque id. The HN appears only in the body that starts an encounter and in what `GET /encounters/<id>` returns, never in a path or in the service's logs (ADR 0005).
 
 With token authentication (Jicofo authentication), the recorder bot cannot start a room itself: "ready" means it is waiting for the room, and it joins as soon as the patient has opened it. Without it, the bot is in the room before the patient arrives.
+
+### Waits that must be ordered
+
+The recorder bot waits for a station's patient for `RECORDER_BOT_PATIENT_WAIT_SECONDS` (ADR 0006). That wait must be longer than the countdown plus the arrival wait of this service, 5 + 30 = 35 seconds, so that this service gives up first and has the station consultation discarded. The bot's default of 60 seconds satisfies it. Never set it to 35 or less in production.
 
 A patient moved into a station is recorded there as a consultation of their own (ADR 0006). If they cancel the move, do not arrive, or the move fails, the service stops that consultation and nothing is kept. Their own room keeps being recorded while anyone is still in it. The service finds a patient's HN from the patient's room it saw them in, and keeps it in memory: after a restart, a patient in a station must be seen in their own room again before they can be moved into a station.
