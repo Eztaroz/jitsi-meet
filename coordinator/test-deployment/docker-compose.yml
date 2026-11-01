@@ -16,11 +16,11 @@ services:
             # Prosody fetches the coordinator service's public key from here:
             # http://web/.well-known/coordinator/<sha256 of the key id>.pem.
             - ../../coordinator/test-deployment/keys/asap:/usr/share/jitsi-meet/.well-known/coordinator:ro
+            # Proxies /coordinator/ to the coordinator service over this server's TLS (ADR 0008).
+            - ../../coordinator/deploy/nginx/coordinator.conf:/config/nginx-custom/coordinator.conf:ro
 
     prosody:
-        # The coordinator service reaches Prosody's HTTP port on the host. Never publish it beyond localhost.
-        ports:
-            - '127.0.0.1:5280:5280'
+        # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
         volumes:
             - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
             - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
@@ -56,8 +56,13 @@ services:
         image: coordinator:local
         build: ../../coordinator
         restart: unless-stopped
-        # On the host network the service reaches the recorder bot and Prosody on localhost, as the tests do.
-        network_mode: host
+        # On the internal network only, and no port is published: the web server proxies /coordinator/ to port 8091
+        # (ADR 0008). Never add a "ports" entry here. The recorder bot is on the host network, so the service reaches
+        # it through the host gateway.
+        networks:
+            meet.jitsi:
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
         volumes:
             - coordinator-data:/var/lib/coordinator
             - ../../coordinator/test-deployment/keys/private.pem:/run/keys/private.pem:ro
@@ -65,7 +70,6 @@ services:
             # The hospital issuer's public keys, which sign the coordinators in to the screen.
             - ../../recorder-bot/test-deployment/jwt/asap:/etc/coordinator/issuer-keys:ro
         environment:
-            COORDINATOR_API_PORT: 8094
             COORDINATOR_API_SECRET: coordinator-test-secret
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
             # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
@@ -73,11 +77,11 @@ services:
             # Short, so that the spec of a destination the recorder bot cannot open in time does not take half a minute;
             # long enough for the recorder bot to open a room in the other specs. Production waits 30 seconds.
             COORDINATOR_PREPARE_WAIT_SECONDS: 15
-            COORDINATOR_PROSODY_URL: http://localhost:5280
+            COORDINATOR_PROSODY_URL: http://prosody:5280
             COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
             COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
             COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
-            COORDINATOR_RECORDER_BOT_URL: http://localhost:8090
+            COORDINATOR_RECORDER_BOT_URL: http://host.docker.internal:8090
             COORDINATOR_SIGNING_KEY_FILE: /run/keys/private.pem
             COORDINATOR_SIGNING_KID: coordinator-test/key
             COORDINATOR_STAFF_MARKER: user.hospital_role=staff

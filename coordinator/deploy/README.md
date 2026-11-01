@@ -2,7 +2,7 @@
 
 The coordinator service owns encounters, stages and queues, and moves participants between rooms (`GLOSSARY.md`, ADR 0008). This guide covers what exists so far: starting an encounter, listing the open rooms with who is in them, moving a participant, patients included, to another room, the participant cancelling it, the stages and queues, the audit log, and the coordinator screen. The hospital's system calls the service instead of the recorder bot; the service asks the recorder bot to record the patient's room.
 
-It is for the hospital's internal network only. Never expose its port to the internet.
+It is for the hospital's internal network only, and is reached through the web server's TLS (see "Reaching it"). **Never publish its port.**
 
 ## Settings
 
@@ -28,6 +28,17 @@ It is for the hospital's internal network only. Never expose its port to the int
 | `COORDINATOR_PREPARE_WAIT_SECONDS` | How long the recorder bot has to open a closed destination before a move into it fails with `recorder_bot_not_ready` and the participant stays where they are. Default `30`. Shorten it only to test; it must leave the recorder bot time to join a room. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
 | `COORDINATOR_DATA_DIR` | Where the database is. Default `/var/lib/coordinator`; mount a volume there. |
+
+## Reaching it
+
+The service speaks plain HTTP and is reachable only on the deployment's internal network (ADR 0008). The web server proxies `/coordinator/` to it over its own TLS, stripping the prefix:
+
+- a coordinator opens `https://<deployment>/coordinator/screen`;
+- the hospital's system calls `https://<deployment>/coordinator/...`, for example `POST /coordinator/encounters`.
+
+With docker-jitsi-meet, mount `coordinator/deploy/nginx/coordinator.conf` into the `web` container at `/config/nginx-custom/coordinator.conf`; it is included at server level. Change the service's name and port in it (`http://coordinator:8091`) to match your network. The screen uses relative URLs, so it works under the prefix.
+
+**The service's port must never be published** (no `ports:` entry, no host network): nothing but the web server's proxy may reach it, or the hospital's calls, which carry HNs, cross the network unencrypted.
 
 ## Running it
 
@@ -60,7 +71,7 @@ Mind the room claim: it is the room name as Prosody names it, lower-case and URL
 
 ## The coordinator screen
 
-`<service address>/screen` is the coordinator's screen, in Thai, when `COORDINATOR_ISSUER_KEYS` is set. A coordinator signs in with a token from the hospital's issuer, the same issuer as the participants', that carries the coordinator role marker (`COORDINATOR_COORDINATOR_MARKER`) and a verified `id`. The screen is a form to sign in until then; the data behind it, `GET /screen/api/state`, answers only to such a token: the shared bearer secret does not open it (`403`), and neither does a call without a token (`401`). A single sign-on can send the coordinator to `/screen#jwt=<token>`; the fragment never reaches a server.
+`https://<deployment>/coordinator/screen` is the coordinator's screen, in Thai, when `COORDINATOR_ISSUER_KEYS` is set. A coordinator signs in with a token from the hospital's issuer, the same issuer as the participants', that carries the coordinator role marker (`COORDINATOR_COORDINATOR_MARKER`) and a verified `id`. The screen is a form to sign in until then; the data behind it, `GET /screen/api/state`, answers only to such a token: the shared bearer secret does not open it (`403`), and neither does a call without a token (`401`). A single sign-on can send the coordinator to `/coordinator/screen#jwt=<token>`; the fragment never reaches a server.
 
 Signed in, the coordinator sees:
 
@@ -75,7 +86,7 @@ From the screen the coordinator can also act. Every action goes through the same
 
 A participant being moved shows as "กำลังย้าย" on every coordinator's screen, and what came of each move is listed in Thai with its reason: moved, cancelled by the participant, refused, or failed. A refusal is also shown at once where the coordinator asked.
 
-It refreshes every two seconds. Serve the service on the hospital's internal network only; put TLS in front of it if the coordinators' tokens cross a network you do not control.
+It refreshes every two seconds. The coordinators' tokens cross the network over the web server's TLS only.
 
 ## Web only
 

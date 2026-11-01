@@ -59,4 +59,23 @@ describe('the coordinator screen files', () => {
 
         assert.equal(response.status, 404);
     });
+
+    // Behind the web server's proxy the screen lives at /coordinator/screen (ADR 0008), so nothing it loads or calls
+    // may start with "/": a root-absolute URL would leave the prefix.
+    it('loads its assets by relative URLs', async () => {
+        const page = await (await fetch(`${base}/screen`)).text();
+        const urls = [ ...page.matchAll(/\b(?:href|src)="([^"]*)"/g) ].map(match => match[1]);
+
+        assert.deepEqual(urls.filter(url => url.startsWith('/')), []);
+        assert.ok(urls.includes('screen/screen.css'));
+        assert.ok(urls.includes('screen/screen.js'));
+    });
+
+    it('calls its API by relative URLs', async () => {
+        const script = await (await fetch(`${base}/screen/screen.js`)).text();
+        const calls = [ ...script.matchAll(/fetch\(\s*[`'"]([^`'"]*)/g) ].map(match => match[1]);
+
+        assert.ok(calls.length > 0);
+        assert.deepEqual(calls.filter(url => url.startsWith('/')), []);
+    });
 });

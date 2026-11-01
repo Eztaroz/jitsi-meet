@@ -10,6 +10,12 @@ import { identityUnavailableReason } from './recorderBot';
  * participant needs a token.
  */
 
+// The service is reached through the web server's TLS (ADR 0008), which the test deployment gives a self-signed
+// certificate. Node's fetch needs the same leniency as the browsers (ALLOW_INSECURE_CERTS) for this.
+if (process.env.ALLOW_INSECURE_CERTS === 'true' && config.coordinator.apiUrl?.startsWith('https:')) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+
 /** An encounter as the API reports it. */
 export interface IEncounter {
     history?: Array<{ at: string; stage: string; }>;
@@ -37,7 +43,7 @@ export function coordinatorUnavailableReason(): string | undefined {
 }
 
 /**
- * Calls the coordinator API.
+ * Calls the coordinator API, through the web server's proxy.
  *
  * @param {string} route - The path, starting with "/".
  * @param {RequestInit} init - Request options.
