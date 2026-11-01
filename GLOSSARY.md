@@ -69,3 +69,13 @@ _Avoid_: Expiry, TTL
 **Gap**:
 A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or the consultation stopped.
 _Avoid_: Outage, hole, downtime
+
+### Moves
+
+**Coordinator**:
+The hospital person who decides, from one central place, which room each participant should be in.
+_Avoid_: Admin, dispatcher, operator
+
+**Move**:
+Sending one participant from the room they are in to another room, on a coordinator's or the hospital's system's instruction.
+_Avoid_: Transfer, redirect, send to room
