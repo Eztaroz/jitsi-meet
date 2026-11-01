@@ -84,14 +84,20 @@ export function keyLookup(source: string): ICoordinatorAuth['keyFor'] {
  * Decodes a part of a token.
  *
  * @param {string} part - The base64url text.
- * @returns {any}
+ * @returns {Object}
  */
-function decode(part: string): any {
+function decode(part: string): Record<string, unknown> {
     try {
-        return JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+        const json: unknown = JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+
+        if (typeof json === 'object' && json !== null && !Array.isArray(json)) {
+            return json as Record<string, unknown>;
+        }
     } catch {
-        throw new SignInError('malformed');
+        // Not JSON.
     }
+
+    throw new SignInError('malformed');
 }
 
 /**
@@ -113,7 +119,7 @@ export async function verifyCoordinator(token: string, auth: ICoordinatorAuth, n
     const header = decode(parts[0]);
     const claims = decode(parts[1]);
 
-    if (header?.alg !== 'RS256') {
+    if (header.alg !== 'RS256') {
         throw new SignInError('unsupported_algorithm');
     }
     if (typeof header.kid !== 'string') {
@@ -132,10 +138,10 @@ export async function verifyCoordinator(token: string, auth: ICoordinatorAuth, n
     const seconds = now.getTime() / 1000;
     const audiences = [ claims.aud ].flat();
 
-    if (!auth.acceptedIssuers.includes(claims.iss)) {
+    if (typeof claims.iss !== 'string' || !auth.acceptedIssuers.includes(claims.iss)) {
         throw new SignInError('wrong_issuer');
     }
-    if (!audiences.some(a => auth.acceptedAudiences.includes(a))) {
+    if (!audiences.some(a => typeof a === 'string' && auth.acceptedAudiences.includes(a))) {
         throw new SignInError('wrong_audience');
     }
     if (typeof claims.exp === 'number' && claims.exp <= seconds) {
@@ -145,8 +151,9 @@ export async function verifyCoordinator(token: string, auth: ICoordinatorAuth, n
         throw new SignInError('not_yet_valid');
     }
 
-    const user = claims.context?.user ?? {};
-    const value = auth.marker.path[0] === 'group' ? claims.context?.group : user[auth.marker.path[1]];
+    const context = (claims.context ?? {}) as { group?: unknown; user?: Record<string, unknown>; };
+    const user = context.user ?? {};
+    const value = auth.marker.path[0] === 'group' ? context.group : user[auth.marker.path[1]];
 
     if (value !== auth.marker.value) {
         throw new SignInError('not_a_coordinator');

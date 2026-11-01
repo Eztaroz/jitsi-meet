@@ -217,13 +217,22 @@ export class Flow {
     }
 
     /**
-     * Stops polling.
+     * Stops everything that runs on its own: the sweep, the end of the day and the polling.
      *
      * @returns {void}
      */
     stop(): void {
         clearInterval(this._retention);
         clearTimeout(this._midnight);
+        this._stopPolling();
+    }
+
+    /**
+     * Stops polling the rooms, once no move is under way. The sweep and the end of the day go on.
+     *
+     * @returns {void}
+     */
+    private _stopPolling(): void {
         clearInterval(this._poll);
         this._poll = undefined;
     }
@@ -471,7 +480,7 @@ export class Flow {
         this._poll = setInterval(() => {
             if (!this._state.moves.some(m => m.state === 'counting_down')) {
                 if (!this._state.moves.some(m => m.state === 'preparing')) {
-                    this.stop();
+                    this._stopPolling();
                 }
 
                 return;

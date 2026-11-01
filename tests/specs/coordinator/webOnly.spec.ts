@@ -115,7 +115,7 @@ describe('Coordinator: the web client only', () => {
 
     it('has the web client announce it in its first presence', async () => {
         const announced = await host.execute(() => APP.conference._room.room.presMap.nodes
-            .some((n: any) => n.tagName === 'jitsi_participant_coordinatorMoveSupport'));
+            .some((n: { tagName?: string; }) => n.tagName === 'jitsi_participant_coordinatorMoveSupport'));
 
         expect(announced).toBe(true);
     });

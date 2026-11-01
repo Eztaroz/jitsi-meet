@@ -4,10 +4,12 @@ import { IMove } from './types';
 /**
  * Reads a move command from a message.
  *
- * @param {unknown} json - The json of a message from the server.
+ * @param {unknown} message - The json of a message from the server.
  * @returns {IMove|undefined} Undefined when it is not a well-formed move command.
  */
-export function parseMove(json: any): IMove | undefined {
+export function parseMove(message: unknown): IMove | undefined {
+    const json = message as Record<string, unknown> | null | undefined;
+
     if (json?.type !== COORDINATOR_MOVE_MESSAGE_TYPE
             || typeof json.destination !== 'string' || !json.destination
             || typeof json.token !== 'string' || !json.token
