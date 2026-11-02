@@ -221,6 +221,16 @@ describe('the coordinator service', () => {
         assert.deepEqual(sent, []);
     });
 
+    it('tells the screen where a patient\'s own room is, also while they are in a station, and tells it for no one else', async () => {
+        await learnPatientRoom('hn-a');
+        rooms = [ { name: 'st-1', occupants: [ patient ] }, { name: 'lounge-x', occupants: [ staff ] } ];
+
+        const occupants = (await service.rooms()).flatMap(r => r.occupants);
+
+        assert.equal(occupants.find(o => o.endpointId === 'e-pat')?.ownRoom, 'hn-a');
+        assert.equal(occupants.find(o => o.endpointId === 'e-staff')?.ownRoom, undefined);
+    });
+
     it('closes the day\'s open encounters at the next midnight', async () => {
         await service.startEncounter('HN1');
         service.startDayEnds();
