@@ -141,6 +141,35 @@ describe('Coordinator: acting from the screen', () => {
             .toBe(coordinatorA.id);
     });
 
+    it('offers a patient only stations and their own room, and offers staff every room', async () => {
+        const room = hn.toLowerCase();
+
+        await a.driver.waitUntil(async () => (await roomText(a, 'intake-1')).includes('Nurse N'),
+            { timeoutMsg: 'the nurse is not shown in the station' });
+
+        // The screen shows every room, other specs' too: look at this spec's patient only.
+        const choices = await a.driver.execute((name: string) => {
+            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
+            const lines = (root: ParentNode, role: string) => Array.from(root.querySelectorAll(`.occupant[data-role="${role}"]`))
+                .map(line => ({
+                    hasTypedHn: line.querySelector('.move-hn') !== null,
+                    values: Array.from(line.querySelectorAll('select.move-to option')).map(o => (o as HTMLOptionElement).value)
+                        .filter(Boolean)
+                }));
+
+            return { patient: lines(card, 'patient'), staff: lines(document, 'staff') };
+        }, room);
+
+        expect(choices.patient.length).toBe(1);
+        expect(choices.patient[0].hasTypedHn).toBe(false);
+        // Only a station, or the patient's own room, which is not offered while they are in it.
+        expect(choices.patient[0].values.includes('intake-1')).toBe(true);
+        expect(choices.patient[0].values.every(v => v.startsWith('intake-') || v.startsWith('aftercare-'))).toBe(true);
+        expect(choices.staff.length).toBeGreaterThan(0);
+        expect(choices.staff.some(c => c.hasTypedHn)).toBe(true);
+        expect(choices.staff.some(c => c.values.includes('lounge-1'))).toBe(true);
+    });
+
     it('moves a patient to a station: both screens show them moving, and the participant can cancel', async () => {
         const room = hn.toLowerCase();
         const station = 'intake-1';
@@ -178,6 +207,11 @@ describe('Coordinator: acting from the screen', () => {
             const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
             const select = card.querySelector('.occupant[data-role="patient"] select.move-to') as HTMLSelectElement;
 
+            // The screen does not offer a lounge to a patient; the option is added to see how it shows a refusal.
+            const option = document.createElement('option');
+
+            option.value = 'lounge-1';
+            select.appendChild(option);
             select.value = 'lounge-1';
             select.dispatchEvent(new Event('change'));
             (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();

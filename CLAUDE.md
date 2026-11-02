@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Talk to the user in Thai.** Replies, progress reports, summaries, plans and questions (including `AskUserQuestion` prompts and options) are in Thai.
 - In Thai replies, keep code, file paths, commands, identifiers, config keys and quoted errors or logs exactly as they are; do not translate them.
 - Exception: translation files under `lang/` (such as a Thai `lang/main-th.json`) hold Thai text by design.
+- Exception: the coordinator's screen (`coordinator/src/screen/screen.ts`) keeps its Thai text in the script, by design: the coordinator service runs straight from source with no build step, and the screen is Thai only (story 9 of #14).
 
 ## Development Commands
 

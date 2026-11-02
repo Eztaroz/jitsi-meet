@@ -359,15 +359,15 @@ describe('the coordinator service across a restart', () => {
         assert.deepEqual(service.state.patientRooms, {});
     });
 
-    it('forgets the patients\' own rooms when the day closes, also across a restart', async () => {
+    it('keeps the patients\' own rooms when the day closes, also across a restart', async () => {
         rooms = [ { name: 'a', occupants: [ staff ] }, { name: 'hn-a', occupants: [ patient ] } ];
         await service.requestMove({ endpointId: 'e-staff', fromRoom: 'a', toRoom: 'hn-a' }, 'system');
         await advance(COUNTDOWN_MS + ARRIVAL_WAIT_MS);
         service.startDayEnds();
         await advance(16 * 3600_000 + 60_000);
 
-        assert.deepEqual(service.state.patientRooms, {});
+        assert.deepEqual(service.state.patientRooms, { 'p-1': 'hn-a' });
         await restart();
-        assert.deepEqual(service.state.patientRooms, {});
+        assert.deepEqual(service.state.patientRooms, { 'p-1': 'hn-a' });
     });
 });
