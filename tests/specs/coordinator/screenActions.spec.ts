@@ -3,12 +3,12 @@ import { v4 as uuidv4 } from 'uuid';
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
 import {
-    coordinatorLogs,
     coordinatorUnavailableReason,
     getAudit,
     getQueues,
     screenUrl,
-    waitForRoom
+    waitForRoom,
+    withServiceLog
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
@@ -25,7 +25,8 @@ on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
 });
 
-// The test deployment's prepare wait is 15 seconds, and the countdown after it keeps the move on the screen for 5 more.
+// The test deployment's prepare wait (coordinator/test-deployment/docker-compose.yml) is 15 seconds, and the countdown
+// after it keeps the move on the screen for 5 more.
 const MOVE_SHOWN_TIMEOUT_MS = 20_000;
 
 describe('Coordinator: acting from the screen', () => {
@@ -177,7 +178,6 @@ describe('Coordinator: acting from the screen', () => {
     it('moves a patient to a station: both screens show them moving, and the participant can cancel', async () => {
         const room = hn.toLowerCase();
         const station = 'intake-1';
-        const movedAt = new Date();
 
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
         await a.driver.waitUntil(
@@ -192,23 +192,12 @@ describe('Coordinator: acting from the screen', () => {
         }, room, station);
 
         // The recorder bot is asked to record the patient's time in the station before they are told. The badge stays
-        // for the whole preparation (up to the service's prepare wait) and the countdown after it, and a bot still busy
-        // from the specs before this one can take most of that wait, so the wait here covers it.
-        try {
-            await Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
-                async () => (await roomText(screen, room)).includes('กำลังย้าย'),
-                { interval: 200, timeout: MOVE_SHOWN_TIMEOUT_MS, timeoutMsg: 'the move is not shown on a screen' })));
-        } catch (error) {
-            // Keep the service's account of the move: this wait failed once for a cause that was not found (#43).
-            let logs = '';
-
-            try {
-                logs = coordinatorLogs(movedAt);
-            } catch {
-                logs = '(the service log could not be read)';
-            }
-            throw new Error(`${(error as Error).message}\nService log since the move:\n${logs}`);
-        }
+        // for the whole preparation (up to the service's prepare wait) and the countdown after it. The 8 seconds this
+        // wait once had failed once in about 35 runs (#43); a bot still busy from the specs before is the suspected
+        // cause, not a proven one, so a failure keeps the service's log.
+        await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
+            async () => (await roomText(screen, room)).includes('กำลังย้าย'),
+            { interval: 200, timeout: MOVE_SHOWN_TIMEOUT_MS, timeoutMsg: 'the move is not shown on a screen' }))));
 
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).click();

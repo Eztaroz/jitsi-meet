@@ -329,3 +329,29 @@ export function coordinatorLogs(since: Date): string {
     return execFileSync('docker', [ 'logs', '--since', since.toISOString(), config.coordinator.container ?? '' ],
         { encoding: 'utf8', stdio: [ 'ignore', 'pipe', 'pipe' ] });
 }
+
+/**
+ * Runs a step, and when it fails adds to the failure how long it ran and the service's log since it began.
+ *
+ * @param {() => Promise<T>} step - The step.
+ * @returns {Promise<T>}
+ */
+export async function withServiceLog<T>(step: () => Promise<T>): Promise<T> {
+    const since = new Date();
+
+    try {
+        return await step();
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        let logs: string;
+
+        try {
+            logs = coordinatorLogs(since);
+        } catch {
+            logs = '(the service log could not be read)';
+        }
+
+        throw new Error(`${message}\nFailed after ${Date.now() - since.getTime()} ms. Service log since the step began:\n${logs}`,
+            { cause: error });
+    }
+}
