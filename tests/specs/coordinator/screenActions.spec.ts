@@ -8,6 +8,7 @@ import {
     getQueues,
     screenUrl,
     waitForRoom,
+    waitForStationFree,
     withServiceLog
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
@@ -24,10 +25,6 @@ Skipped unless the deployment is the JWT variant of the recorder bot\'s test dep
 on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
 });
-
-// The test deployment's prepare wait (coordinator/test-deployment/docker-compose.yml) is 15 seconds, and the countdown
-// after it keeps the move on the screen for 5 more.
-const MOVE_SHOWN_TIMEOUT_MS = 20_000;
 
 describe('Coordinator: acting from the screen', () => {
     const coordinatorA = { id: `coordinator-a-${uuidv4()}`, name: 'ผู้ประสานงาน เอ' };
@@ -182,6 +179,9 @@ describe('Coordinator: acting from the screen', () => {
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
         await a.driver.waitUntil(
             async () => (await roomText(a, station)).length > 0, { timeoutMsg: 'the station is not shown' });
+        // A patient that an earlier spec left in the station makes the service refuse this move at once, and then no
+        // screen ever shows it moving (#43).
+        await waitForStationFree(station);
         await a.driver.execute((name: string, to: string) => {
             const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
             const select = card.querySelector('.occupant[data-role="patient"] select.move-to') as HTMLSelectElement;
@@ -191,13 +191,10 @@ describe('Coordinator: acting from the screen', () => {
             (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();
         }, room, station);
 
-        // The recorder bot is asked to record the patient's time in the station before they are told. The badge stays
-        // for the whole preparation (up to the service's prepare wait) and the countdown after it. The 8 seconds this
-        // wait once had failed once in about 35 runs (#43); a bot still busy from the specs before is the suspected
-        // cause, not a proven one, so a failure keeps the service's log.
+        // The recorder bot is asked to record the patient's time in the station before they are told.
         await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
             async () => (await roomText(screen, room)).includes('กำลังย้าย'),
-            { interval: 200, timeout: MOVE_SHOWN_TIMEOUT_MS, timeoutMsg: 'the move is not shown on a screen' }))));
+            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
 
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).click();
