@@ -55,6 +55,7 @@
         displayName?: string;
         endpointId: string;
         identity?: { name?: string; };
+        ownRoom?: string;
         role: string;
     }
 
@@ -379,7 +380,10 @@
                     blank.value = '';
                     pick.appendChild(blank);
                     rooms.forEach(other => {
-                        if (other.name !== room.name) {
+                        // A patient goes only into a station or their own room; staff may go to any room (ADR 0005).
+                        const allowed = o.role !== 'patient' || other.kind === 'station' || other.name === o.ownRoom;
+
+                        if (other.name !== room.name && allowed) {
                             const option = el('option', other.name + (other.open ? '' : ' (ปิดอยู่)'));
 
                             option.value = other.name;
@@ -391,24 +395,27 @@
                         choices[key] = pick.value;
                     });
 
-                    // A patient's own room that is closed is in no list: the coordinator can name it by the HN.
-                    const typed = el('input', undefined, 'move-hn');
-
-                    typed.type = 'text';
-                    typed.placeholder = 'หรือพิมพ์ HN';
-                    typed.autocomplete = 'off';
-
                     const go = el('button', 'ย้าย', 'move-go');
 
                     go.type = 'button';
+                    line.appendChild(pick);
+
+                    // Staff may be sent to a closed patient's room that is in no list: the coordinator names it by the HN.
+                    // A patient has no such input: their own room is in the list, and no other patient's room is allowed.
+                    const typed = o.role === 'patient' ? undefined : el('input', undefined, 'move-hn');
+
+                    if (typed) {
+                        typed.type = 'text';
+                        typed.placeholder = 'หรือพิมพ์ HN';
+                        typed.autocomplete = 'off';
+                        line.appendChild(typed);
+                    }
                     go.addEventListener('click', () => {
-                        const to = typed.value.trim() || pick.value;
+                        const to = (typed?.value.trim() ?? '') || pick.value;
 
                         delete choices[key];
                         move(room.name, o.endpointId, to);
                     });
-                    line.appendChild(pick);
-                    line.appendChild(typed);
                     line.appendChild(go);
                 }
                 card.appendChild(line);

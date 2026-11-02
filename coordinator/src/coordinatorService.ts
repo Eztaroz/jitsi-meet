@@ -11,7 +11,7 @@ import { MoveEffects } from './moveEffects.ts';
 import type { Prosody } from './prosody.ts';
 import type { RecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
-import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
+import { type ILayout, type IOccupant, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
 import {
     type Command,
     type IMove,
@@ -130,13 +130,22 @@ export class CoordinatorService {
     async rooms(): Promise<IRoom[]> {
         const rooms = describeRooms(await this._opts.prosody.rooms(), this._opts.roleMarkers, this._opts.layout);
 
+        const ownRoomOf = (o: IOccupant) => o.role === 'patient' && o.identity?.id
+            ? this._state.patientRooms[o.identity.id]
+            : undefined;
+
         return rooms.map(room => {
             const encounter = room.kind === 'patient'
                 ? this._state.encounters.find(e => e.stage !== 'done'
                     && backendSafeRoomName(e.hn) === backendSafeRoomName(room.name))
                 : undefined;
+            const occupants = room.occupants.map(o => {
+                const ownRoom = ownRoomOf(o);
 
-            return encounter ? { ...room, encounterId: encounter.id } : room;
+                return ownRoom === undefined ? o : { ...o, ownRoom };
+            });
+
+            return encounter ? { ...room, encounterId: encounter.id, occupants } : { ...room, occupants };
         });
     }
 

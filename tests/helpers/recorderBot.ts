@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -280,13 +281,15 @@ export function waitForStop(consultationId: string, timeout = 30_000): Promise<I
 }
 
 /**
- * Returns an HN unique to this test run. It has upper-case letters and a "/", which the room name has to encode.
+ * Returns an HN unique to this test run. It has upper-case letters and a "/", which the room name has to encode. The
+ * room name's own number is small, and the service keeps a patient's room, and its occupants for a while, after a run:
+ * a random part keeps a later run from landing in an earlier run's room.
  *
  * @param {string} label - Distinguishes the HNs of one test file.
  * @returns {string}
  */
 export function uniqueHn(label = ''): string {
-    return `HN/${label}${ctx.roomName}`.toUpperCase();
+    return `HN/${label}${ctx.roomName}-${randomUUID().slice(0, 8)}`.toUpperCase();
 }
 
 /**

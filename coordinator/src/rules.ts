@@ -431,12 +431,12 @@ export function step(
         };
     }
     case 'close_day':
-        // The day's encounters end, and with them what was learned about where their patients' rooms are.
+        // The day's encounters end. What was learned about where each patient's own room is stays until the retention
+        // sweep, so a patient in a station at midnight can still be sent back to their own room (ADR 0005).
         return {
             commands: [],
             state: {
                 ...state,
-                patientRooms: {},
                 encounters: state.encounters.map(e => e.stage === 'done'
                     ? e
                     : { ...enter(e, 'done', event.at), unfinished: true as const })

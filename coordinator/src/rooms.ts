@@ -27,6 +27,9 @@ export interface IOccupant {
     displayName?: string;
     endpointId: string;
     identity?: { id?: string; name?: string; };
+
+    /** For a patient whose own room the service has learned, that room, wherever the patient is now. */
+    ownRoom?: string;
     role: Role;
 
     /** Whether the occupant's client says it obeys move commands. */

@@ -131,6 +131,12 @@ describe('the end of the day', () => {
         assert.deepEqual(byId[ids[0]].history.at(-1), { at: at(600), stage: 'done' });
         assert.deepEqual(queues(closed.state, at(601)).waiting, []);
     });
+
+    it('keeps what was learned about where the patients\' own rooms are', () => {
+        const learned = { ...initialState(), patientRooms: { 'pat-1': 'home-room' } };
+
+        assert.deepEqual(step(learned, { at: at(600), type: 'close_day' }).state.patientRooms, { 'pat-1': 'home-room' });
+    });
 });
 
 describe('the next midnight', () => {
