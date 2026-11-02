@@ -177,7 +177,7 @@ h2::after { background: var(--line); content: ''; flex: 1; height: 1px; }
     justify-content: space-between;
     padding: 10px 8px 2px;
 }
-.queue-entry > span:first-child { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.queue-entry > span:first-child { font-weight: 700; font-variant-numeric: tabular-nums; max-width: 100%; overflow-wrap: anywhere; }
 .queue-entry > span:last-child { color: var(--muted); flex: 1 1 auto; font-size: .85rem; text-align: right; }
 .queue-entry.suggested { background: var(--ok-soft); }
 .queue-entry.suggested > span:last-child { color: var(--ok); font-weight: 700; }
