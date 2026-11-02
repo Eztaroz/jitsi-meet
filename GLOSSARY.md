@@ -50,6 +50,10 @@ _Avoid_: Jibri, recorder, robot
 Everything kept for one consultation: one media file per participant track plus its timeline.
 _Avoid_: Video, recording file
 
+**Review file**:
+One video file of a whole consultation, showing every participant side by side with their audio mixed, made from an evidence recording so that a person can watch it. It is not evidence, and it can always be made again.
+_Avoid_: Merged recording, Evidence file, Composite
+
 **Timeline**:
 The time-ordered record of joins, leaves and tracks within a consultation, including each staff visit.
 _Avoid_: Log, history
