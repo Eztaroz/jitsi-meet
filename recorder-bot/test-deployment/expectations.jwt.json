@@ -5,6 +5,7 @@
         // Short timers, so that the tests do not wait long. They must match .env.
         "emptyRoomGraceSeconds": 10,
         "firstJoinWaitSeconds": 20,
+        "patientWaitSeconds": 20,
         // The role markers in .env.
         "patientClaims": { "hospital_role": "patient" },
         "staffClaims": { "hospital_role": "staff" },

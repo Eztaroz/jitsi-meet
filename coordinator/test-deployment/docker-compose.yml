@@ -1,0 +1,94 @@
+# The coordinator service on top of the recorder bot's JWT test deployment (docker-jitsi-meet with token
+# authentication, the fork's web build and the recorder bot). Not for production. Start it from this directory:
+#
+#   docker compose -f ../../recorder-bot/test-deployment/docker-compose.yml \
+#       -f ../../recorder-bot/test-deployment/docker-compose.jwt.yml -f docker-compose.yml up -d
+#
+# Generate the keys first with keys/generate-keys.sh. See README.md. Relative paths below are relative to the first
+# file's directory, recorder-bot/test-deployment.
+services:
+    web:
+        environment:
+            # Breakout rooms are disabled (ADR 0007); deep linking too, so that a phone opens the link in its browser
+            # (ADR 0010; the recorder bot's test deployment already disables it).
+            ENABLE_BREAKOUT_ROOMS: 'false'
+        volumes:
+            # Prosody fetches the coordinator service's public key from here:
+            # http://web/.well-known/coordinator/<sha256 of the key id>.pem.
+            - ../../coordinator/test-deployment/keys/asap:/usr/share/jitsi-meet/.well-known/coordinator:ro
+            # Proxies /coordinator/ to the coordinator service over this server's TLS (ADR 0008).
+            - ../../coordinator/deploy/nginx/coordinator.conf:/config/nginx-custom/coordinator.conf:ro
+
+    prosody:
+        # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
+        volumes:
+            - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
+            - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
+        environment:
+            ENABLE_BREAKOUT_ROOMS: 'false'
+            # Refuses a client that does not announce that it obeys moves, apart from the hosts listed in
+            # muc_require_move_support_exempt_hosts: the auth domain (Jicofo) and the recorder bot's hidden domain
+            # (ADR 0010). The guest domain is not exempt. This replaces the JWT variant's XMPP_MUC_CONFIGURATION,
+            # so it repeats the token verification allowlist.
+            XMPP_MUC_MODULES: muc_require_move_support
+            XMPP_MUC_CONFIGURATION: |
+                token_verification_allowlist = { "${XMPP_HIDDEN_DOMAIN}" }
+                muc_require_move_support_exempt_hosts = { "auth.meet.jitsi"; "${XMPP_HIDDEN_DOMAIN}" }
+            # The guest domain exists so that webOnly.spec.ts can check that it is not exempt.
+            ENABLE_GUESTS: '1'
+            XMPP_MODULES: presence_identity,coordinator_api
+            XMPP_CONFIGURATION: coordinator_api_key_server = "http://web/.well-known/coordinator"
+            # Also accepts the tokens the coordinator service issues for a move (ADR 0009). The service's public key
+            # is in the same key server as the tests' own (keys/generate-keys.sh copies it to the JWT variant's).
+            JWT_ACCEPTED_ISSUERS: chat,coordinator
+
+    jicofo:
+        environment:
+            ENABLE_BREAKOUT_ROOMS: 'false'
+            ENABLE_GUESTS: '1'
+
+    recorder-bot:
+        environment:
+            # Room for the specs that record at the same time; moveCapacity.spec.ts fills it, and runs alone.
+            RECORDER_BOT_MAX_CONSULTATIONS: 12
+
+    coordinator:
+        image: coordinator:local
+        build: ../../coordinator
+        restart: unless-stopped
+        # On the internal network only, and no port is published: the web server proxies /coordinator/ to port 8091
+        # (ADR 0008). Never add a "ports" entry here. The recorder bot is on the host network, so the service reaches
+        # it through the host gateway.
+        networks:
+            meet.jitsi:
+        extra_hosts:
+            - 'host.docker.internal:host-gateway'
+        volumes:
+            - coordinator-data:/var/lib/coordinator
+            - ../../coordinator/test-deployment/keys/private.pem:/run/keys/private.pem:ro
+            - ../../coordinator/test-deployment/rooms.json:/etc/coordinator/rooms.json:ro
+            # The hospital issuer's public keys, which sign the coordinators in to the screen.
+            - ../../recorder-bot/test-deployment/jwt/asap:/etc/coordinator/issuer-keys:ro
+        environment:
+            COORDINATOR_API_SECRET: coordinator-test-secret
+            COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
+            # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
+            COORDINATOR_RETENTION_SWEEP_SECONDS: 2
+            # Short, so that the spec of a destination the recorder bot cannot open in time does not take half a minute;
+            # long enough for the recorder bot to open a room in the other specs. Production waits 30 seconds.
+            COORDINATOR_PREPARE_WAIT_SECONDS: 15
+            COORDINATOR_PROSODY_URL: http://prosody:5280
+            COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
+            COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
+            COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
+            COORDINATOR_RECORDER_BOT_URL: http://host.docker.internal:8090
+            COORDINATOR_SIGNING_KEY_FILE: /run/keys/private.pem
+            COORDINATOR_SIGNING_KID: coordinator-test/key
+            COORDINATOR_STAFF_MARKER: user.hospital_role=staff
+            COORDINATOR_TOKEN_SUBJECT: coordinator-test
+        depends_on:
+            - recorder-bot
+            - prosody
+
+volumes:
+    coordinator-data:

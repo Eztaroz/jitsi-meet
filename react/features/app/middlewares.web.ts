@@ -4,6 +4,7 @@ import '../base/config/middleware';
 import '../base/connection/middleware';
 import '../base/devices/middleware';
 import '../base/media/middleware';
+import '../coordinator-move/middleware.web';
 import '../deep-linking/middleware.web';
 import '../dynamic-branding/middleware';
 import '../e2ee/middleware';

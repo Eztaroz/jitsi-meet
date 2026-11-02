@@ -213,6 +213,7 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_MAX_RELAUNCHES` | `3` | How many times a consultation's bot may be relaunched after a crash or a lost connection; `0` never relaunches it. See [Crashes](#crashes) |
 | `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` | `60` | How long the bot stays once every human has left. A human who rejoins within it cancels the stop |
 | `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` | `600` | How long the bot waits for the first human to join, counted from its own join, or from when it started waiting for someone to start the room |
+| `RECORDER_BOT_PATIENT_WAIT_SECONDS` | `60` | In a station (below): how long the bot waits for the patient after it joined. Must exceed the coordinator service's countdown plus arrival wait (5 + 30 = 35 seconds), so that the coordinator service gives up first and has the consultation discarded (ADR 0006); below that, the bot discards a consultation whose patient is still on the way |
 | `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
 | `RECORDER_BOT_PATIENT_MARKER` | none | Which verified identity is the patient, written the same way |
 | `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
@@ -226,6 +227,8 @@ Every request needs the bearer secret; without it the service answers `401`.
 | Request | Answer |
 |---|---|
 | `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` for a new consultation; `200` and the same for the consultation already running in that HN's room; `503` when the service is at its limit |
+| `POST /consultations` with `{ "hn": "<HN>", "room": "<station>", "patient": "<verified identity id>" }` | The consultation of one patient in a station; see [Stations](#stations). Answers as above. The bot joins the station's room, and the evidence is kept under the HN. A request is matched on the HN and the station together, so a patient's own room and a station can be recorded at the same time |
+| `POST /consultations/<consultationId>/stop` | Stops the consultation before its time, and answers `200` and the consultation once it has stopped. For a station whose patient never arrived, nothing is kept |
 | `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, `relaunches` (how many times its bot was relaunched), and once stored `evidenceLocation` |
 | `GET /health` | `200` and `{ "status": "ok", "activeConsultations", "maxConsultations" }`, where `activeConsultations` counts the consultations that have not reached a final status, finalising ones included |
 
@@ -242,6 +245,7 @@ A consultation's `status` goes:
 5. a final status:
    - `stored`: the evidence recording is in the storage root, at `evidenceLocation`, which is relative to the storage root;
    - `spooled`: it could not be moved to the storage root, and stays in the spool; `error` says why. The service retries the move, and once it succeeds the status becomes `stored`, or `failed` when the bot had failed, with `evidenceLocation` (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable));
+   - `discarded`: a station consultation whose patient never arrived; nothing was kept;
    - `failed`: the bot could not be relaunched, or the finalisation failed; `error` says why. When the bot failed, what it recorded is still stored, at `evidenceLocation`.
 
 `stopReason` says why it stopped:
@@ -252,8 +256,22 @@ A consultation's `status` goes:
 | `no_humans_for_grace` | Every human left, and nobody came back within `RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS` |
 | `no_one_joined` | Nobody joined within `RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS` |
 | `kicked` | A moderator removed the bot |
+| `patient_left` | In a station: the patient left, though staff stay |
+| `patient_did_not_arrive` | In a station: the patient did not arrive within `RECORDER_BOT_PATIENT_WAIT_SECONDS` |
+| `stop_requested` | The hospital's system called `POST /consultations/<consultationId>/stop` |
 | `shutdown` | The service was stopped |
 | `bot_failed` | The bot crashed or lost its connection, and could not be relaunched. See [Crashes](#crashes) |
+
+### Stations
+
+A station is a fixed room that many patients pass through, one at a time (ADR 0006). Recording it as one long consultation would mix patients in one evidence recording kept under no one's HN, so each patient's time in it is a consultation of its own:
+
+- it starts when the service is asked to (`room` and `patient` in the request), and the bot joins the station before the patient arrives;
+- it stops as soon as that patient, recognised by their verified identity id, leaves, though staff stay (`patient_left`). The empty-room grace of the patient's own room does not apply;
+- if the patient does not arrive within `RECORDER_BOT_PATIENT_WAIT_SECONDS`, or the consultation is stopped early before they arrived, it stops and **nothing is kept**: status `discarded`, and its folder leaves the spool;
+- its evidence recording is kept under the patient's HN like any other, and its manifest names the `station`.
+
+A station consultation needs verified identities (see [Verified identities](#verified-identities)): the patient is recognised by the identity's `id`.
 
 ### Evidence recordings
 
@@ -281,6 +299,7 @@ The folder holds:
 | Field | What |
 |---|---|
 | `consultationId`, `hn`, `room`, `meetingId` | Which consultation. `meetingId` is the conference's id in the Jitsi logs |
+| `station` | The station's room, when the consultation took place in one |
 | `start`, `end`, `stopReason` | When it started and stopped, and why it stopped |
 | `participants` | For each participant join: `endpointId`, `displayName`, `identity` (`id` and `name`, when verified), `role`, and the times in `joins` and `leaves` |
 | `identities` | For each verified identity, across its rejoins: `identity`, `role`, its `endpointIds`, one per join, and its `files` |

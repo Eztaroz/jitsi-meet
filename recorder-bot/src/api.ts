@@ -104,6 +104,26 @@ function hnFrom(body: unknown): string {
 }
 
 /**
+ * Reads the station of a request: the room and the patient's verified identity id, together or neither.
+ *
+ * @param {unknown} body - The request body.
+ * @returns {Object|undefined}
+ */
+function stationFrom(body: unknown): { patientId: string; room: string; } | undefined {
+    const { patient, room } = body as { patient?: unknown; room?: unknown; };
+
+    if (room === undefined && patient === undefined) {
+        return undefined;
+    }
+    if (typeof room !== 'string' || !room.trim() || typeof patient !== 'string' || !patient.trim()
+            || room.length > MAX_HN_LENGTH || patient.length > MAX_HN_LENGTH) {
+        throw new HttpError(400, 'room and patient must both be given, as non-empty strings');
+    }
+
+    return { patientId: patient, room };
+}
+
+/**
  * Creates the control API server.
  *
  * @param {Object} options - Options.
@@ -143,11 +163,13 @@ export function createApi({ consultations, maxConsultations, secret }: {
             return;
         }
         if (pathname === '/consultations' && req.method === 'POST') {
-            const hn = hnFrom(await readJson(req));
+            const body = await readJson(req);
+            const hn = hnFrom(body);
+            const station = stationFrom(body);
             let started;
 
             try {
-                started = consultations.start(hn);
+                started = consultations.start(hn, station);
             } catch (error) {
                 if (error instanceof AtCapacityError) {
                     throw new HttpError(503, 'the recorder bot service is recording as many consultations as it may');
@@ -158,6 +180,22 @@ export function createApi({ consultations, maxConsultations, secret }: {
             const { consultationId, status } = started.consultation.snapshot();
 
             send(res, started.created ? 201 : 200, { consultationId, status });
+
+            return;
+        }
+
+        const stopMatch = /^\/consultations\/([^/]+)\/stop$/.exec(pathname);
+
+        if (stopMatch && req.method === 'POST') {
+            const consultation = consultations.get(decodeURIComponent(stopMatch[1]));
+
+            if (!consultation) {
+                throw new HttpError(404, 'no such consultation');
+            }
+            if (consultation.isRunning()) {
+                await consultation.requestStop();
+            }
+            send(res, 200, consultation.snapshot());
 
             return;
         }

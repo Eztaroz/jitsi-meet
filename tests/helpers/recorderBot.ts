@@ -13,6 +13,9 @@ import { expectations } from './expectations';
 
 /** A consultation as the control API reports it. */
 export interface IConsultation {
+
+    /** The room the bot is in: the patient's own room, or the station. */
+    conferenceRoom?: string;
     consultationId: string;
     error?: string;
 
@@ -115,6 +118,57 @@ export async function postConsultation(hn: string, apiUrl?: string): Promise<{ b
     }, apiUrl);
 
     return { body: await response.json() as IConsultation, status: response.status };
+}
+
+/**
+ * Asks the service to record one patient's time in a station, and returns its answer whatever it is.
+ *
+ * @param {string} hn - The patient's HN.
+ * @param {string} room - The station.
+ * @param {string} patient - The patient's verified identity id.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postStationConsultation(
+        hn: string, room: string, patient: string): Promise<{ body: IConsultation; status: number; }> {
+    const response = await callApi('/consultations', {
+        body: JSON.stringify({ hn, patient, room }),
+        method: 'POST'
+    });
+
+    return { body: await response.json() as IConsultation, status: response.status };
+}
+
+/**
+ * Asks the service to stop a consultation before its time.
+ *
+ * @param {string} consultationId - The consultation.
+ * @returns {Promise<IConsultation>} The consultation once it has stopped.
+ */
+export async function stopConsultation(consultationId: string): Promise<IConsultation> {
+    const response = await callApi(`/consultations/${consultationId}/stop`, { method: 'POST' });
+
+    if (!response.ok) {
+        throw new Error(`POST /consultations/${consultationId}/stop failed with ${response.status}`);
+    }
+
+    return await response.json() as IConsultation;
+}
+
+/**
+ * Tells whether the main instance still has a consultation's folder in its spool.
+ *
+ * @param {string} consultationId - The consultation.
+ * @returns {boolean}
+ */
+export function spoolHasFolder(consultationId: string): boolean {
+    try {
+        execFileSync('docker', [ 'exec', config.recorderBot.container ?? '', 'test', '-e',
+            `/var/lib/recorder-bot/spool/${consultationId}` ], { stdio: 'pipe' });
+
+        return true;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -435,6 +489,9 @@ export interface IManifest {
     room: string;
     staffVisits: Array<{ displayName?: string; end: string; endpointId: string; identity?: IIdentity; start: string; }>;
     start: string;
+    /** The station, when the consultation took place in one and not in the patient's own room. */
+    station?: string;
+
     stopReason: string;
 }
 
@@ -635,6 +692,69 @@ export function relaunchUnavailableReason(): string | undefined {
  */
 export function killBotBrowser(consultationId: string, container = config.recorderBot.container ?? ''): void {
     docker('exec', container, 'pkill', '-KILL', '-f', '--', `recorder-bot-consultation=${consultationId}`);
+}
+
+/**
+ * Returns the ids of the consultations whose browsers run in the service's container. The service labels each
+ * browser process with its consultation id.
+ *
+ * @param {string} container - The docker container the service runs in.
+ * @returns {Set<string>}
+ */
+export function botBrowserConsultations(container = config.recorderBot.container ?? ''): Set<string> {
+    let processes = '';
+
+    try {
+        processes = docker('exec', container, 'pgrep', '-af', '--', 'recorder-bot-consultation=');
+    } catch {
+        // pgrep exits with 1 when there is no browser.
+    }
+
+    return new Set([ ...processes.matchAll(/recorder-bot-consultation=(\S+)/gu) ].map(match => match[1]));
+}
+
+/**
+ * Freezes the browser of the consultation that starts next, so that the service still answers but its bot never gets
+ * into the room. The service launches a browser only after it accepts a consultation, so this waits for one that is
+ * not among the ones already running.
+ *
+ * @param {Set<string>} running - The consultations whose browsers ran before the consultation was asked for.
+ * @param {number} timeoutMs - How long to wait for the browser.
+ * @param {string} container - The docker container the service runs in.
+ * @returns {Promise<string>} The frozen consultation's id.
+ */
+export async function freezeNewBotBrowser(
+        running: Set<string>, timeoutMs = 15_000, container = config.recorderBot.container ?? ''): Promise<string> {
+    const deadline = Date.now() + timeoutMs;
+
+    for (;;) {
+        const [ consultationId ] = [ ...botBrowserConsultations(container) ].filter(id => !running.has(id));
+
+        if (consultationId) {
+            docker('exec', container, 'pkill', '-STOP', '-f', '--', `recorder-bot-consultation=${consultationId}`);
+
+            return consultationId;
+        }
+        if (Date.now() > deadline) {
+            throw new Error('no new bot browser appeared to freeze');
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+}
+
+/**
+ * Lets a browser frozen by freezeNewBotBrowser run again. Does nothing when it has gone.
+ *
+ * @param {string} consultationId - The consultation.
+ * @param {string} container - The docker container the service runs in.
+ * @returns {void}
+ */
+export function thawBotBrowser(consultationId: string, container = config.recorderBot.container ?? ''): void {
+    try {
+        docker('exec', container, 'pkill', '-CONT', '-f', '--', `recorder-bot-consultation=${consultationId}`);
+    } catch {
+        // The browser has gone.
+    }
 }
 
 /**

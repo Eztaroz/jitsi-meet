@@ -1,0 +1,7 @@
+{
+    "lounges": [ { "room": "lounge-1" } ],
+    "stations": [
+        { "room": "intake-1", "stage": "intake" },
+        { "room": "aftercare-1", "stage": "aftercare" }
+    ]
+}

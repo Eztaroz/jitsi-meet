@@ -1,0 +1,21 @@
+import ReducerRegistry from '../base/redux/ReducerRegistry';
+
+import { CANCEL_MOVE, START_MOVE } from './actionTypes';
+import { IMove } from './types';
+
+export interface ICoordinatorMoveState {
+
+    /** The move under way, and when its countdown ends (ms since epoch). */
+    move?: IMove & { endsAt: number; };
+}
+
+ReducerRegistry.register<ICoordinatorMoveState>('features/coordinator-move', (state = {}, action): ICoordinatorMoveState => {
+    switch (action.type) {
+    case START_MOVE:
+        return { move: { ...action.move, endsAt: action.endsAt } };
+    case CANCEL_MOVE:
+        return {};
+    }
+
+    return state;
+});

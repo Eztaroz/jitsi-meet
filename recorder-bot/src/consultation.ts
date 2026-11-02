@@ -28,15 +28,21 @@ export type ConsultationStatus =
     | 'finalising'
     | 'stored'
     | 'spooled'
+
+    /** A station consultation whose patient never arrived: nothing was kept. */
+    | 'discarded'
     | 'failed';
 
 /** What the control API reports about a consultation. */
 export interface IConsultationSnapshot {
+    /** The room the bot is in: the patient's own room, or the station. */
+    conferenceRoom: string;
     consultationId: string;
-    error?: string;
 
+    error?: string;
     /** Where the evidence recording is, relative to the evidence storage root, once it is stored. */
     evidenceLocation?: string;
+
     hn: string;
 
     /** How many times the bot was relaunched after a crash or a lost connection. */
@@ -53,7 +59,7 @@ type EventInput = LifecycleEvent extends infer E ? E extends LifecycleEvent ? Om
 /** How long to wait before relaunching a bot that crashed or lost its connection. */
 const RELAUNCH_DELAY_MS = 2000;
 
-const TERMINAL: ReadonlySet<ConsultationStatus> = new Set([ 'stored', 'spooled', 'failed' ]);
+const TERMINAL: ReadonlySet<ConsultationStatus> = new Set([ 'stored', 'spooled', 'discarded', 'failed' ]);
 const RUNNING: ReadonlySet<ConsultationStatus> = new Set([ 'starting', 'waiting_for_participants', 'recording' ]);
 
 /**
@@ -62,7 +68,15 @@ const RUNNING: ReadonlySet<ConsultationStatus> = new Set([ 'starting', 'waiting_
 export class Consultation {
     readonly id = randomUUID();
     readonly hn: string;
+
+    /** The patient's room, from their HN. It names where the evidence is kept. */
     readonly room: string;
+
+    /** The room the bot joins: the same, or the station. */
+    readonly conferenceRoom: string;
+
+    /** The station's patient, for the consultation of one patient in a station (ADR 0006). */
+    readonly patientId?: string;
     readonly startedAt = new Date();
 
     /** Resolves when the consultation has reached a final status. */
@@ -109,14 +123,21 @@ export class Consultation {
      *
      * @param {string} hn - The patient's HN.
      * @param {IConfig} config - Service settings.
+     * @param {Object} station - Set for the consultation of one patient in a station.
+     * @param {string} station.patientId - The patient's verified identity id.
+     * @param {string} station.room - The station.
      */
-    constructor(hn: string, config: IConfig) {
+    constructor(hn: string, config: IConfig, station?: { patientId: string; room: string; }) {
         this.hn = hn;
         this.room = roomNameFromHn(hn);
+        this.conferenceRoom = station ? roomNameFromHn(station.room) : this.room;
+        this.patientId = station?.patientId;
         this.config = config;
         this.lifecycle = createConsultationLifecycle({
             emptyRoomMs: config.emptyRoomGraceMs,
-            firstJoinMs: config.firstJoinWaitMs
+            firstJoinMs: config.firstJoinWaitMs,
+            patientId: station?.patientId,
+            patientWaitMs: config.patientWaitMs
         });
         this.evidence = new EvidenceRecording({
             consultationId: this.id,
@@ -155,6 +176,7 @@ export class Consultation {
         return {
             consultationId: this.id,
             error: this.error,
+            conferenceRoom: this.conferenceRoom,
             evidenceLocation: this.evidenceLocation,
             hn: this.hn,
             relaunches: this.relaunches,
@@ -199,6 +221,18 @@ export class Consultation {
     }
 
     /**
+     * Stops the consultation before its time, because the hospital's system asked to. A station consultation whose
+     * patient never arrived is discarded.
+     *
+     * @returns {Promise<void>}
+     */
+    requestStop(): Promise<void> {
+        this.feed({ type: 'stop_requested' });
+
+        return this.done;
+    }
+
+    /**
      * Stops the consultation because the service is shutting down.
      *
      * @returns {Promise<void>}
@@ -218,7 +252,7 @@ export class Consultation {
         const launch = ++this.launches;
         const isCurrent = () => launch === this.launches;
 
-        launchBot(this.config, { consultationId: this.id, room: this.room }, {
+        launchBot(this.config, { consultationId: this.id, room: this.conferenceRoom }, {
             onChunk: (recorderId, data) => this.onChunk(recorderKey(launch, recorderId), data),
             onCrash: reason => {
                 if (isCurrent()) {
@@ -511,8 +545,28 @@ export class Consultation {
             ...this.retiring
         ]);
 
+        if (this.patientId !== undefined && !this.lifecycle.patientArrived()) {
+            // The patient was never there, so there is nothing of them to keep, whatever the reason it stopped.
+            try {
+                await this.evidence.discard();
+            } catch (error) {
+                this.error = `discard_failed: ${errorCode(error)}`;
+                log.error('could not discard the consultation\'s spool folder', {
+                    consultationId: this.id,
+                    error: errorCode(error)
+                });
+                this.settle('failed');
+
+                return;
+            }
+            this.settle('discarded');
+
+            return;
+        }
+
         try {
             await this.evidence.finalise({
+                conferenceRoom: this.conferenceRoom === this.room ? undefined : this.conferenceRoom,
                 consultationId: this.id,
                 end: this.stoppedAt ?? new Date(),
                 hn: this.hn,

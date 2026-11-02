@@ -267,6 +267,10 @@
         "video_ssrc": "Video SSRC:",
         "yes": "yes"
     },
+    "coordinatorMove": {
+        "cancel": "Stay here",
+        "notice": "You are being moved to another room in {{seconds}} seconds…"
+    },
     "customPanel": {
         "close": "Close",
         "title": "AI Assist"

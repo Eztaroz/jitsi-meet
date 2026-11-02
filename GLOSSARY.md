@@ -7,7 +7,7 @@ This fork of Jitsi Meet is used for a hospital's telemedicine service: short vid
 ### People
 
 **Patient**:
-The person receiving care, who stays in the consultation from start to end.
+The person receiving care. They wait, and see the doctor, in their own room, and may be moved to other rooms before and after.
 _Avoid_: Client, user, caller
 
 **Staff**:
@@ -21,11 +21,11 @@ The patient's hospital number, the hospital's identifier for the patient; also t
 _Avoid_: Patient ID, MRN
 
 **Room**:
-The conference named after a patient's HN; every consultation for that patient takes place in it.
+A conference participants meet in: either a patient's own room, named after their HN, or a station.
 _Avoid_: Meeting, channel
 
 **Consultation**:
-One occurrence of a patient's room being open, from when it opens until it closes; typically under 30 minutes.
+One stretch of a patient's time in one room, recorded as its own evidence recording: in their own room, from when it opens until it closes; in a station, from when the patient arrives until they leave. Typically under 30 minutes.
 _Avoid_: Call, session, meeting, visit
 
 **Staff visit**:
@@ -69,3 +69,47 @@ _Avoid_: Expiry, TTL
 **Gap**:
 A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or the consultation stopped.
 _Avoid_: Outage, hole, downtime
+
+### Patient flow
+
+**Encounter**:
+One patient's single attendance at the hospital, across rooms and stages, from when it starts until a coordinator marks it done; it holds many consultations.
+_Avoid_: Visit, appointment, case
+
+**Stage**:
+One step of an encounter: waiting, intake, examination, aftercare, then done. The patient waits in their own room between stages.
+_Avoid_: Step, phase, status, pre-consultation, post-consultation
+
+**Intake**:
+The stage before the doctor, in which a nurse gives the patient information.
+_Avoid_: Pre-consultation, triage
+
+**Examination**:
+The stage in which the doctor sees the patient, in the patient's own room.
+_Avoid_: Consultation, doctor visit
+
+**Aftercare**:
+The stage after the doctor, in which staff explain what happens next.
+_Avoid_: Post-consultation, discharge
+
+**Queue**:
+The patients waiting for one stage, longest-waiting first.
+_Avoid_: Waiting list, backlog
+
+**Station**:
+A fixed room, belonging to one stage, where staff receive the patients moved in to them, one patient at a time.
+_Avoid_: Staff room, desk, booth
+
+**Lounge**:
+A fixed room where staff wait between patients; no patient is ever in it, so nothing in it is recorded.
+_Avoid_: Break room, home room
+
+### Moves
+
+**Coordinator**:
+The hospital person who decides, from one central place, which room each participant should be in.
+_Avoid_: Admin, dispatcher, operator
+
+**Move**:
+Sending one participant from the room they are in to another room, on a coordinator's or the hospital's system's instruction.
+_Avoid_: Transfer, redirect, send to room

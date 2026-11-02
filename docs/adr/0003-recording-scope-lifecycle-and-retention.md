@@ -1,5 +1,7 @@
 # Record the whole consultation, mark staff visits, keep for three months
 
+Extended by ADR 0006 for stations.
+
 A consultation is short (under 30 minutes): the patient stays for the whole call while staff join and leave. The recorder bot records from when the room opens until it closes, rather than only while staff are present, and writes a timeline marking each staff member's joins and leaves, so the evidence also covers what happened between visits. Because the bot itself keeps the conference alive, it stops recording and leaves when no human participant has been present for 60 seconds (to ride out brief reconnects) or immediately when staff end the meeting.
 
 ## Consequences
