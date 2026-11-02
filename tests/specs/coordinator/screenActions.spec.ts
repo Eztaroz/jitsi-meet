@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
 import {
+    coordinatorLogs,
     coordinatorUnavailableReason,
     getAudit,
     getQueues,
@@ -23,6 +24,9 @@ Skipped unless the deployment is the JWT variant of the recorder bot\'s test dep
 on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
 });
+
+// The test deployment's prepare wait is 15 seconds, and the countdown after it keeps the move on the screen for 5 more.
+const MOVE_SHOWN_TIMEOUT_MS = 20_000;
 
 describe('Coordinator: acting from the screen', () => {
     const coordinatorA = { id: `coordinator-a-${uuidv4()}`, name: 'ผู้ประสานงาน เอ' };
@@ -173,6 +177,7 @@ describe('Coordinator: acting from the screen', () => {
     it('moves a patient to a station: both screens show them moving, and the participant can cancel', async () => {
         const room = hn.toLowerCase();
         const station = 'intake-1';
+        const movedAt = new Date();
 
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
         await a.driver.waitUntil(
@@ -186,10 +191,24 @@ describe('Coordinator: acting from the screen', () => {
             (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();
         }, room, station);
 
-        // The recorder bot is asked to record the patient's time in the station before they are told.
-        await Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
-            async () => (await roomText(screen, room)).includes('กำลังย้าย'),
-            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' })));
+        // The recorder bot is asked to record the patient's time in the station before they are told. The badge stays
+        // for the whole preparation (up to the service's prepare wait) and the countdown after it, and a bot still busy
+        // from the specs before this one can take most of that wait, so the wait here covers it.
+        try {
+            await Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
+                async () => (await roomText(screen, room)).includes('กำลังย้าย'),
+                { interval: 200, timeout: MOVE_SHOWN_TIMEOUT_MS, timeoutMsg: 'the move is not shown on a screen' })));
+        } catch (error) {
+            // Keep the service's account of the move: this wait failed once for a cause that was not found (#43).
+            let logs = '';
+
+            try {
+                logs = coordinatorLogs(movedAt);
+            } catch {
+                logs = '(the service log could not be read)';
+            }
+            throw new Error(`${(error as Error).message}\nService log since the move:\n${logs}`);
+        }
 
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).click();
