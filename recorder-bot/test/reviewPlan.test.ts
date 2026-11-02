@@ -139,4 +139,19 @@ describe('planReview', () => {
         assert.equal(places(9).length, 9);
         assert.deepEqual(places(9)[8], [ 852, 480, 426, 240 ]);
     });
+
+    test('cuts a file back to the consultation when it starts before or ends after it', () => {
+        const manifest = recording(60, [ { id: 'nurse', joins: [ { from: -5, to: 70 } ] } ]);
+        const plan = planReview(manifest);
+
+        assert.deepEqual(plan.tiles[0].video, [ { file: 'nurse-0-video.webm', from: 0, to: 60 } ]);
+        assert.deepEqual(plan.tiles[0].empty, []);
+    });
+
+    test('plans an empty canvas when nobody has an identity', () => {
+        const plan = planReview(recording(60, []));
+
+        assert.deepEqual(plan.tiles, []);
+        assert.equal(plan.length, 60);
+    });
 });

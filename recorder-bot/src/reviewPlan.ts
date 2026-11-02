@@ -6,6 +6,8 @@
  * ffmpeg is a separate step.
  */
 
+import type { IIdentity, Role, TrackKind } from './consultationLifecycle.ts';
+
 /** The width and height of every Review file's canvas. */
 export const CANVAS = { height: 720, width: 1280 } as const;
 
@@ -18,7 +20,7 @@ export interface IReviewManifest {
         /** Null when the file could not be read back, or was never written because no media arrived. */
         duration: number | null;
         endpointId: string;
-        kind: 'audio' | 'video';
+        kind: TrackKind;
         name: string;
         start: string;
         stop?: string;
@@ -27,13 +29,14 @@ export interface IReviewManifest {
     identities: Array<{
         endpointIds: string[];
         files: string[];
-        identity: { id: string; name?: string; };
-        role: string;
+        identity: IIdentity;
+        role: Role;
     }>;
     participants: unknown[];
     start: string;
 }
 
+/** Where a tile is on the canvas, in pixels. */
 export interface IArea {
     height: number;
     width: number;
@@ -55,11 +58,11 @@ export interface IMediaSpan extends ISpan {
 export interface IReviewTile {
     area: IArea;
     audio: IMediaSpan[];
+
     /** The stretches without video, which the tile shows as black. */
     empty: ISpan[];
-    identity: { id: string; name?: string; };
-
-    role: string;
+    identity: IIdentity;
+    role: Role;
     video: IMediaSpan[];
 }
 
@@ -106,35 +109,36 @@ function uncovered(spans: ISpan[], total: number): ISpan[] {
  */
 export function planReview(manifest: IReviewManifest): IReviewPlan {
     const origin = Date.parse(manifest.start);
-    const total = (Date.parse(manifest.end) - origin) / 1000;
     const seconds = (time: string) => (Date.parse(time) - origin) / 1000;
+    const total = seconds(manifest.end);
+    const within = (offset: number) => Math.min(Math.max(offset, 0), total);
     const byName = new Map(manifest.files.map(file => [ file.name, file ]));
 
     /**
      * Returns the spans of an identity's files of one kind, in order of start. A file with no media has no span.
      *
      * @param {string[]} names - The identity's files.
-     * @param {string} kind - Audio or video.
+     * @param {TrackKind} kind - Audio or video.
      * @returns {IMediaSpan[]}
      */
-    const spansOf = (names: string[], kind: string): IMediaSpan[] => names
+    const spansOf = (names: string[], kind: TrackKind): IMediaSpan[] => names
         .flatMap(name => {
             const file = byName.get(name);
 
             return file?.kind === kind && file.bytes > 0 && file.duration !== null
-                ? [ { file: name, from: seconds(file.start), to: file.stop ? seconds(file.stop) : total } ]
+                ? [ { file: name, from: within(seconds(file.start)), to: file.stop ? within(seconds(file.stop)) : total } ]
                 : [];
         })
         .sort((a, b) => a.from - b.from);
 
-    const columns = Math.ceil(Math.sqrt(manifest.identities.length));
+    const columns = Math.max(1, Math.ceil(Math.sqrt(manifest.identities.length)));
     const rows = Math.ceil(manifest.identities.length / columns);
     const width = Math.floor(CANVAS.width / columns);
     const height = Math.floor(CANVAS.height / rows);
 
     return {
         canvas: CANVAS,
-        gaps: manifest.gaps.map(gap => ({ from: seconds(gap.start), to: seconds(gap.end) })),
+        gaps: manifest.gaps.map(gap => ({ from: within(seconds(gap.start)), to: within(seconds(gap.end)) })),
         length: total,
         start: manifest.start,
         tiles: manifest.identities.map(({ files, identity, role }, index) => {
