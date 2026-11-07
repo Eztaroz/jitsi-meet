@@ -724,7 +724,7 @@
         const go = button('ย้าย', 'move-go primary', 'arrow');
 
         // Staff may be sent to a closed patient's room that is in no list: the coordinator names it by the HN.
-        // A patient has no such input: their own room is in the list, and no other patient's room is allowed.
+        // A patient has no such input: their own room is always in the list, and no other patient's room is allowed.
         const typed = o.role === 'patient' ? undefined : el('input', undefined, 'move-hn');
         const destination = () => (typed?.value.trim() ?? '') || pick.value;
         const update = () => {
@@ -782,13 +782,20 @@
     function addDestinations(pick: HTMLSelectElement, o: IOccupant, room: IRoom, rooms: IRoom[]): void {
         const blank = el('option', 'ย้ายไปห้อง…');
 
+        // A patient's own room closes when they leave it, and the service lists only open patients' rooms: offer it
+        // still, so that they can be moved back home.
+        const own = o.role === 'patient' ? o.ownRoom : undefined;
+        const candidates: IRoom[] = own && own !== room.name && !rooms.some(other => other.name === own)
+            ? [ ...rooms, { kind: 'patient', name: own, occupants: [], open: false } ]
+            : rooms;
+
         blank.value = '';
         pick.appendChild(blank);
         [ 'station', 'patient', 'lounge' ].forEach(kind => {
             const group = el('optgroup');
 
             group.label = KINDS.find(k => k[0] === kind)?.[1] ?? kind;
-            rooms.filter(other => other.kind === kind && other.name !== room.name
+            candidates.filter(other => other.kind === kind && other.name !== room.name
                     && (o.role !== 'patient' || other.kind === 'station' || other.name === o.ownRoom))
                 .forEach(other => {
                     const notes = [
