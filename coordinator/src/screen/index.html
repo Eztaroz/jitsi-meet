@@ -8,47 +8,137 @@
     <link rel="stylesheet" href="screen/screen.css">
 </head>
 <body>
+    <!-- The icons, drawn from here by the script and the page with <use>: the page may load nothing but its own files. -->
+    <svg class="sprite" aria-hidden="true" focusable="false">
+        <symbol id="i-logo" viewBox="0 0 24 24"><rect width="24" height="24" rx="7" fill="currentColor" stroke="none"/><path d="M12 6.5v11M6.5 12h11" stroke="#fff" stroke-width="2.6"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+        <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="8" y="2.5" width="8" height="4" rx="1"/><path d="M16 4.5h2a2 2 0 0 1 2 2V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2M9 12h6M9 16h4"/></symbol>
+        <symbol id="i-stethoscope" viewBox="0 0 24 24"><path d="M5 3H4a1 1 0 0 0-1 1v5a5 5 0 0 0 10 0V4a1 1 0 0 0-1-1h-1M8 14v1a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></symbol>
+        <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7Z"/></symbol>
+        <symbol id="i-door" viewBox="0 0 24 24"><path d="M18 20V5a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v15M3 20h18M14.5 12v.01"/></symbol>
+        <symbol id="i-coffee" viewBox="0 0 24 24"><path d="M17 8h1a4 4 0 1 1 0 8h-1M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4ZM6 2v2M10 2v2M14 2v2"/></symbol>
+        <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/><circle cx="9" cy="7" r="4"/></symbol>
+        <symbol id="i-swap" viewBox="0 0 24 24"><path d="m8 3-4 4 4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+        <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0ZM12 9v4M12 17h.01"/></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></symbol>
+        <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l13 8-13 8Z"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+        <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5"/><path d="m11 12 9.5-9.5M17 5l3 3M14.5 8.5l2 2"/></symbol>
+    </svg>
+
     <header class="topbar">
         <div class="brand">
-            <svg class="brand-mark" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
-                <rect width="24" height="24" rx="7" fill="currentColor"/>
-                <path d="M12 6v12M6 12h12" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
-            </svg>
+            <svg class="brand-mark" aria-hidden="true" focusable="false"><use href="#i-logo"/></svg>
             <div>
                 <h1>ศูนย์ควบคุมการย้ายห้อง</h1>
-                <p class="tagline">ดูคิว ห้อง และย้ายผู้เข้าร่วมจากที่เดียว</p>
+                <p class="tagline">คิว ห้อง และการย้ายผู้เข้าร่วม ในหน้าเดียว</p>
             </div>
         </div>
         <div id="who" hidden>
-            <span class="live" title="หน้าจอนี้อัปเดตเองทุกไม่กี่วินาที"><i class="live-dot"></i>อัปเดตอัตโนมัติ</span>
-            <span id="who-name"></span>
-            <button id="sign-out" type="button" class="secondary">ออกจากระบบ</button>
+            <span id="live" class="live" title="หน้าจอนี้อัปเดตเองทุก 2 วินาที"><i class="live-dot"></i><span id="live-text">กำลังเชื่อมต่อ</span></span>
+            <span class="user">
+                <span id="who-avatar" class="avatar" aria-hidden="true"></span>
+                <span id="who-name"></span>
+            </span>
+            <button id="sign-out" type="button" class="ghost icon-button" title="ออกจากระบบ">
+                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-logout"/></svg><span class="label">ออกจากระบบ</span>
+            </button>
         </div>
     </header>
 
     <main id="signin">
         <form id="signin-form" class="panel">
-            <h2>เข้าสู่ระบบ</h2>
-            <p class="hint">วางโทเคนของผู้ประสานงานที่ได้รับจากระบบของโรงพยาบาล</p>
+            <div class="signin-mark"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg></div>
+            <h2>เข้าสู่ระบบผู้ประสานงาน</h2>
+            <p class="hint">วางโทเคนของผู้ประสานงานที่ได้รับจากระบบของโรงพยาบาล หน้าจอจะจำไว้จนกว่าจะปิดแท็บนี้</p>
             <label for="signin-token">โทเคนของผู้ประสานงาน</label>
-            <textarea id="signin-token" rows="4" autocomplete="off" spellcheck="false"></textarea>
-            <button id="signin-submit" type="submit">เข้าสู่ระบบ</button>
+            <textarea id="signin-token" rows="4" autocomplete="off" spellcheck="false" placeholder="eyJhbGciOi…" required></textarea>
             <p id="signin-error" role="alert" hidden></p>
+            <button id="signin-submit" type="submit" class="primary">เข้าสู่ระบบ</button>
         </form>
     </main>
 
     <main id="board" hidden>
         <p id="problem" role="alert" hidden></p>
-        <p id="notice" role="status" hidden></p>
-        <ul id="outcomes" aria-live="polite"></ul>
-        <section id="queues">
-            <h2>คิว</h2>
-            <div id="queue-list"></div>
+
+        <section class="stats" aria-label="สรุป">
+            <div class="stat" data-tone="warn">
+                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>
+                <span class="stat-label">รอคิว</span>
+                <strong id="stat-waiting">0</strong>
+                <span id="stat-waiting-note" class="stat-note"></span>
+            </div>
+            <div class="stat" data-tone="accent">
+                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-stethoscope"/></svg>
+                <span class="stat-label">อยู่ระหว่างบริการ</span>
+                <strong id="stat-active">0</strong>
+                <span id="stat-active-note" class="stat-note"></span>
+            </div>
+            <div class="stat" data-tone="ok">
+                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-door"/></svg>
+                <span class="stat-label">ห้องที่เปิดอยู่</span>
+                <strong id="stat-rooms">0</strong>
+                <span id="stat-rooms-note" class="stat-note"></span>
+            </div>
+            <div class="stat" data-tone="lounge">
+                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-swap"/></svg>
+                <span class="stat-label">กำลังย้าย</span>
+                <strong id="stat-moving">0</strong>
+                <span class="stat-note">รอผู้ถูกย้ายไปถึงปลายทาง</span>
+            </div>
         </section>
-        <section>
-            <h2>ห้องที่เปิดอยู่</h2>
-            <div id="rooms"></div>
-        </section>
+
+        <div class="layout">
+            <div class="primary-column">
+                <section id="queues">
+                    <div class="section-head">
+                        <h2>คิวผู้ป่วย</h2>
+                        <p class="section-hint">ปุ่ม “ส่งต่อ” จะส่งไปขั้นถัดไป เลือกขั้นอื่นได้จากรายการ</p>
+                    </div>
+                    <div id="queue-list"></div>
+                </section>
+
+                <section id="rooms-section">
+                    <div class="section-head">
+                        <h2>ห้อง</h2>
+                        <div class="toolbar">
+                            <label class="search">
+                                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+                                <input id="room-filter" type="search" placeholder="ค้นหา HN ห้อง หรือชื่อ" autocomplete="off" aria-label="ค้นหาห้อง">
+                            </label>
+                            <div id="kind-filter" class="segmented" role="group" aria-label="ประเภทห้อง">
+                                <button type="button" data-kind="" aria-pressed="true">ทั้งหมด</button>
+                                <button type="button" data-kind="patient" aria-pressed="false">ห้องผู้ป่วย</button>
+                                <button type="button" data-kind="station" aria-pressed="false">จุดบริการ</button>
+                                <button type="button" data-kind="lounge" aria-pressed="false">ห้องพัก</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="rooms"></div>
+                    <p id="rooms-none" class="empty" hidden>ไม่พบห้องที่ตรงกับการค้นหา</p>
+                </section>
+            </div>
+
+            <aside id="activity" class="panel" aria-label="กิจกรรมล่าสุด">
+                <h2><svg class="i" aria-hidden="true" focusable="false"><use href="#i-activity"/></svg>ผลการย้ายล่าสุด</h2>
+                <ul id="outcomes" aria-live="polite"></ul>
+                <p class="empty activity-empty">ยังไม่มีการย้ายใน 2 นาทีที่ผ่านมา</p>
+            </aside>
+        </div>
+
+        <div id="notice" role="status" hidden>
+            <svg class="i" aria-hidden="true" focusable="false"><use id="notice-icon" href="#i-info"/></svg>
+            <span id="notice-text"></span>
+            <button id="notice-close" type="button" class="ghost" aria-label="ปิดข้อความ">
+                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-x"/></svg>
+            </button>
+        </div>
     </main>
 
     <script type="module" src="screen/screen.js"></script>
