@@ -94,9 +94,10 @@ describe('Coordinator: cancelled, conflicting and forged moves', () => {
     });
 
     it('tells the participant the unit of the countdown', async () => {
-        // The countdown counts down from 5 to 1; the text must read "in N seconds…".
-        expect(await (await staff.driver.$('#coordinator-move-notice')).getText())
-            .toMatch(/^You are being moved to another room in [1-5] seconds…/u);
+        // The countdown counts down from 5 to 1 on a ring, with its unit under the number, above the title.
+        const text = await (await staff.driver.$('#coordinator-move-notice')).getText();
+
+        expect(text).toMatch(/^[1-5]\s+seconds\s+You are being moved to another room/u);
     });
 
     it('stays in the room and ends the move as cancelled when the participant cancels', async () => {

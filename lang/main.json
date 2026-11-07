@@ -269,7 +269,9 @@
     },
     "coordinatorMove": {
         "cancel": "Stay here",
-        "notice": "You are being moved to another room in {{seconds}} seconds…"
+        "hint": "Your camera and microphone stay as they are.",
+        "seconds": "seconds",
+        "title": "You are being moved to another room"
     },
     "customPanel": {
         "close": "Close",
