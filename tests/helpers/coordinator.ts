@@ -142,6 +142,31 @@ export async function waitForRoom(
     }
 }
 
+/**
+ * Waits until no patient is in a station. A patient that an earlier spec left there, or whose browser an earlier spec
+ * has just closed, makes the service refuse every move into the station (`destination_holds_a_patient`) until they go.
+ *
+ * @param {string} station - The station's name.
+ * @param {number} timeout - How long to wait, in milliseconds.
+ * @returns {Promise<void>}
+ */
+export async function waitForStationFree(station: string, timeout = 60_000): Promise<void> {
+    const deadline = Date.now() + timeout;
+
+    for (;;) {
+        const room = (await getRooms()).find(r => r.name === station);
+        const patients = room?.occupants.filter(o => o.role === 'patient') ?? [];
+
+        if (patients.length === 0) {
+            return;
+        }
+        if (Date.now() > deadline) {
+            throw new Error(`${station} still holds a patient after ${timeout} ms: ${JSON.stringify(patients)}`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+    }
+}
+
 /** A move as the API reports it. */
 export interface IMove {
     id: string;
@@ -328,4 +353,30 @@ async function waitForCoordinator(): Promise<void> {
 export function coordinatorLogs(since: Date): string {
     return execFileSync('docker', [ 'logs', '--since', since.toISOString(), config.coordinator.container ?? '' ],
         { encoding: 'utf8', stdio: [ 'ignore', 'pipe', 'pipe' ] });
+}
+
+/**
+ * Runs a step, and when it fails adds to the failure how long it ran and the service's log since it began.
+ *
+ * @param {() => Promise<T>} step - The step.
+ * @returns {Promise<T>}
+ */
+export async function withServiceLog<T>(step: () => Promise<T>): Promise<T> {
+    const since = new Date();
+
+    try {
+        return await step();
+    } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        let logs: string;
+
+        try {
+            logs = coordinatorLogs(since);
+        } catch {
+            logs = '(the service log could not be read)';
+        }
+
+        throw new Error(`${message}\nFailed after ${Date.now() - since.getTime()} ms. Service log since the step began:\n${logs}`,
+            { cause: error });
+    }
 }

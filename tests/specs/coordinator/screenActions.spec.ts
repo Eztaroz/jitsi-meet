@@ -7,7 +7,9 @@ import {
     getAudit,
     getQueues,
     screenUrl,
-    waitForRoom
+    waitForRoom,
+    waitForStationFree,
+    withServiceLog
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
@@ -177,6 +179,9 @@ describe('Coordinator: acting from the screen', () => {
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
         await a.driver.waitUntil(
             async () => (await roomText(a, station)).length > 0, { timeoutMsg: 'the station is not shown' });
+        // A patient that an earlier spec left in the station makes the service refuse this move at once, and then no
+        // screen ever shows it moving (#43).
+        await waitForStationFree(station);
         await a.driver.execute((name: string, to: string) => {
             const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
             const select = card.querySelector('.occupant[data-role="patient"] select.move-to') as HTMLSelectElement;
@@ -187,9 +192,9 @@ describe('Coordinator: acting from the screen', () => {
         }, room, station);
 
         // The recorder bot is asked to record the patient's time in the station before they are told.
-        await Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
+        await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
             async () => (await roomText(screen, room)).includes('กำลังย้าย'),
-            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' })));
+            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
 
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
         await (await patientBrowser.driver.$('#coordinator-move-cancel')).click();

@@ -3,20 +3,33 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
     <title>ศูนย์ควบคุมการย้ายห้อง</title>
     <link rel="stylesheet" href="screen/screen.css">
 </head>
 <body>
-    <header>
-        <h1>ศูนย์ควบคุมการย้ายห้อง</h1>
+    <header class="topbar">
+        <div class="brand">
+            <svg class="brand-mark" viewBox="0 0 24 24" width="28" height="28" aria-hidden="true" focusable="false">
+                <rect width="24" height="24" rx="7" fill="currentColor"/>
+                <path d="M12 6v12M6 12h12" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+            </svg>
+            <div>
+                <h1>ศูนย์ควบคุมการย้ายห้อง</h1>
+                <p class="tagline">ดูคิว ห้อง และย้ายผู้เข้าร่วมจากที่เดียว</p>
+            </div>
+        </div>
         <div id="who" hidden>
+            <span class="live" title="หน้าจอนี้อัปเดตเองทุกไม่กี่วินาที"><i class="live-dot"></i>อัปเดตอัตโนมัติ</span>
             <span id="who-name"></span>
-            <button id="sign-out" type="button">ออกจากระบบ</button>
+            <button id="sign-out" type="button" class="secondary">ออกจากระบบ</button>
         </div>
     </header>
 
     <main id="signin">
-        <form id="signin-form">
+        <form id="signin-form" class="panel">
+            <h2>เข้าสู่ระบบ</h2>
+            <p class="hint">วางโทเคนของผู้ประสานงานที่ได้รับจากระบบของโรงพยาบาล</p>
             <label for="signin-token">โทเคนของผู้ประสานงาน</label>
             <textarea id="signin-token" rows="4" autocomplete="off" spellcheck="false"></textarea>
             <button id="signin-submit" type="submit">เข้าสู่ระบบ</button>

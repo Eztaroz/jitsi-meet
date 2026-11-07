@@ -124,3 +124,4 @@ react-native-sdk/sounds
 tests/.env
 test-results
 
+.devcontainer/devcontainer-lock.json
