@@ -112,6 +112,16 @@ The mobile apps' code stays in the repository; only the deployment refuses them.
 
 Nothing in the automated suite runs on a phone's browser. Before relying on a deployment, run the [mobile-browser checklist](mobile-browser-checklist.md) on real devices: iOS Safari (current and previous iOS) and Chrome on Android. It has not been run yet.
 
+## Patients are never moderators
+
+A patient is never a moderator, in their own room, in a station or anywhere else; staff are, so that they can end a consultation for everyone. Jicofo does not know who is a patient: with JWT authentication it makes everyone with a token a moderator, and a moderator can grant moderator to anyone from the filmstrip or the participants pane. Prosody refuses it instead. On docker-jitsi-meet, mount `resources/prosody-plugins/mod_muc_patient_never_moderator.lua` into the `prosody` container at `/prosody-plugins-custom/`, add it to `XMPP_MUC_MODULES` (`XMPP_MUC_MODULES=muc_require_move_support,muc_patient_never_moderator`), and set its marker in `XMPP_MUC_CONFIGURATION`, the same as `COORDINATOR_PATIENT_MARKER`:
+
+```
+muc_patient_marker = "user.hospital_role=patient"
+```
+
+Without the option the module does nothing and logs an error when Prosody starts. Prosody logs "Refusing the owner affiliation for a patient in <room>" each time it refuses; Jicofo logs a "Failed to grant ownership" warning once per patient who joins, which is expected.
+
 ## API
 
 Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
