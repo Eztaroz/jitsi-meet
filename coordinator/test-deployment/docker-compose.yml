@@ -24,16 +24,20 @@ services:
         volumes:
             - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
             - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
+            - ../../resources/prosody-plugins/mod_muc_patient_never_moderator.lua:/prosody-plugins-custom/mod_muc_patient_never_moderator.lua:ro
         environment:
             ENABLE_BREAKOUT_ROOMS: 'false'
             # Refuses a client that does not announce that it obeys moves, apart from the hosts listed in
             # muc_require_move_support_exempt_hosts: the auth domain (Jicofo) and the recorder bot's hidden domain
             # (ADR 0010). The guest domain is not exempt. This replaces the JWT variant's XMPP_MUC_CONFIGURATION,
             # so it repeats the token verification allowlist.
-            XMPP_MUC_MODULES: muc_require_move_support
+            # Keeps patients, by the same marker as the coordinator service's, out of the moderator role in every
+            # room: Jicofo makes everyone with a token a moderator.
+            XMPP_MUC_MODULES: muc_require_move_support,muc_patient_never_moderator
             XMPP_MUC_CONFIGURATION: |
                 token_verification_allowlist = { "${XMPP_HIDDEN_DOMAIN}" }
                 muc_require_move_support_exempt_hosts = { "auth.meet.jitsi"; "${XMPP_HIDDEN_DOMAIN}" }
+                muc_patient_marker = "user.hospital_role=patient"
             # The guest domain exists so that webOnly.spec.ts can check that it is not exempt.
             ENABLE_GUESTS: '1'
             XMPP_MODULES: presence_identity,coordinator_api

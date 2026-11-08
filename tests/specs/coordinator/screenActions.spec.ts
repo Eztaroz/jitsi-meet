@@ -6,7 +6,9 @@ import {
     coordinatorUnavailableReason,
     getAudit,
     getQueues,
+    postMove,
     screenUrl,
+    waitForMove,
     waitForRoom,
     waitForStationFree,
     withServiceLog
@@ -20,7 +22,8 @@ setTestProperties(__filename, {
     description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, moves \
 a patient to a station, changes an encounter\'s stage and marks it done. A participant being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
-participant, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
+participant, refused. A patient in a station is offered their own room, though it closed when they left it, and is \
+moved back there from the screen. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
 Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service \
 on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
@@ -234,5 +237,46 @@ describe('Coordinator: acting from the screen', () => {
         expect(mine.every(e => e.issuer === coordinatorA.id || e.issuer === coordinatorB.id)).toBe(true);
         expect(mine.find(e => e.outcome === 'cancelled')?.issuer).toBe(coordinatorA.id);
         expect(mine.find(e => e.outcome === 'refused')?.issuer).toBe(coordinatorB.id);
+    });
+
+    it('moves a patient in a station back to their own room, which closed when they left it', async () => {
+        const room = hn.toLowerCase();
+        const station = 'intake-1';
+        const patientLine = (browser: Participant) => browser.driver.execute((name: string, who: string) => {
+            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name);
+            const line = card && Array.from(card.querySelectorAll('.occupant[data-role="patient"]'))
+                .find(e => (e as HTMLElement).innerText.includes(who));
+
+            return line
+                ? Array.from(line.querySelectorAll('select.move-to option')).map(o => (o as HTMLOptionElement).value)
+                : undefined;
+        }, station, patient.name);
+
+        await waitForStationFree(station);
+        const home = await waitForRoom(r => r?.occupants.some(o => o.identity?.id === patient.id) === true, hn, 'the patient at home');
+        const endpoint = home!.occupants.find(o => o.identity?.id === patient.id)!.endpointId;
+        const { body } = await postMove(room, endpoint, station);
+
+        await waitForMove(body.id, 'done');
+        // The recorder bot leaves with the patient: their own room closes, and the service lists it nowhere.
+        await waitForRoom(r => r === undefined || !r.open || r.occupants.length === 0, hn, 'their room closed');
+
+        await a.driver.waitUntil(async () => (await patientLine(a)) !== undefined,
+            { timeout: 15_000, timeoutMsg: 'the patient is not shown in the station' });
+        expect(await patientLine(a)).toContain(room);
+
+        await a.driver.execute((name: string, who: string, to: string) => {
+            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
+            const line = Array.from(card.querySelectorAll('.occupant[data-role="patient"]'))
+                .find(e => (e as HTMLElement).innerText.includes(who))!;
+            const select = line.querySelector('select.move-to') as HTMLSelectElement;
+
+            select.value = to;
+            select.dispatchEvent(new Event('change'));
+            (line.querySelector('.move-go') as HTMLElement).click();
+        }, station, patient.name, room);
+
+        await waitForRoom(r => r?.occupants.some(o => o.identity?.id === patient.id) === true, hn, 'the patient back home',
+            60_000);
     });
 });

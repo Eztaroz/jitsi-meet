@@ -7,7 +7,9 @@ import {
 } from '../base/config/actions';
 import { buildConfigURL } from '../base/config/functions.any';
 import { setLocationURL } from '../base/connection/actions.web';
+import i18next from '../base/i18n/i18next';
 import { stripJwtSignatures } from '../base/jwt/functions';
+import { JitsiConferenceErrors } from '../base/lib-jitsi-meet';
 import { loadConfig } from '../base/lib-jitsi-meet/functions.web';
 import { isEmbedded } from '../base/util/embedUtils';
 import { parseURIString } from '../base/util/uri';
@@ -155,6 +157,13 @@ export function maybeRedirectToWelcomePage(options: { feedbackSubmitted?: boolea
             return;
         }
 
+        // Neither a close page nor the welcome page: nothing would replace the meeting, which then looks frozen.
+        if (!isWelcomePageEnabled(getState())) {
+            dispatch(redirectToLeftPage());
+
+            return;
+        }
+
         // else: show thankYou dialog only if there is no feedback
         if (options.showThankYou) {
             dispatch(showNotification({
@@ -172,6 +181,53 @@ export function maybeRedirectToWelcomePage(options: { feedbackSubmitted?: boolea
                 },
                 options.showThankYou ? 3000 : 500);
         }
+    };
+}
+
+/**
+ * The session storage key under which static/left.html finds the URL that rejoins the room just left.
+ */
+const REJOIN_URL_KEY = 'leftPageRejoinUrl';
+
+/**
+ * The session storage key under which static/left.html finds what its satisfaction survey sends with the answers:
+ * the room just left and the participant's token, which the coordinator service checks.
+ */
+const SURVEY_KEY = 'leftPageSurvey';
+
+/**
+ * Redirects to static/left.html, the page that tells the participant they have left the room, in the meeting's
+ * language. It offers to rejoin the room with the same token, unless the meeting was ended for everyone, as there is
+ * nothing to rejoin then.
+ *
+ * @returns {Function}
+ */
+function redirectToLeftPage() {
+    return (dispatch: IStore['dispatch'], getState: IStore['getState']) => {
+        const state = getState();
+        const { jwt } = state['features/base/jwt'];
+        const { error, room } = state['features/base/conference'];
+        const ended = error?.name === JitsiConferenceErrors.CONFERENCE_DESTROYED;
+        const { hash, origin, pathname } = window.location;
+
+        try {
+            if (ended) {
+                window.sessionStorage.removeItem(REJOIN_URL_KEY);
+            } else {
+                window.sessionStorage.setItem(REJOIN_URL_KEY, `${origin}${pathname}${jwt ? `?jwt=${jwt}` : ''}${hash}`);
+            }
+            if (jwt && room) {
+                window.sessionStorage.setItem(SURVEY_KEY, JSON.stringify({ room, token: jwt }));
+            } else {
+                window.sessionStorage.removeItem(SURVEY_KEY);
+            }
+        } catch (storageError) {
+            logger.warn('Could not keep what the left page needs', storageError);
+        }
+
+        const language = `lang=${encodeURIComponent(i18next.language ?? '')}`;
+
+        dispatch(redirectToStaticPage('static/left.html', `#${language}${ended ? '&ended=true' : ''}`));
     };
 }
 

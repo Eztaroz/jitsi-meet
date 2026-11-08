@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 
 import { signToken } from '../src/jwt.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
-import { type ICoordinatorAuth, verifyCoordinator } from '../src/screenAuth.ts';
+import { type ICoordinatorAuth, verifyCoordinator, verifyPatient } from '../src/screenAuth.ts';
 
 const pair = () => generateKeyPairSync('rsa', {
     modulusLength: 2048,
@@ -94,5 +94,21 @@ describe('signing in to the coordinator screen', () => {
 describe('the issuer\'s keys', () => {
     it('are named by the SHA-256 of the key id', () => {
         assert.equal(createHash('sha256').update('hospital/key').digest('hex').length, 64);
+    });
+});
+
+describe('a patient\'s token, for the satisfaction survey', () => {
+    const patients: ICoordinatorAuth = { ...auth, marker: parseRoleMarker('user.hospital_role=patient', 'X') as never };
+
+    it('is accepted when it carries the patient role marker, and says whose it is', async () => {
+        const patient = token({ claims: { context: { user: { hospital_role: 'patient', id: 'p-1', name: 'Patient P' } } } });
+
+        assert.deepEqual(await verifyPatient(patient, patients, NOW), { id: 'p-1', name: 'Patient P' });
+    });
+
+    it('is refused when it is a staff member\'s', async () => {
+        const staff = token({ claims: { context: { user: { hospital_role: 'staff', id: 's-1' } } } });
+
+        await assert.rejects(verifyPatient(staff, patients, NOW), /not_a_patient/u);
     });
 });

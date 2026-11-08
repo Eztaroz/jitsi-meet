@@ -269,7 +269,9 @@
     },
     "coordinatorMove": {
         "cancel": "Stay here",
-        "notice": "You are being moved to another room in {{seconds}} seconds…"
+        "hint": "Your camera and microphone stay as they are.",
+        "seconds": "seconds",
+        "title": "You are being moved to another room"
     },
     "customPanel": {
         "close": "Close",
@@ -760,6 +762,54 @@
     "largeVideo": {
         "screenIsShared": "You are sharing your screen",
         "showMeWhatImSharing": "Show me what I'm sharing"
+    },
+    "leftPage": {
+        "endedTitle": "The consultation has ended",
+        "hint": "You can close this page now.",
+        "rejoin": "Rejoin the room",
+        "title": "You have left the room"
+    },
+    "leftSurvey": {
+        "aspects": {
+            "care": "The staff took good care of me",
+            "ease": "Joining the call was easy",
+            "quality": "Picture and sound were clear",
+            "wait": "The waiting time was reasonable"
+        },
+        "commentLabel": "Suggestions",
+        "commentPlaceholder": "Tell us what we could do better",
+        "detailsHide": "Hide the detailed rating",
+        "detailsShow": "Rate each part of the service (optional)",
+        "levels": {
+            "1": "Very little",
+            "2": "Little",
+            "3": "Moderate",
+            "4": "Much",
+            "5": "Very much"
+        },
+        "optional": "Optional, it takes under a minute",
+        "ratings": {
+            "1": "Very poor",
+            "2": "Poor",
+            "3": "Okay",
+            "4": "Good",
+            "5": "Excellent"
+        },
+        "sendFailed": "Your answers could not be sent. Please try again.",
+        "skip": "Skip",
+        "submit": "Send",
+        "tags": {
+            "disconnected": "Got disconnected",
+            "explained": "Clear explanation",
+            "kind": "Friendly staff",
+            "picture": "Picture was unclear",
+            "sound": "Sound was unclear",
+            "wait": "Waited too long"
+        },
+        "tagsTitle": "What stood out?",
+        "thanks": "Thank you for your feedback",
+        "thanksHint": "It helps us improve the service.",
+        "title": "How was your video call?"
     },
     "liveStreaming": {
         "busy": "We're working on freeing streaming resources. Please try again in a few minutes.",

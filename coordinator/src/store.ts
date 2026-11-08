@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import type { IAuditEntry } from './audit.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
+import type { ISurvey } from './surveys.ts';
 
 /** What the coordinator service keeps about a move beside the rules module's state, so that a restart can pick it up. */
 export interface IMoveRecord {
@@ -70,6 +71,13 @@ export class Store {
             room TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )`);
+
+        this._db.exec(`CREATE TABLE IF NOT EXISTS surveys (
+            id TEXT PRIMARY KEY,
+            submitted_at TEXT NOT NULL,
+            survey TEXT NOT NULL
+        )`);
+        this._db.exec('CREATE INDEX IF NOT EXISTS surveys_submitted_at ON surveys (submitted_at)');
 
         // A database made before stages gets the columns added.
         const columns = (this._db.prepare('PRAGMA table_info(encounters)').all() as { name: string; }[]).map(c => c.name);
@@ -242,6 +250,36 @@ export class Store {
     }
 
     /**
+     * Keeps a satisfaction survey.
+     *
+     * @param {ISurvey} survey - The survey.
+     * @returns {void}
+     */
+    addSurvey(survey: ISurvey): void {
+        this._db.prepare('INSERT INTO surveys (id, submitted_at, survey) VALUES (?, ?, ?)')
+            .run(survey.id, survey.submittedAt.toISOString(), JSON.stringify(survey));
+    }
+
+    /**
+     * Reads the satisfaction surveys submitted in a period.
+     *
+     * @param {Date} from - The start of the period, included.
+     * @param {Date} to - The end of the period, included.
+     * @returns {ISurvey[]} The oldest first.
+     */
+    surveys(from: Date, to: Date): ISurvey[] {
+        const rows = this._db.prepare(
+            'SELECT survey FROM surveys WHERE submitted_at >= ? AND submitted_at <= ? ORDER BY submitted_at, id'
+        ).all(from.toISOString(), to.toISOString()) as { survey: string; }[];
+
+        return rows.map(r => {
+            const survey = JSON.parse(r.survey) as ISurvey & { submittedAt: string; };
+
+            return { ...survey, submittedAt: new Date(survey.submittedAt) };
+        });
+    }
+
+    /**
      * Marks the patients' own rooms as seen now, so that a room that is seen again unchanged is not swept as old.
      *
      * @param {Record<string, string>} seen - The room each patient was seen in, by verified identity id.
@@ -257,19 +295,20 @@ export class Store {
     }
 
     /**
-     * Deletes the encounters, moves, patients' own rooms and audit entries older than a time.
+     * Deletes the encounters, moves, patients' own rooms, surveys and audit entries older than a time.
      *
      * @param {Date} cutoff - What is older than this goes.
      * @returns {Object} How many of each.
      */
-    sweep(cutoff: Date): { audit: number; encounters: number; moves: number; patientRooms: number; } {
+    sweep(cutoff: Date): { audit: number; encounters: number; moves: number; patientRooms: number; surveys: number; } {
         const at = cutoff.toISOString();
 
         return {
             audit: Number(this._db.prepare('DELETE FROM audit WHERE at < ?').run(at).changes),
             encounters: Number(this._db.prepare('DELETE FROM encounters WHERE started_at < ?').run(at).changes),
             moves: Number(this._db.prepare('DELETE FROM moves WHERE started_at < ?').run(at).changes),
-            patientRooms: Number(this._db.prepare('DELETE FROM patient_rooms WHERE updated_at < ?').run(at).changes)
+            patientRooms: Number(this._db.prepare('DELETE FROM patient_rooms WHERE updated_at < ?').run(at).changes),
+            surveys: Number(this._db.prepare('DELETE FROM surveys WHERE submitted_at < ?').run(at).changes)
         };
     }
 

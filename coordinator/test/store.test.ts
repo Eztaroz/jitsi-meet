@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 
 import { type IMove, initialState, step } from '../src/rules.ts';
 import { Store, newMoveRecord } from '../src/store.ts';
+import type { ISurvey } from '../src/surveys.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
 
@@ -103,5 +104,47 @@ describe('saving audit entries with the moves', () => {
 
         assert.equal(store.audit(10).length, 0);
         assert.equal(store.loadMoveRecords().size, 0);
+    });
+});
+
+describe('the satisfaction surveys', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const survey = (id: string, submittedAt: Date): ISurvey => ({
+        aspects: { care: 5 },
+        comment: 'ขอบคุณครับ',
+        encounterId: 'enc-1',
+        hn: '6512345',
+        hnSource: 'known',
+        id,
+        rating: 5,
+        room: 'own_room',
+        stage: 'examination',
+        submittedAt,
+        tags: [ 'kind' ]
+    });
+
+    it('keeps surveys across a restart and reads those of a period, oldest first', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'store-'));
+        const store = new Store(dir);
+
+        store.addSurvey(survey('b', new Date('2030-01-02T08:00:00Z')));
+        store.addSurvey(survey('a', new Date('2030-01-01T08:00:00Z')));
+        store.addSurvey(survey('c', new Date('2030-01-03T08:00:00Z')));
+        store.close();
+
+        const surveys = new Store(dir).surveys(new Date('2030-01-01T00:00:00Z'), new Date('2030-01-02T23:59:59Z'));
+
+        assert.deepEqual(surveys, [ survey('a', new Date('2030-01-01T08:00:00Z')), survey('b', new Date('2030-01-02T08:00:00Z')) ]);
+    });
+
+    it('deletes the surveys older than the retention period', () => {
+        const now = new Date('2030-06-01T00:00:00Z');
+        const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
+
+        store.addSurvey(survey('old', new Date(now.getTime() - 100 * DAY)));
+        store.addSurvey(survey('new', new Date(now.getTime() - 10 * DAY)));
+
+        assert.equal(store.sweep(new Date(now.getTime() - 90 * DAY)).surveys, 1);
+        assert.deepEqual(store.surveys(new Date(0), now).map(s => s.id), [ 'new' ]);
     });
 });

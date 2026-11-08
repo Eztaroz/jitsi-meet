@@ -24,6 +24,7 @@ import {
     step
 } from './rules.ts';
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
+import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 
 /** The states of a move that is under way: it has no audit entry until it ends. */
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
@@ -201,6 +202,44 @@ export class CoordinatorService {
      */
     audit(limit: number): IAuditEntry[] {
         return this._opts.store.audit(limit);
+    }
+
+    /**
+     * Keeps a patient's satisfaction survey, tied to their HN and encounter as far as the service knows them.
+     *
+     * @param {string} identityId - The patient's verified identity id.
+     * @param {ISurveyAnswers} answers - What they answered, and the room they left.
+     * @returns {ISurvey}
+     */
+    addSurvey(identityId: string, answers: ISurveyAnswers): ISurvey {
+        const { room, ...rest } = answers;
+        const survey: ISurvey = {
+            ...rest,
+            ...placeSurvey({ identityId, layout: this._opts.layout, room, state: this._state }),
+            id: randomUUID(),
+            submittedAt: new Date()
+        };
+
+        this._opts.store.addSurvey(survey);
+
+        return survey;
+    }
+
+    /**
+     * Writes the report of the surveys submitted in a period, and says in the audit log who exported it: it names
+     * patients by their HN.
+     *
+     * @param {Date} from - The start of the period.
+     * @param {Date} to - The end of the period.
+     * @param {string} issuer - Who asks: `system`.
+     * @returns {string} CSV.
+     */
+    surveyReport(from: Date, to: Date, issuer: string): string {
+        const surveys = this._opts.store.surveys(from, to);
+
+        this._audit({ at: new Date(), count: surveys.length, issuer, kind: 'survey_export', outcome: 'ok' });
+
+        return surveysCsv(surveys, this._opts.timeZone);
     }
 
     /**
@@ -481,7 +520,7 @@ export class CoordinatorService {
                     this._records.delete(id);
                 }
             }
-            if (removed.audit || removed.encounters || removed.moves || removed.patientRooms) {
+            if (Object.values(removed).some(Boolean)) {
                 log.info('retention sweep', removed);
             }
         }).catch(error => log.error('the retention sweep failed', { error: (error as Error).name }));

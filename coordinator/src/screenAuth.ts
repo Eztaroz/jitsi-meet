@@ -109,7 +109,34 @@ function decode(part: string): Record<string, unknown> {
  * @returns {Promise<ICoordinator>}
  * @throws {SignInError} When the token does not sign a coordinator in.
  */
-export async function verifyCoordinator(token: string, auth: ICoordinatorAuth, now = new Date()): Promise<ICoordinator> {
+export function verifyCoordinator(token: string, auth: ICoordinatorAuth, now = new Date()): Promise<ICoordinator> {
+    return verifyMarked(token, auth, 'not_a_coordinator', now);
+}
+
+/**
+ * Checks a token and says who a patient is, for the satisfaction survey. The marker of `auth` is the patient marker.
+ *
+ * @param {string} token - The token.
+ * @param {ICoordinatorAuth} auth - What it has to be.
+ * @param {Date} now - When.
+ * @returns {Promise<ICoordinator>}
+ * @throws {SignInError} When the token is not a patient's.
+ */
+export function verifyPatient(token: string, auth: ICoordinatorAuth, now = new Date()): Promise<ICoordinator> {
+    return verifyMarked(token, auth, 'not_a_patient', now);
+}
+
+/**
+ * Checks a token from the hospital's issuer that carries a role marker, and says whose it is.
+ *
+ * @param {string} token - The token.
+ * @param {ICoordinatorAuth} auth - What it has to be, with the marker of the role.
+ * @param {string} unmarked - The code of the refusal when the token does not carry the marker.
+ * @param {Date} now - When.
+ * @returns {Promise<ICoordinator>}
+ * @throws {SignInError} When it is not such a token.
+ */
+async function verifyMarked(token: string, auth: ICoordinatorAuth, unmarked: string, now: Date): Promise<ICoordinator> {
     const parts = token.split('.');
 
     if (parts.length !== 3) {
@@ -156,7 +183,7 @@ export async function verifyCoordinator(token: string, auth: ICoordinatorAuth, n
     const value = auth.marker.path[0] === 'group' ? context.group : user[auth.marker.path[1]];
 
     if (value !== auth.marker.value) {
-        throw new SignInError('not_a_coordinator');
+        throw new SignInError(unmarked);
     }
     if (typeof user.id !== 'string' || !user.id) {
         throw new SignInError('no_identity');
