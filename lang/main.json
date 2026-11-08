@@ -763,6 +763,11 @@
         "screenIsShared": "You are sharing your screen",
         "showMeWhatImSharing": "Show me what I'm sharing"
     },
+    "leftPage": {
+        "hint": "You can close this page now.",
+        "rejoin": "Rejoin the room",
+        "title": "You have left the room"
+    },
     "liveStreaming": {
         "busy": "We're working on freeing streaming resources. Please try again in a few minutes.",
         "busyTitle": "All streamers are currently busy",

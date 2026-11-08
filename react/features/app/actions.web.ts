@@ -7,6 +7,7 @@ import {
 } from '../base/config/actions';
 import { buildConfigURL } from '../base/config/functions.any';
 import { setLocationURL } from '../base/connection/actions.web';
+import i18next from '../base/i18n/i18next';
 import { stripJwtSignatures } from '../base/jwt/functions';
 import { loadConfig } from '../base/lib-jitsi-meet/functions.web';
 import { isEmbedded } from '../base/util/embedUtils';
@@ -155,6 +156,13 @@ export function maybeRedirectToWelcomePage(options: { feedbackSubmitted?: boolea
             return;
         }
 
+        // Neither a close page nor the welcome page: nothing would replace the meeting, which then looks frozen.
+        if (!isWelcomePageEnabled(getState())) {
+            dispatch(redirectToLeftPage());
+
+            return;
+        }
+
         // else: show thankYou dialog only if there is no feedback
         if (options.showThankYou) {
             dispatch(showNotification({
@@ -172,6 +180,32 @@ export function maybeRedirectToWelcomePage(options: { feedbackSubmitted?: boolea
                 },
                 options.showThankYou ? 3000 : 500);
         }
+    };
+}
+
+/**
+ * The session storage key under which static/left.html finds the URL that rejoins the room just left.
+ */
+const REJOIN_URL_KEY = 'leftPageRejoinUrl';
+
+/**
+ * Redirects to static/left.html, the page that tells the participant they have left the room, in the meeting's
+ * language, and offers to rejoin it with the same token.
+ *
+ * @returns {Function}
+ */
+function redirectToLeftPage() {
+    return (dispatch: IStore['dispatch'], getState: IStore['getState']) => {
+        const { jwt } = getState()['features/base/jwt'];
+        const { hash, origin, pathname } = window.location;
+
+        try {
+            window.sessionStorage.setItem(REJOIN_URL_KEY, `${origin}${pathname}${jwt ? `?jwt=${jwt}` : ''}${hash}`);
+        } catch (error) {
+            logger.warn('Could not keep the URL that rejoins the room', error);
+        }
+
+        dispatch(redirectToStaticPage('static/left.html', `#lang=${encodeURIComponent(i18next.language ?? '')}`));
     };
 }
 

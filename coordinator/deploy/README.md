@@ -108,6 +108,10 @@ The deployment supports the fork's web client only (ADR 0010, ADR 0007). On dock
 
 The mobile apps' code stays in the repository; only the deployment refuses them.
 
+### Leaving a room
+
+With the welcome page and the close page both off (`ENABLE_WELCOME_PAGE=false`, `enableClosePage: false`), a participant who leaves a room, by hanging up or because staff ended the meeting for everyone, lands on `static/left.html`. It says that they have left, in the meeting's language (the `leftPage` texts in `lang/`), and has a button that rejoins the room they left with the same token, which the meeting keeps in the tab's session storage. A move does not go through it: the client navigates straight to the destination.
+
 ### Checking a phone's browser by hand
 
 Nothing in the automated suite runs on a phone's browser. Before relying on a deployment, run the [mobile-browser checklist](mobile-browser-checklist.md) on real devices: iOS Safari (current and previous iOS) and Chrome on Android. It has not been run yet.

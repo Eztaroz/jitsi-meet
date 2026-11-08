@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <!--#include virtual="/base.html" -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!--#include virtual="/title.html" -->
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+        }
+
+        body {
+            background: #040404;
+            color: #e0e0e0;
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai", "Leelawadee UI",
+                sans-serif;
+        }
+
+        .left-layout {
+            align-items: center;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            justify-content: center;
+            min-height: 100%;
+            padding: 16px;
+        }
+
+        .left-card {
+            animation: left-pop 240ms ease-out;
+            background: #1e1e1e;
+            border-radius: 16px;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+            max-width: 400px;
+            padding: 40px 32px 32px;
+            text-align: center;
+            width: 100%;
+        }
+
+        .left-icon {
+            align-items: center;
+            background: rgba(34, 102, 220, 0.16);
+            border-radius: 50%;
+            display: inline-flex;
+            height: 88px;
+            justify-content: center;
+            margin-bottom: 24px;
+            width: 88px;
+        }
+
+        .left-title {
+            color: #ffffff;
+            font-size: 1.5rem;
+            font-weight: 600;
+            line-height: 1.35;
+            margin: 0 0 8px;
+        }
+
+        .left-hint {
+            color: #a4b8d1;
+            font-size: 1rem;
+            line-height: 1.5;
+            margin: 0;
+        }
+
+        .left-rejoin {
+            background: #246fe5;
+            border: 0;
+            border-radius: 8px;
+            color: #ffffff;
+            cursor: pointer;
+            font: inherit;
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-top: 32px;
+            min-height: 56px;
+            padding: 12px 24px;
+            width: 100%;
+        }
+
+        .left-rejoin:hover {
+            background: #4687ed;
+        }
+
+        .left-rejoin:focus-visible {
+            outline: 3px solid #a4b8d1;
+            outline-offset: 2px;
+        }
+
+        .left-rejoin[hidden] {
+            display: none;
+        }
+
+        @media (max-width: 480px) {
+            .left-card {
+                padding: 32px 20px 24px;
+            }
+        }
+
+        @keyframes left-pop {
+            from {
+                opacity: 0;
+                transform: scale(0.96);
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .left-card {
+                animation: none;
+            }
+        }
+    </style>
+    <script src="static/left.js"></script>
+</head>
+<body>
+    <div class="left-layout" id="left-layout">
+    <main class="left-card" id="left-page">
+        <div class="left-icon" aria-hidden="true">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#4687ed" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <path d="M16 17l5-5-5-5"/>
+                <path d="M21 12H9"/>
+            </svg>
+        </div>
+        <h1 class="left-title" id="left-title">You have left the room</h1>
+        <p class="left-hint" id="left-hint">You can close this page now.</p>
+        <button class="left-rejoin" id="left-rejoin" type="button" hidden>Rejoin the room</button>
+    </main>
+    </div>
+</body>
+</html>
