@@ -1,7 +1,7 @@
 // The page a participant lands on once they have left a room (static/left.html), when the deployment has neither a
 // close page nor the welcome page. It shows the "leftPage" texts of lang/main-<language>.json, in the language the
 // meeting had (the "lang" hash parameter), and offers to rejoin the room with the URL the meeting kept in session
-// storage.
+// storage, unless the meeting was ended for everyone (the "ended" hash parameter).
 
 /**
  * The session storage key under which the meeting keeps the URL that rejoins the room (see
@@ -25,15 +25,17 @@ function getRejoinUrl() {
 }
 
 /**
- * Reads the meeting's language from the hash, such as "th" in "#lang=th".
+ * Reads a parameter of the hash, such as "th" for "lang" in "#lang=th&ended=true".
  *
+ * @param {string} name - The parameter.
  * @returns {string|undefined}
  */
-function getLanguage() {
-    const match = window.location.hash.match(/(?:^#|&)lang=([A-Za-z-]+)(?:&|$)/);
-
-    return match ? match[1] : undefined;
+function getHashParam(name) {
+    return new URLSearchParams(window.location.hash.slice(1)).get(name) ?? undefined;
 }
+
+/** Whether the meeting was ended for everyone, rather than left. */
+const ended = getHashParam('ended') === 'true';
 
 /**
  * Shows the page's texts in the meeting's language. English, in the page itself, stays when the language has no
@@ -43,7 +45,7 @@ function getLanguage() {
  * @returns {Promise<void>}
  */
 async function translate(language) {
-    if (!language || language === 'en') {
+    if (!language || !/^[A-Za-z-]+$/.test(language) || language === 'en') {
         return;
     }
 
@@ -57,9 +59,10 @@ async function translate(language) {
         document.documentElement.lang = language;
         [ 'title', 'hint', 'rejoin' ].forEach(key => {
             const element = document.getElementById(`left-${key}`);
+            const text = key === 'title' && ended ? texts.endedTitle : texts[key];
 
-            if (element && texts[key]) {
-                element.textContent = texts[key];
+            if (element && text) {
+                element.textContent = text;
             }
         });
     } catch (error) {
@@ -68,14 +71,19 @@ async function translate(language) {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-    const rejoinUrl = getRejoinUrl();
+    const rejoinUrl = ended ? undefined : getRejoinUrl();
     const rejoin = document.getElementById('left-rejoin');
 
     if (rejoinUrl && rejoin) {
         rejoin.hidden = false;
         rejoin.addEventListener('click', () => window.location.assign(rejoinUrl));
     }
-    translate(getLanguage()).then(() => {
+    const title = document.getElementById('left-title');
+
+    if (ended && title) {
+        title.textContent = 'The consultation has ended';
+    }
+    translate(getHashParam('lang')).then(() => {
         document.title = document.getElementById('left-title')?.textContent ?? document.title;
     });
 });

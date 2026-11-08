@@ -764,6 +764,7 @@
         "showMeWhatImSharing": "Show me what I'm sharing"
     },
     "leftPage": {
+        "endedTitle": "The consultation has ended",
         "hint": "You can close this page now.",
         "rejoin": "Rejoin the room",
         "title": "You have left the room"

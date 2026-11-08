@@ -9,6 +9,7 @@ import { buildConfigURL } from '../base/config/functions.any';
 import { setLocationURL } from '../base/connection/actions.web';
 import i18next from '../base/i18n/i18next';
 import { stripJwtSignatures } from '../base/jwt/functions';
+import { JitsiConferenceErrors } from '../base/lib-jitsi-meet';
 import { loadConfig } from '../base/lib-jitsi-meet/functions.web';
 import { isEmbedded } from '../base/util/embedUtils';
 import { parseURIString } from '../base/util/uri';
@@ -190,22 +191,32 @@ const REJOIN_URL_KEY = 'leftPageRejoinUrl';
 
 /**
  * Redirects to static/left.html, the page that tells the participant they have left the room, in the meeting's
- * language, and offers to rejoin it with the same token.
+ * language. It offers to rejoin the room with the same token, unless the meeting was ended for everyone, as there is
+ * nothing to rejoin then.
  *
  * @returns {Function}
  */
 function redirectToLeftPage() {
     return (dispatch: IStore['dispatch'], getState: IStore['getState']) => {
-        const { jwt } = getState()['features/base/jwt'];
+        const state = getState();
+        const { jwt } = state['features/base/jwt'];
+        const { error } = state['features/base/conference'];
+        const ended = error?.name === JitsiConferenceErrors.CONFERENCE_DESTROYED;
         const { hash, origin, pathname } = window.location;
 
         try {
-            window.sessionStorage.setItem(REJOIN_URL_KEY, `${origin}${pathname}${jwt ? `?jwt=${jwt}` : ''}${hash}`);
-        } catch (error) {
-            logger.warn('Could not keep the URL that rejoins the room', error);
+            if (ended) {
+                window.sessionStorage.removeItem(REJOIN_URL_KEY);
+            } else {
+                window.sessionStorage.setItem(REJOIN_URL_KEY, `${origin}${pathname}${jwt ? `?jwt=${jwt}` : ''}${hash}`);
+            }
+        } catch (storageError) {
+            logger.warn('Could not keep the URL that rejoins the room', storageError);
         }
 
-        dispatch(redirectToStaticPage('static/left.html', `#lang=${encodeURIComponent(i18next.language ?? '')}`));
+        const language = `lang=${encodeURIComponent(i18next.language ?? '')}`;
+
+        dispatch(redirectToStaticPage('static/left.html', `#${language}${ended ? '&ended=true' : ''}`));
     };
 }
 

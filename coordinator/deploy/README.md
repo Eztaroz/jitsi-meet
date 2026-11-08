@@ -110,7 +110,7 @@ The mobile apps' code stays in the repository; only the deployment refuses them.
 
 ### Leaving a room
 
-With the welcome page and the close page both off (`ENABLE_WELCOME_PAGE=false`, `enableClosePage: false`), a participant who leaves a room, by hanging up or because staff ended the meeting for everyone, lands on `static/left.html`. It says that they have left, in the meeting's language (the `leftPage` texts in `lang/`), and has a button that rejoins the room they left with the same token, which the meeting keeps in the tab's session storage. A move does not go through it: the client navigates straight to the destination.
+With the welcome page and the close page both off (`ENABLE_WELCOME_PAGE=false`, `enableClosePage: false`), a participant who leaves a room, by hanging up or because staff ended the meeting for everyone, lands on `static/left.html`, in the meeting's language (the `leftPage` texts in `lang/`). After hanging up, it says that they have left and has a button that rejoins the room they left with the same token, which the meeting keeps in the tab's session storage. After staff ended the meeting for everyone, it says that the consultation has ended, with nothing to rejoin. A move does not go through it: the client navigates straight to the destination.
 
 ### Checking a phone's browser by hand
 

@@ -10,10 +10,11 @@ import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
     description: 'The deployment has neither the welcome page nor a close page, so a participant who leaves a room \
-lands on static/left.html, which says that they have left and offers to rejoin the room with the same token, rather \
-than staying on a meeting that looks frozen. It is so whether they hang up themselves or a staff member ends the \
-meeting for everyone, once they have acknowledged that it ended. Skipped unless the deployment is the JWT variant of \
-the recorder bot\'s test deployment with the coordinator service on top of it.',
+lands on static/left.html rather than staying on a meeting that looks frozen. A participant who hangs up is told \
+that they have left and offered to rejoin the room with the same token; once a staff member has ended the meeting \
+for everyone, and they have acknowledged it, it says that the consultation has ended, with nothing to rejoin. Skipped \
+unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service on top \
+of it.',
     usesBrowsers: [ 'p1', 'p2' ]
 });
 
@@ -70,7 +71,8 @@ describe('Coordinator: the page a participant lands on once they have left', () 
         expect(new URL(await patient.driver.getUrl()).pathname.toLowerCase()).toBe(`/${room.toLowerCase()}`);
     });
 
-    it('takes everyone to the left page once a staff member has ended the meeting for everyone', async () => {
+    it('tells everyone that the consultation has ended once a staff member has ended the meeting \
+for everyone', async () => {
         const room = patientLinkRoom(uniqueHn('ENDED'));
         const patient = await joinMuc({ name: 'p1', token: patientToken() }, { roomName: room });
         const staff = await joinMuc({ name: 'p2', token: staffToken() }, { roomName: room });
@@ -83,7 +85,8 @@ describe('Coordinator: the page a participant lands on once they have left', () 
 
             await ok.waitForDisplayed({ timeout: 15_000 });
             await ok.click();
-            expect(await waitForLeftPage(participant)).toBe('You have left the room');
+            expect(await waitForLeftPage(participant)).toBe('The consultation has ended');
+            expect(await participant.driver.$('#left-rejoin').isDisplayed()).toBe(false);
         }
     });
 });
