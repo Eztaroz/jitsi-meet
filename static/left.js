@@ -1,7 +1,8 @@
 // The page a participant lands on once they have left a room (static/left.html), when the deployment has neither a
 // close page nor the welcome page. It shows the "leftPage" texts of lang/main-<language>.json, in the language the
 // meeting had (the "lang" hash parameter), and offers to rejoin the room with the URL the meeting kept in session
-// storage, unless the meeting was ended for everyone (the "ended" hash parameter).
+// storage, unless the meeting was ended for everyone (the "ended" hash parameter). static/left-survey.js adds the
+// satisfaction survey below it.
 
 /**
  * The session storage key under which the meeting keeps the URL that rejoins the room (see
@@ -34,43 +35,57 @@ function getHashParam(name) {
     return new URLSearchParams(window.location.hash.slice(1)).get(name) ?? undefined;
 }
 
-/** Whether the meeting was ended for everyone, rather than left. */
-const ended = getHashParam('ended') === 'true';
-
 /**
- * Shows the page's texts in the meeting's language. English, in the page itself, stays when the language has no
- * translation file or it cannot be fetched.
+ * Fetches a translation file.
  *
- * @param {string|undefined} language - The language.
- * @returns {Promise<void>}
+ * @param {string} file - Its name, such as "main-th.json".
+ * @returns {Promise<Object>} Its texts, or nothing when it cannot be fetched.
  */
-async function translate(language) {
-    if (!language || !/^[A-Za-z-]+$/.test(language) || language === 'en') {
-        return;
-    }
-
+async function fetchTexts(file) {
     try {
-        const response = await fetch(`lang/main-${language}.json`);
-        const texts = response.ok ? (await response.json()).leftPage : undefined;
+        const response = await fetch(`lang/${file}`);
 
-        if (!texts) {
-            return;
-        }
-        document.documentElement.lang = language;
-        [ 'title', 'hint', 'rejoin' ].forEach(key => {
-            const element = document.getElementById(`left-${key}`);
-            const text = key === 'title' && ended ? texts.endedTitle : texts[key];
-
-            if (element && text) {
-                element.textContent = text;
-            }
-        });
+        return response.ok ? await response.json() : {};
     } catch (error) {
-        // The English texts stay.
+        return {};
     }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+/**
+ * Loads the page's texts: English, with the meeting's language over it.
+ *
+ * @param {string|undefined} language - The meeting's language.
+ * @returns {Promise<Object>} The "leftPage" and "leftSurvey" texts.
+ */
+async function loadTexts(language) {
+    const [ english, translated ] = await Promise.all([
+        fetchTexts('main.json'),
+        /^[A-Za-z-]+$/.test(language ?? '') && language !== 'en' ? fetchTexts(`main-${language}.json`) : {}
+    ]);
+
+    return {
+        leftPage: {
+            ...english.leftPage,
+            ...translated.leftPage
+        },
+        leftSurvey: {
+            ...english.leftSurvey,
+            ...translated.leftSurvey
+        }
+    };
+}
+
+const language = getHashParam('lang');
+
+/** What static/left-survey.js shares with this page. */
+window.leftPage = {
+    ended: getHashParam('ended') === 'true',
+    language,
+    texts: loadTexts(language)
+};
+
+window.addEventListener('DOMContentLoaded', async () => {
+    const { ended, texts } = window.leftPage;
     const rejoinUrl = ended ? undefined : getRejoinUrl();
     const rejoin = document.getElementById('left-rejoin');
 
@@ -78,12 +93,23 @@ window.addEventListener('DOMContentLoaded', () => {
         rejoin.hidden = false;
         rejoin.addEventListener('click', () => window.location.assign(rejoinUrl));
     }
-    const title = document.getElementById('left-title');
 
-    if (ended && title) {
-        title.textContent = 'The consultation has ended';
+    const { leftPage } = await texts;
+    const shown = {
+        hint: leftPage.hint,
+        rejoin: leftPage.rejoin,
+        title: ended ? leftPage.endedTitle : leftPage.title
+    };
+
+    if (language) {
+        document.documentElement.lang = language;
     }
-    translate(getHashParam('lang')).then(() => {
-        document.title = document.getElementById('left-title')?.textContent ?? document.title;
+    Object.entries(shown).forEach(([ key, text ]) => {
+        const element = document.getElementById(`left-${key}`);
+
+        if (element && text) {
+            element.textContent = text;
+        }
     });
+    document.title = document.getElementById('left-title')?.textContent ?? document.title;
 });

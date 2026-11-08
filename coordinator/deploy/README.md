@@ -18,12 +18,12 @@ It is for the hospital's internal network only, and is reached through the web s
 | `COORDINATOR_TOKEN_SUBJECT` (required) | The `sub` claim of the tokens the service issues for a move, as your participants' tokens have it (the XMPP domain). |
 | `COORDINATOR_TOKEN_ISSUER`, `COORDINATOR_TOKEN_AUDIENCE` | The `iss` and `aud` of those tokens. Defaults `coordinator` and `jitsi`. Prosody must accept them (below). |
 | `COORDINATOR_ROOMS_FILE` | A JSON file naming the stations and lounges: `{"stations": [{"room": "intake-1", "stage": "intake"}], "lounges": [{"room": "lounge-1"}]}`. A station's stage is `intake` or `aftercare`. A room in neither list is a patient's own. There is no editing in the service itself: change the file and restart. |
-| `COORDINATOR_TIME_ZONE` | An IANA time zone, such as `Asia/Bangkok`. Default `UTC`. At every midnight in it, the encounters still open are closed as unfinished. |
+| `COORDINATOR_TIME_ZONE` | An IANA time zone, such as `Asia/Bangkok`. Default `UTC`. At every midnight in it, the encounters still open are closed as unfinished; the survey report gives its times in it. |
 | `COORDINATOR_AUDIT_KEY` | The key of the references to patients' rooms in the audit log. Defaults to the API secret. Whoever has it can tell which entries are of one room; keep it away from the people who read the log. |
-| `COORDINATOR_RETENTION_DAYS` | How long encounters and audit entries are kept: `90` by default, as for evidence recordings. Older ones are deleted. |
+| `COORDINATOR_RETENTION_DAYS` | How long encounters, satisfaction surveys and audit entries are kept: `90` by default, as for evidence recordings. Older ones are deleted. |
 | `COORDINATOR_RETENTION_SWEEP_SECONDS` | How often the service deletes them: `3600` by default; it also does at start-up. |
-| `COORDINATOR_ISSUER_KEYS` | Turns the coordinator screen on: where the hospital issuer's public keys are, a directory or the URL of a key server, as `<source>/<SHA-256 of the key id>.pem`, the layout of the key server your participants' tokens use. Without it there is no screen. |
-| `COORDINATOR_ACCEPTED_ISSUERS`, `COORDINATOR_ACCEPTED_AUDIENCES` | Which `iss` and `aud` a coordinator's token may have, comma-separated. Defaults `chat` and `jitsi`, as docker-jitsi-meet's. |
+| `COORDINATOR_ISSUER_KEYS` | Turns the coordinator screen on, and with `COORDINATOR_PATIENT_MARKER` the satisfaction survey: where the hospital issuer's public keys are, a directory or the URL of a key server, as `<source>/<SHA-256 of the key id>.pem`, the layout of the key server your participants' tokens use. Without it there is neither. |
+| `COORDINATOR_ACCEPTED_ISSUERS`, `COORDINATOR_ACCEPTED_AUDIENCES` | Which `iss` and `aud` a coordinator's, or a patient's survey, token may have, comma-separated. Defaults `chat` and `jitsi`, as docker-jitsi-meet's. |
 | `COORDINATOR_COORDINATOR_MARKER` | The claim that marks a coordinator, written like the role markers. Default `user.hospital_role=coordinator`. |
 | `COORDINATOR_PREPARE_WAIT_SECONDS` | How long the recorder bot has to open a closed destination before a move into it fails with `recorder_bot_not_ready` and the participant stays where they are. Default `30`. Shorten it only to test; it must leave the recorder bot time to join a room. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
@@ -112,6 +112,8 @@ The mobile apps' code stays in the repository; only the deployment refuses them.
 
 With the welcome page and the close page both off (`ENABLE_WELCOME_PAGE=false`, `enableClosePage: false`), a participant who leaves a room, by hanging up or because staff ended the meeting for everyone, lands on `static/left.html`, in the meeting's language (the `leftPage` texts in `lang/`). After hanging up, it says that they have left and has a button that rejoins the room they left with the same token, which the meeting keeps in the tab's session storage. After staff ended the meeting for everyone, it says that the consultation has ended, with nothing to rejoin. A move does not go through it: the client navigates straight to the destination.
 
+A patient is also asked the [satisfaction survey](#satisfaction-survey) there.
+
 ### Checking a phone's browser by hand
 
 Nothing in the automated suite runs on a phone's browser. Before relying on a deployment, run the [mobile-browser checklist](mobile-browser-checklist.md) on real devices: iOS Safari (current and previous iOS) and Chrome on Android. It has not been run yet.
@@ -125,6 +127,19 @@ muc_patient_marker = "user.hospital_role=patient"
 ```
 
 Without the option the module does nothing and logs an error when Prosody starts. Prosody logs "Refusing the owner affiliation for a patient in <room>" each time it refuses; Jicofo logs a "Failed to grant ownership" warning once per patient who joins, which is expected.
+
+## Satisfaction survey
+
+A patient who has left a room is asked, on `static/left.html`, how the video call was: five faces to tap, then what stood out, an optional rating of four parts of the service (joining, picture and sound, waiting time, the staff's care) from 5 to 1, and suggestions. All of it is optional. The page sends the answers to `/coordinator/survey` with the patient's own token, which the meeting keeps in the tab's session storage, and the service keeps them with the patient's HN. It needs `COORDINATOR_ISSUER_KEYS` and `COORDINATOR_PATIENT_MARKER`: the token must be from the hospital's issuer and carry the patient marker. A staff member's page is not asked: the service answers its token `403`, and the page shows no survey.
+
+The HN is the one of the patient's own room as the service has learned it (`hn_source` `known`). When it has not learned it, it is the room the page says the patient left, unless that is a station or a lounge (`reported`): the patient's page can name any room, so a `reported` HN is the patient's word. A patient who left a station before the service learned their room has no HN in the report. The survey is tied to the HN's latest encounter, and to the stage it was in.
+
+The hospital's quality department gets the report as CSV with `GET /surveys.csv` (below), opened in a spreadsheet: the times in `COORDINATOR_TIME_ZONE`, the tags as `picture`, `sound`, `wait` (waited too long), `disconnected`, `explained` (clear explanation) and `kind` (friendly staff), separated by `;`. The report names patients by HN: hand it on as patient data, under the hospital's PDPA rules. Each export is in the audit log, `kind: "survey_export"` with the `count` of surveys, and surveys older than `COORDINATOR_RETENTION_DAYS` are deleted, as encounters are.
+
+| Request | Answer |
+|---|---|
+| `GET /survey` with `Authorization: Bearer <patient's token>` | `200` when the token may answer the survey; `403` and `{error}` when it is not a patient's (`not_a_patient`) or not valid; `401` without a token; `404` when the deployment has no survey. |
+| `POST /survey` with the patient's token and `{"room": "...", "rating": 1-5, "tags": [...], "aspects": {"ease", "quality", "wait", "care": 1-5}, "comment": "..."}` | `201` and `{id}`. `400` for answers that are not a survey; `429` when the same patient sent one less than 30 seconds before. |
 
 ## API
 
@@ -140,6 +155,7 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 | `POST /moves` with `{"from": {"room": "...", "endpointId": "..."}, "to": {"room": "..."}}` | Moves the participant `endpointId` from the open room `from.room` to the room `to.room`, both as `GET /rooms` names them. `202` and `{id, state}`: `counting_down` (the participant's page counts down five seconds, then enters the destination with a token for it), or `preparing` (the recorder bot is asked first, and the participant is sent once it is ready: for a patient moved to a patient's room that is closed, to record the room; for a patient moved into a station, to record that patient's time in it, under their HN, with the station named in the evidence recording). Or `200` and `{id, state: "refused", reason}`: `participant_not_found`, `participant_not_movable` (hidden, or unverified), `patient_into_lounge`, `not_the_patients_room` (a patient may be moved only into a station or into their own room, as the service has seen them in it, never into a room named after another HN, open or closed; while it has not seen a patient in their own room, only into a station), `destination_holds_a_patient` (a station), `patient_room_unknown` (a patient to be recorded in a station whose own room the service has not seen them in), `destination_not_open` (a staff member, or any move to a closed station), `already_being_moved` (the participant's earlier move is still under way). `503` if Prosody cannot be asked. |
 | `GET /moves/<id>` | `{id, state, reason}`: `preparing`, `counting_down`, `done` (the same verified identity is in the destination), `cancelled` (the participant pressed "Stay here" during the countdown) or `failed`: `participant_did_not_arrive` (30 seconds after the countdown), `recorder_bot_at_capacity` (it answered `503`; nobody is moved), `recorder_bot_not_ready` (it was not waiting for the room within 30 seconds), `recorder_bot_unreachable` or `could_not_send_move`. |
 | `GET /audit?limit=100` | `{entries}`: the newest audit entries (at most 1000), the newest first. Every move that has ended (`done`, `cancelled`, `refused`, `failed`, with its `reason`) and every stage change (`from`, `to`, `outcome`) has one: `at`, `issuer` (`system` for a call with the bearer secret), `participantId` (the moved participant's verified identity id), `source` and `destination`, `encounterId`. A station or a lounge is named; a patient's room is a keyed reference, `room:` and 16 hexadecimal digits, never the HN (ADR 0005). The service's logs hold no HN either. |
+| `GET /surveys.csv?from=...&to=...` | The [satisfaction survey](#satisfaction-survey) report of a period, as a CSV file with a byte order mark: `submitted_at`, `hn`, `hn_source`, `encounter_id`, `stage`, `room` (a station's name, or `own_room`), `rating`, `ease`, `quality`, `wait`, `care`, `tags`, `comment`. `from` and `to` are ISO 8601 times, such as `2030-01-01T00:00:00+07:00`; by default, the last 30 days. `400` for a time it cannot read. |
 | `GET /health` | `200` and the number of open encounters. |
 
 Encounters are identified by an opaque id. The HN appears only in the body that starts an encounter and in what `GET /encounters/<id>` returns, never in a path or in the service's logs (ADR 0005).

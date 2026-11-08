@@ -108,6 +108,10 @@ _Avoid_: Staff room, desk, booth
 A fixed room where staff wait between patients; no patient is ever in it, so nothing in it is recorded.
 _Avoid_: Break room, home room
 
+**Satisfaction survey**:
+What a patient answers, if they choose to, about a video call on the page they land on once they have left a room: an overall rating, what stood out, a rating of each part of the service and suggestions. It is kept with the patient's HN, for the hospital's quality department.
+_Avoid_: Feedback, review, rating
+
 ### Moves
 
 **Coordinator**:

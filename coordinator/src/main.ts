@@ -30,13 +30,16 @@ const service = new CoordinatorService({
 service.resume().catch(error => log.error('could not resume the moves', { error: (error as Error).name }));
 service.startDayEnds();
 service.startRetention();
+const issuer = config.screen && {
+    acceptedAudiences: config.screen.acceptedAudiences,
+    acceptedIssuers: config.screen.acceptedIssuers,
+    keyFor: keyLookup(config.screen.keys)
+};
 const api = createApi({
-    screen: config.screen && {
-        acceptedAudiences: config.screen.acceptedAudiences,
-        acceptedIssuers: config.screen.acceptedIssuers,
-        keyFor: keyLookup(config.screen.keys),
-        marker: config.screen.marker
-    },
+    screen: issuer && config.screen && { ...issuer, marker: config.screen.marker },
+
+    // A patient's page sends the survey with the patient's token, from the same issuer as the coordinators'.
+    survey: issuer && config.roleMarkers.patient && { ...issuer, marker: config.roleMarkers.patient },
     secret: config.apiSecret,
     service
 });

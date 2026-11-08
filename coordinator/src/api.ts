@@ -14,10 +14,14 @@ import { RecorderBotUnavailableError } from './recorderBot.ts';
 import { type IEncounter, type IMove, STAGES, type Stage } from './rules.ts';
 import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
+import { createSurveyRoutes } from './surveyRoutes.ts';
 
 /** Who the audit log names for a call with the shared bearer secret. */
 const SYSTEM = 'system';
 const MAX_HN_LENGTH = 128;
+
+/** The period of a survey report without one. */
+const DEFAULT_REPORT_DAYS = 30;
 
 /**
  * Compares two secrets in constant time.
@@ -105,15 +109,43 @@ function moveFrom(body: unknown): { endpointId: string; fromRoom: string; toRoom
 }
 
 /**
+ * Reads a time of a report's period: ISO 8601, such as `2030-01-01T00:00:00+07:00`.
+ *
+ * @param {string|null} value - The query parameter.
+ * @param {Date} fallback - The time without it.
+ * @returns {Date}
+ */
+function reportTime(value: string | null, fallback: Date): Date {
+    if (value === null) {
+        return fallback;
+    }
+
+    const time = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|[+-]\d{2}:\d{2})?)?$/u.test(value) ? new Date(value) : undefined;
+
+    if (!time || Number.isNaN(time.getTime())) {
+        throw new HttpError(400, 'from and to must be ISO 8601 times, such as 2030-01-01T00:00:00+07:00');
+    }
+
+    return time;
+}
+
+/**
  * Creates the API server.
  *
  * @param {Object} options - Options.
  * @param {CoordinatorService} options.service - The coordinator service.
  * @param {ICoordinatorAuth} options.screen - How coordinators sign in; without it there is no screen.
  * @param {string} options.secret - The shared bearer secret.
+ * @param {ICoordinatorAuth} options.survey - The hospital's issuer with the patient marker, which a patient's token
+ * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ screen, secret, service }: { screen?: ICoordinatorAuth; secret: string; service: CoordinatorService; }): Server {
+export function createApi({ screen, secret, service, survey }: {
+    screen?: ICoordinatorAuth;
+    secret: string;
+    service: CoordinatorService;
+    survey?: ICoordinatorAuth;
+}): Server {
     /**
      * Handles the requests that act: starting an encounter, moving a participant and changing a stage. The system and
      * the coordinators' screen make the same ones, and the audit log names who made them.
@@ -187,6 +219,7 @@ export function createApi({ screen, secret, service }: { screen?: ICoordinatorAu
     }
 
     const handleScreen = createScreenRoutes({ act, screen, service });
+    const handleSurvey = createSurveyRoutes({ auth: survey, service });
 
     /**
      * Handles one request.
@@ -198,8 +231,15 @@ export function createApi({ screen, secret, service }: { screen?: ICoordinatorAu
     async function handle(req: IncomingMessage, res: ServerResponse) {
         const [ scheme, token ] = (req.headers.authorization ?? '').split(' ');
 
-        if (new URL(req.url ?? '/', 'http://localhost').pathname.startsWith('/screen')) {
+        const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+
+        if (path.startsWith('/screen')) {
             await handleScreen(req, res, scheme === 'Bearer' ? token : undefined);
+
+            return;
+        }
+        if (path === '/survey') {
+            await handleSurvey(req, res, scheme === 'Bearer' ? token : undefined);
 
             return;
         }
@@ -239,6 +279,20 @@ export function createApi({ screen, secret, service }: { screen?: ICoordinatorAu
             const limit = Math.min(Number(new URL(req.url ?? '/', 'http://localhost').searchParams.get('limit')) || 100, 1000);
 
             send(res, 200, { entries: service.audit(limit) });
+
+            return;
+        }
+        if (pathname === '/surveys.csv' && req.method === 'GET') {
+            const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+            const to = reportTime(query.get('to'), new Date());
+            const from = reportTime(query.get('from'), new Date(to.getTime() - (DEFAULT_REPORT_DAYS * 24 * 60 * 60 * 1000)));
+
+            res.writeHead(200, {
+                'cache-control': 'no-store',
+                'content-disposition': 'attachment; filename="surveys.csv"',
+                'content-type': 'text/csv; charset=utf-8'
+            });
+            res.end(service.surveyReport(from, to, SYSTEM));
 
             return;
         }

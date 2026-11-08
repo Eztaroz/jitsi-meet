@@ -1,7 +1,7 @@
 /**
- * The audit log's entries: who asked for each move and each stage change, and what came of it. They name no
- * patient: a patient's room is referred to by a keyed reference, so that the log can be searched for one room by
- * someone who has the key, and tells nothing to anyone who has not (ADR 0005).
+ * The audit log's entries: who asked for each move and each stage change, and what came of it, and who exported the
+ * satisfaction surveys. They name no patient: a patient's room is referred to by a keyed reference, so that the log
+ * can be searched for one room by someone who has the key, and tells nothing to anyone who has not (ADR 0005).
  */
 import { createHmac } from 'node:crypto';
 
@@ -12,6 +12,9 @@ import type { IMove, Stage } from './rules.ts';
 export interface IAuditEntry {
     at: Date;
 
+    /** How many surveys an export held. */
+    count?: number;
+
     /** A move's destination: a station's or a lounge's name, or a keyed reference. */
     destination?: string;
 
@@ -21,7 +24,7 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'move' | 'stage';
+    kind: 'move' | 'stage' | 'survey_export';
     outcome: string;
 
     /** The moved participant's verified identity id. */

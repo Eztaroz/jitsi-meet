@@ -190,6 +190,12 @@ export function maybeRedirectToWelcomePage(options: { feedbackSubmitted?: boolea
 const REJOIN_URL_KEY = 'leftPageRejoinUrl';
 
 /**
+ * The session storage key under which static/left.html finds what its satisfaction survey sends with the answers:
+ * the room just left and the participant's token, which the coordinator service checks.
+ */
+const SURVEY_KEY = 'leftPageSurvey';
+
+/**
  * Redirects to static/left.html, the page that tells the participant they have left the room, in the meeting's
  * language. It offers to rejoin the room with the same token, unless the meeting was ended for everyone, as there is
  * nothing to rejoin then.
@@ -200,7 +206,7 @@ function redirectToLeftPage() {
     return (dispatch: IStore['dispatch'], getState: IStore['getState']) => {
         const state = getState();
         const { jwt } = state['features/base/jwt'];
-        const { error } = state['features/base/conference'];
+        const { error, room } = state['features/base/conference'];
         const ended = error?.name === JitsiConferenceErrors.CONFERENCE_DESTROYED;
         const { hash, origin, pathname } = window.location;
 
@@ -210,8 +216,13 @@ function redirectToLeftPage() {
             } else {
                 window.sessionStorage.setItem(REJOIN_URL_KEY, `${origin}${pathname}${jwt ? `?jwt=${jwt}` : ''}${hash}`);
             }
+            if (jwt && room) {
+                window.sessionStorage.setItem(SURVEY_KEY, JSON.stringify({ room, token: jwt }));
+            } else {
+                window.sessionStorage.removeItem(SURVEY_KEY);
+            }
         } catch (storageError) {
-            logger.warn('Could not keep the URL that rejoins the room', storageError);
+            logger.warn('Could not keep what the left page needs', storageError);
         }
 
         const language = `lang=${encodeURIComponent(i18next.language ?? '')}`;

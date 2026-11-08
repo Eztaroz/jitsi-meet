@@ -12,9 +12,9 @@ setTestProperties(__filename, {
     description: 'The deployment has neither the welcome page nor a close page, so a participant who leaves a room \
 lands on static/left.html rather than staying on a meeting that looks frozen. A participant who hangs up is told \
 that they have left and offered to rejoin the room with the same token; once a staff member has ended the meeting \
-for everyone, and they have acknowledged it, it says that the consultation has ended, with nothing to rejoin. Skipped \
-unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service on top \
-of it.',
+for everyone, it says that the consultation has ended, with nothing to rejoin. A patient, and only a patient, is \
+asked the satisfaction survey there, which the coordinator service keeps. Skipped unless the deployment is the JWT \
+variant of the recorder bot\'s test deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1', 'p2' ]
 });
 
@@ -56,6 +56,25 @@ describe('Coordinator: the page a participant lands on once they have left', () 
         }
     });
 
+    it('takes a patient who hangs up to the left page, where they can answer the survey', async () => {
+        const room = patientLinkRoom(uniqueHn('SURVEY'));
+        const patient = await joinMuc({ name: 'p1', token: patientToken() }, { roomName: room });
+
+        await patient.getToolbar().clickHangupButton();
+        expect(await waitForLeftPage(patient)).toBe('You have left the room');
+
+        const $ = (selector: string) => patient.driver.$(selector);
+
+        await $('#left-survey').waitForDisplayed({ timeout: 10_000 });
+        await $('[data-rating="2"]').click();
+        await $('[data-tag="sound"]').click();
+        await $('[data-action="details"]').click();
+        await $('[data-aspect="quality"][data-level="2"]').click();
+        await $('#sv-comment').setValue('The sound kept cutting out.');
+        await $('[data-action="send"]').click();
+        await $('.sv-thanks').waitForDisplayed({ timeout: 10_000 });
+    });
+
     it('takes a patient who hangs up to the left page, from which they can rejoin the room', async () => {
         const room = patientLinkRoom(uniqueHn('LEFT'));
         const patient = await joinMuc({ name: 'p1', token: patientToken() }, { roomName: room });
@@ -71,8 +90,8 @@ describe('Coordinator: the page a participant lands on once they have left', () 
         expect(new URL(await patient.driver.getUrl()).pathname.toLowerCase()).toBe(`/${room.toLowerCase()}`);
     });
 
-    it('tells everyone that the consultation has ended once a staff member has ended the meeting \
-for everyone', async () => {
+    it('tells everyone that the consultation has ended once a staff member has ended the meeting for everyone, and \
+asks only the patient the survey', async () => {
         const room = patientLinkRoom(uniqueHn('ENDED'));
         const patient = await joinMuc({ name: 'p1', token: patientToken() }, { roomName: room });
         const staff = await joinMuc({ name: 'p2', token: staffToken() }, { roomName: room });
@@ -88,5 +107,11 @@ for everyone', async () => {
             expect(await waitForLeftPage(participant)).toBe('The consultation has ended');
             expect(await participant.driver.$('#left-rejoin').isDisplayed()).toBe(false);
         }
+        await patient.driver.$('#left-survey').waitForDisplayed({ timeout: 10_000 });
+
+        // The page asks the coordinator service before it shows the survey: give the staff member's page the time the
+        // patient's took.
+        await staff.driver.pause(3000);
+        expect(await staff.driver.$('#left-survey').isExisting()).toBe(false);
     });
 });
