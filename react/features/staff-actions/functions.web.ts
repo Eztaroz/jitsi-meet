@@ -177,3 +177,64 @@ export async function fetchQuestionnaires(state: IReduxState, encounterId: strin
         return undefined;
     }
 }
+
+/**
+ * Sends one of the staff member's video requests for the patient's encounter.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @param {string} encounterId - The encounter.
+ * @param {string} route - The path after the encounter: `/video`, `/video/stop` or `/video-choice`.
+ * @param {Object} [body] - The JSON body.
+ * @returns {Promise<string|undefined>} The reason when the service refused or could not be reached; undefined on success.
+ */
+async function videoRequest(state: IReduxState, encounterId: string, route: string, body: object = {}): Promise<string | undefined> {
+    try {
+        const response = await callStaffApi(state, `/encounters/${encodeURIComponent(encounterId)}${route}`, {
+            body: JSON.stringify(body),
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            return undefined;
+        }
+
+        return (await response.json() as { error?: string; }).error ?? 'failed';
+    } catch {
+        return 'unreachable';
+    }
+}
+
+/**
+ * Chooses the waiting video the patient gets at a stage, in place of the stage's default.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @param {string} encounterId - The encounter.
+ * @param {string} stage - The stage id.
+ * @param {string} video - The video id.
+ * @returns {Promise<string|undefined>} The reason it failed, or undefined.
+ */
+export function chooseVideo(state: IReduxState, encounterId: string, stage: string, video: string) {
+    return videoRequest(state, encounterId, '/video-choice', { stage, video });
+}
+
+/**
+ * Plays the patient's video for their current stage. It keeps playing after the staff member leaves.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<string|undefined>} The reason it failed, or undefined.
+ */
+export function playVideo(state: IReduxState, encounterId: string) {
+    return videoRequest(state, encounterId, '/video');
+}
+
+/**
+ * Stops the video playing in the patient's room.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<string|undefined>} The reason it failed, or undefined.
+ */
+export function stopVideo(state: IReduxState, encounterId: string) {
+    return videoRequest(state, encounterId, '/video/stop');
+}

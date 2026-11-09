@@ -11,8 +11,8 @@ import type { IMove, Stage } from './rules.ts';
 
 export interface IAuditEntry {
 
-    /** For a video entry, what was asked: `play` or `stop`. */
-    action?: 'play' | 'stop';
+    /** For a video entry, what was asked: `play`, `stop` or `choose` (the video of a stage). */
+    action?: 'choose' | 'play' | 'stop';
     at: Date;
 
     /** How many surveys an export held. */
@@ -45,6 +45,9 @@ export interface IAuditEntry {
 
     /** A move's origin: a lounge's name, or a keyed reference to a patient's room. */
     source?: string;
+
+    /** For a video choice, the stage it is for. */
+    stage?: string;
     to?: Stage;
 
     /** For a video entry, the video's id in the catalogue. */
@@ -141,16 +144,17 @@ export function doctorEntry({ at, doctor, encounterId, issuer, outcome, previous
  * @param {Object} options - Options.
  * @returns {IAuditEntry}
  */
-export function videoEntry({ action, at, encounterId, issuer, outcome, reason, video }: {
-    action: 'play' | 'stop';
+export function videoEntry({ action, at, encounterId, issuer, outcome, reason, stage, video }: {
+    action: 'choose' | 'play' | 'stop';
     at: Date;
     encounterId: string;
     issuer: string;
     outcome: 'ok' | 'refused';
     reason?: string;
+    stage?: string;
     video?: string;
 }): IAuditEntry {
-    return { action, at, encounterId, issuer, kind: 'video', outcome, reason, video };
+    return { action, at, encounterId, issuer, kind: 'video', outcome, reason, stage, video };
 }
 
 /**

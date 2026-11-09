@@ -6,7 +6,15 @@ import { makeStyles } from 'tss-react/mui';
 import { IReduxState } from '../../../app/types';
 import { getLocalParticipant, isPatientParticipant, isPatientsRoom } from '../../../base/participants/functions';
 import Button from '../../../base/ui/components/web/Button';
-import { changeStage, fetchQuestionnaires, fetchStaffContext, sendQuestionnaire } from '../../functions.web';
+import {
+    changeStage,
+    chooseVideo,
+    fetchQuestionnaires,
+    fetchStaffContext,
+    playVideo,
+    sendQuestionnaire,
+    stopVideo
+} from '../../functions.web';
 import { IStaffContext, IStaffQuestionnaire } from '../../types';
 
 /** How often the staff member's place is asked again, in milliseconds. */
@@ -29,6 +37,13 @@ const useStyles = makeStyles()(theme => {
             position: 'fixed',
             top: theme.spacing(10),
             zIndex: 300
+        },
+        row: {
+            alignItems: 'center',
+            display: 'flex',
+            flexBasis: '100%',
+            flexWrap: 'wrap',
+            gap: theme.spacing(2)
         },
         select: {
             backgroundColor: theme.palette.ui03,
@@ -107,6 +122,30 @@ const StaffStagePanel = () => {
         setError(await changeStage(store.getState(), context.encounter.id, chosen));
     }, [ chosen, context, store ]);
 
+    /**
+     * Sends a video request, shows why it was refused, and asks where the staff member is again at once.
+     *
+     * @param {Function} request - The request.
+     * @returns {Promise<void>}
+     */
+    const runVideo = useCallback(async (request: (encounterId: string) => Promise<string | undefined>) => {
+        if (!context?.encounter) {
+            return;
+        }
+        setError(await request(context.encounter.id));
+        setContext(await fetchStaffContext(store.getState()));
+    }, [ context, store ]);
+    const onChooseVideo = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
+        const video = event.target.value;
+
+        runVideo(id => chooseVideo(store.getState(), id, context?.encounter?.stage ?? '', video));
+    }, [ context, runVideo, store ]);
+    const onPlayVideo = useCallback(() => {
+        runVideo(id => playVideo(store.getState(), id));
+    }, [ runVideo, store ]);
+    const onStopVideo = useCallback(() => {
+        runVideo(id => stopVideo(store.getState(), id));
+    }, [ runVideo, store ]);
     const onPickQuestionnaire = useCallback((event: React.ChangeEvent<HTMLSelectElement>) =>
         setChosenQuestionnaire(event.target.value), []);
     const onSendQuestionnaire = useCallback(async () => {
@@ -148,6 +187,43 @@ const StaffStagePanel = () => {
                 id = 'staff-stage-apply'
                 labelKey = 'staffActions.apply'
                 onClick = { onApply } />
+            { Boolean(context.videos?.length) && (
+                <div
+                    className = { classes.row }
+                    id = 'staff-video-controls'>
+                    <select
+                        aria-label = { t('staffActions.pickVideo') }
+                        className = { classes.select }
+                        id = 'staff-video-picker'
+                        onChange = { onChooseVideo }
+                        value = { context.chosenVideo ?? '' }>
+                        <option
+                            disabled = { true }
+                            value = ''>
+                            { t('staffActions.pickVideo') }
+                        </option>
+                        { context.videos?.map(video => (
+                            <option
+                                key = { video.id }
+                                value = { video.id }>
+                                { video.title }
+                            </option>
+                        )) }
+                    </select>
+                    <Button
+                        accessibilityLabel = { t('staffActions.playVideo') }
+                        disabled = { context.videoPlaying || !context.chosenVideo }
+                        id = 'staff-video-play'
+                        labelKey = 'staffActions.playVideo'
+                        onClick = { onPlayVideo } />
+                    <Button
+                        accessibilityLabel = { t('staffActions.stopVideo') }
+                        disabled = { !context.videoPlaying }
+                        id = 'staff-video-stop'
+                        labelKey = 'staffActions.stopVideo'
+                        onClick = { onStopVideo } />
+                </div>
+            ) }
             { error && <span className = { classes.error }>{ t('staffActions.refused') }</span> }
             { Boolean(context.questionnaires?.length) && (
                 <>

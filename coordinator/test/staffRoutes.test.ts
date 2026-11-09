@@ -5,7 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
 import { createApi } from '../src/api.ts';
-import type { CoordinatorService, IStaffCallNextResult, IStaffStageResult } from '../src/coordinatorService.ts';
+import type {
+    CoordinatorService,
+    IStaffCallNextResult,
+    IStaffStageResult,
+    VideoRefusal
+} from '../src/coordinatorService.ts';
 import { signToken } from '../src/jwt.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
 import type { ICoordinatorAuth } from '../src/screenAuth.ts';
@@ -47,6 +52,8 @@ function tokenOf(role: string, id = 's-1'): string {
 
 describe('the staff API', () => {
     const asked: unknown[][] = [];
+    const videoAsked: unknown[][] = [];
+    let videoRefusal: VideoRefusal | undefined;
     let result: IStaffStageResult = { moved: true };
     let nextResult: IStaffCallNextResult = { moved: true };
     let questionnaireResult: Record<string, unknown> = {};
@@ -66,6 +73,21 @@ describe('the staff API', () => {
                 return nextResult;
             },
             staffContext: async (staff: unknown) => ({ staff, where: 'nowhere' }),
+            staffPlayVideo: async (...args: unknown[]) => {
+                videoAsked.push([ 'playVideo', ...args ]);
+
+                return videoRefusal ? { refused: videoRefusal } : { video: 'b' };
+            },
+            staffSetVideo: async (...args: unknown[]) => {
+                videoAsked.push([ 'setVideo', ...args ]);
+
+                return videoRefusal ? { refused: videoRefusal } : {};
+            },
+            staffStopVideo: async (...args: unknown[]) => {
+                videoAsked.push([ 'stopVideo', ...args ]);
+
+                return videoRefusal ? { refused: videoRefusal } : {};
+            },
             staffQuestionnairesOf: async (...args: unknown[]) => {
                 asked.push(args);
 
@@ -131,6 +153,37 @@ describe('the staff API', () => {
 
         result = { moved: false, refused: 'unknown_encounter' };
         assert.equal((await post(tokenOf('staff'))).status, 404);
+    });
+
+    it('lets a staff member choose, play and stop a video, naming them to the service', async () => {
+        const sam = { id: 's-7', name: 'Sam' };
+        const call = (path: string, body: unknown = {}, token = tokenOf('staff', 's-7')) =>
+            fetch(`${base}/staff/encounters/e-1${path}`, {
+                body: JSON.stringify(body),
+                headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+                method: 'POST'
+            });
+
+        assert.equal((await call('/video-choice', { stage: 'waiting', video: 'b' })).status, 200);
+        assert.deepEqual(videoAsked.at(-1), [ 'setVideo', 'e-1', 'waiting', 'b', sam ]);
+        assert.equal((await call('/video-choice', { stage: 'waiting' })).status, 400);
+
+        const played = await call('/video');
+
+        assert.deepEqual([ played.status, await played.json() ], [ 200, { video: 'b' } ]);
+        assert.deepEqual(videoAsked.at(-1), [ 'playVideo', 'e-1', sam ]);
+        assert.equal((await call('/video/stop')).status, 200);
+        assert.deepEqual(videoAsked.at(-1), [ 'stopVideo', 'e-1', sam ]);
+        assert.equal((await call('/video', {}, tokenOf('patient'))).status, 403);
+        assert.equal((await call('/video', {}, 'shared')).status, 403);
+
+        videoRefusal = 'not_in_patients_room';
+
+        const refused = await call('/video/stop');
+
+        assert.equal(refused.status, 403);
+        assert.deepEqual(await refused.json(), { error: 'not_in_patients_room' });
+        videoRefusal = undefined;
     });
 
     const questionnaires = (token: string | undefined, method: string, body?: unknown) =>

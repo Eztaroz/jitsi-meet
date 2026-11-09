@@ -310,13 +310,14 @@ export function screenUrl(): string {
 
 /** An audit entry as the API reports it. */
 export interface IAuditEntry {
+    action?: 'choose' | 'play' | 'stop';
     at: string;
     destination?: string;
     doctor?: string;
     encounterId?: string;
     from?: string;
     issuer: string;
-    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage';
+    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'video';
     outcome: string;
     participantId?: string;
     previousDoctor?: string;
@@ -324,6 +325,7 @@ export interface IAuditEntry {
     reason?: string;
     source?: string;
     to?: string;
+    video?: string;
 }
 
 /**

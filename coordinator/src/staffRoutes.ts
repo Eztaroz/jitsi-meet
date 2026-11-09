@@ -5,7 +5,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { CoordinatorService, IStaffStageResult } from './coordinatorService.ts';
+import type { CoordinatorService, IStaffStageResult, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { describeSent } from './questionnaires.ts';
@@ -18,6 +18,19 @@ const REFUSAL_STATUS: Record<NonNullable<IStaffStageResult['refused']>, number> 
     not_in_patients_room: 403,
     stage_not_in_pathway: 400,
     unknown_encounter: 404
+};
+
+/** The status of each refusal of a staff member's video request. */
+const VIDEO_REFUSAL_STATUS: Record<VideoRefusal, number> = {
+    already_playing: 409,
+    encounter_closed: 409,
+    no_video: 409,
+    not_in_patients_room: 403,
+    not_playing: 409,
+    stage_not_in_pathway: 400,
+    unknown_encounter: 404,
+    unknown_video: 400,
+    video_player_unavailable: 503
 };
 
 /** The status of each refusal of a staff member's questionnaire request. */
@@ -88,6 +101,34 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
                 moved: result.moved,
                 stage: result.encounter?.stage
             });
+
+            return;
+        }
+
+        const videoMatch = /^\/encounters\/([^/]+)\/(video-choice|video|video\/stop)$/u.exec(path);
+
+        if (videoMatch && req.method === 'POST') {
+            const encounterId = decodeURIComponent(videoMatch[1]);
+            let result: { refused?: VideoRefusal; video?: string; };
+
+            if (videoMatch[2] === 'video-choice') {
+                const asked = await readJson(req) as { stage?: unknown; video?: unknown; } | null;
+
+                if (typeof asked?.stage !== 'string' || !asked.stage || typeof asked.video !== 'string' || !asked.video) {
+                    throw new HttpError(400, 'stage and video must be non-empty strings');
+                }
+                result = await service.staffSetVideo(encounterId, asked.stage, asked.video, staff);
+            } else if (videoMatch[2] === 'video') {
+                result = await service.staffPlayVideo(encounterId, staff);
+            } else {
+                result = await service.staffStopVideo(encounterId, staff);
+            }
+            if (result.refused) {
+                send(res, VIDEO_REFUSAL_STATUS[result.refused], { error: result.refused });
+
+                return;
+            }
+            send(res, 200, { video: result.video });
 
             return;
         }

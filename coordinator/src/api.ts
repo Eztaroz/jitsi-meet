@@ -136,7 +136,9 @@ const VIDEO_REFUSALS: Record<VideoRefusal, [ number, string ]> = {
     'already_playing': [ 409, 'a video is already playing in the room' ],
     'encounter_closed': [ 409, 'the encounter is done' ],
     'no_video': [ 409, 'no video was asked for and the stage has no default video' ],
+    'not_in_patients_room': [ 403, 'staff can only do this from the patient\'s own room' ],
     'not_playing': [ 409, 'no video is playing in the room' ],
+    'stage_not_in_pathway': [ 400, 'the stage is not in the encounter\'s pathway' ],
     'unknown_encounter': [ 404, 'no such encounter' ],
     'unknown_video': [ 400, 'the video is not in the catalogue' ],
     'video_player_unavailable': [ 503, 'the video player cannot play now' ]
@@ -333,6 +335,25 @@ export function createApi({ screen, secret, service, staff, survey }: {
                 throw new HttpError(409, 'the encounter is done');
             }
             send(res, 200, encounterBody(service, encounter?.id as string));
+
+            return true;
+        }
+
+        const choiceMatch = /^\/encounters\/([^/]+)\/video-choice$/.exec(pathname);
+
+        if (choiceMatch && req.method === 'POST') {
+            const asked = await readJson(req) as { stage?: unknown; video?: unknown; } | null;
+
+            if (typeof asked?.stage !== 'string' || !asked.stage || typeof asked.video !== 'string' || !asked.video) {
+                throw new HttpError(400, 'stage and video must be non-empty strings');
+            }
+
+            const { refused } = await service.setVideo(decodeURIComponent(choiceMatch[1]), asked.stage, asked.video, issuer);
+
+            if (refused) {
+                throw new HttpError(...VIDEO_REFUSALS[refused]);
+            }
+            send(res, 200, { stage: asked.stage, video: asked.video });
 
             return true;
         }
