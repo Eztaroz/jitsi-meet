@@ -94,12 +94,14 @@ export function createScreenRoutes({ act, screen, service }: {
             const route = pathname.slice('/screen/api'.length);
 
             if (route === '/state' && req.method === 'GET') {
-                const queues = service.queues();
+                const rooms = await service.rooms();
+                const queues = service.queues(rooms);
                 const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
                 const recent = Date.now() - 2 * 60_000;
 
                 send(res, 200, {
                     coordinator,
+                    examination: service.examinationQueues(),
                     moves: service.state.moves
                         .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down')
                         .map(m => ({
@@ -113,9 +115,10 @@ export function createScreenRoutes({ act, screen, service }: {
                         })),
                     queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
                         [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
-                    rooms: await service.rooms(),
+                    rooms,
                     videos: service.playingVideos(),
-                    stages: service.stages().map(({ id, name }) => ({ id, name }))
+                    stages: service.stages().map(({ id, name }) => ({ id, name })),
+                    teams: service.teams(rooms)
                 });
 
                 return;

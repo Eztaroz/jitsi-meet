@@ -226,6 +226,34 @@ export async function postStage(id: string, stage: string): Promise<{ body: IEnc
     return { body: await response.json(), status: response.status };
 }
 
+/** Examination's queue split by doctor, as the API reports it. */
+export interface IExaminationQueues {
+    doctors: Record<string, IQueueEntry[]>;
+    unassigned: IQueueEntry[];
+}
+
+/**
+ * Reads examination's queue split by doctor.
+ *
+ * @returns {Promise<IExaminationQueues>}
+ */
+export async function getExamination(): Promise<IExaminationQueues> {
+    return (await (await callCoordinator('/queues')).json() as { examination: IExaminationQueues; }).examination;
+}
+
+/**
+ * Sets, changes or takes away an encounter's doctor, as the hospital's system does.
+ *
+ * @param {string} id - The encounter's id.
+ * @param {string|null} doctor - A staff member's verified identity id; null takes the doctor away.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postDoctor(id: string, doctor: string | null): Promise<{ body: IEncounter & { doctor?: string; }; status: number; }> {
+    const response = await callCoordinator(`/encounters/${id}/doctor`, { body: JSON.stringify({ doctor }), method: 'POST' });
+
+    return { body: await response.json(), status: response.status };
+}
+
 /**
  * Restarts the coordinator service's container and waits until its API answers.
  *
@@ -249,11 +277,14 @@ export function screenUrl(): string {
 export interface IAuditEntry {
     at: string;
     destination?: string;
+    doctor?: string;
     encounterId?: string;
+    from?: string;
     issuer: string;
-    kind: 'move' | 'stage';
+    kind: 'doctor' | 'move' | 'stage';
     outcome: string;
     participantId?: string;
+    previousDoctor?: string;
     reason?: string;
     source?: string;
     to?: string;
