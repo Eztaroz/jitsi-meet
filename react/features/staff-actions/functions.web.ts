@@ -112,3 +112,25 @@ export async function changeStage(state: IReduxState, encounterId: string, stage
         return 'unreachable';
     }
 }
+
+/**
+ * Asks the service to move the staff member to the next patient of their station. The service moves them after the
+ * usual countdown.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @returns {Promise<string|undefined>} The reason when the service refused (`queue_empty` when nobody is waiting) or
+ * could not be reached; undefined on success.
+ */
+export async function callNextPatient(state: IReduxState): Promise<string | undefined> {
+    try {
+        const response = await callStaffApi(state, '/next', { method: 'POST' });
+
+        if (response.ok) {
+            return undefined;
+        }
+
+        return (await response.json() as { error?: string; }).error ?? 'failed';
+    } catch {
+        return 'unreachable';
+    }
+}

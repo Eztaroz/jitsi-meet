@@ -46,6 +46,19 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
             return;
         }
 
+        if (path === '/next' && req.method === 'POST') {
+            const result = await service.staffCallNext(staff);
+
+            if (result.refused) {
+                send(res, result.refused === 'queue_empty' ? 409 : 403, { error: result.refused });
+
+                return;
+            }
+            send(res, 200, { encounterId: result.encounterId, moved: result.moved });
+
+            return;
+        }
+
         const stageMatch = /^\/encounters\/([^/]+)\/stage$/u.exec(path);
 
         if (stageMatch && req.method === 'POST') {
