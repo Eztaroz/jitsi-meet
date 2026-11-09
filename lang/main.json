@@ -1481,8 +1481,13 @@
     "staffActions": {
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
+        "answer": "{{question}}: {{choice}}",
+        "noAnswersYet": "No answers yet.",
+        "pickQuestionnaire": "Send a questionnaire...",
         "pickStage": "Change stage to...",
-        "refused": "The stage was not changed."
+        "questionnaireNotSent": "The questionnaire was not sent.",
+        "refused": "The stage was not changed.",
+        "sendQuestionnaire": "Send questionnaire"
     },
     "startupoverlay": {
         "genericTitle": "The meeting needs to use your microphone and camera.",

@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CoordinatorService, IStaffStageResult } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
+import { describeSent } from './questionnaires.ts';
 import { type ICoordinator, type ICoordinatorAuth, SignInError, verifyStaff } from './screenAuth.ts';
 
 /** The status of each refusal of a staff member's stage change. */
@@ -17,6 +18,14 @@ const REFUSAL_STATUS: Record<NonNullable<IStaffStageResult['refused']>, number> 
     not_in_patients_room: 403,
     stage_not_in_pathway: 400,
     unknown_encounter: 404
+};
+
+/** The status of each refusal of a staff member's questionnaire request. */
+const QUESTIONNAIRE_REFUSAL_STATUS: Record<string, number> = {
+    encounter_closed: 409,
+    not_in_patients_room: 403,
+    unknown_encounter: 404,
+    unknown_questionnaire: 400
 };
 
 /**
@@ -66,6 +75,42 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
                 moved: result.moved,
                 stage: result.encounter?.stage
             });
+
+            return;
+        }
+
+        const questionnairesMatch = /^\/encounters\/([^/]+)\/questionnaires$/u.exec(path);
+
+        if (questionnairesMatch && req.method === 'POST') {
+            const questionnaire = (await readJson(req) as { questionnaire?: unknown; } | null)?.questionnaire;
+
+            if (typeof questionnaire !== 'string' || !questionnaire) {
+                throw new HttpError(400, 'questionnaire must be a non-empty string');
+            }
+
+            const { refused, sent } = await service.staffSendQuestionnaire(
+                decodeURIComponent(questionnairesMatch[1]), questionnaire, staff);
+
+            if (refused) {
+                send(res, QUESTIONNAIRE_REFUSAL_STATUS[refused], { error: refused });
+
+                return;
+            }
+            send(res, 201, { id: sent?.id });
+
+            return;
+        }
+
+        if (questionnairesMatch && req.method === 'GET') {
+            const { questionnaires, refused } = await service.staffQuestionnairesOf(
+                decodeURIComponent(questionnairesMatch[1]), staff);
+
+            if (refused) {
+                send(res, QUESTIONNAIRE_REFUSAL_STATUS[refused], { error: refused });
+
+                return;
+            }
+            send(res, 200, { questionnaires: (questionnaires ?? []).map(describeSent) });
 
             return;
         }

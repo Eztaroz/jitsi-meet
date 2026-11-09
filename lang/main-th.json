@@ -60,7 +60,12 @@
     "staffActions": {
         "apply": "เปลี่ยนขั้นตอน",
         "currentStage": "ขั้นตอน: {{stage}}",
+        "answer": "{{question}}: {{choice}}",
+        "noAnswersYet": "ยังไม่มีคำตอบ",
+        "pickQuestionnaire": "ส่งแบบสอบถาม...",
         "pickStage": "เปลี่ยนขั้นตอนเป็น...",
-        "refused": "ไม่ได้เปลี่ยนขั้นตอน"
+        "questionnaireNotSent": "ส่งแบบสอบถามไม่สำเร็จ",
+        "refused": "ไม่ได้เปลี่ยนขั้นตอน",
+        "sendQuestionnaire": "ส่งแบบสอบถาม"
     }
 }
