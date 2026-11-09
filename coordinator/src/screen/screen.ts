@@ -99,6 +99,9 @@
     }
 
     interface IQueueEntry {
+
+        /** The stations whose staff are in the patient's room now. */
+        at?: string[];
         encounterId: string;
         hn?: string;
         suggested?: boolean;
@@ -116,6 +119,20 @@
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
         stages: { id: string; name: string; }[];
+        teams: ITeam[];
+    }
+
+    interface ITeamMember {
+        endpointId: string;
+        name: string;
+    }
+
+    interface ITeam {
+        busy: (ITeamMember & { hn: string; })[];
+        free: ITeamMember[];
+        id: string;
+        lounge: string;
+        stage: string;
     }
 
     /** What the coordinator has chosen in the lists and typed in the fields, kept across the redraws. */
@@ -401,6 +418,46 @@
     }
 
     /**
+     * Draws each station as a team: its free staff, in its lounge, and its busy staff, each with the patient they are with.
+     *
+     * @param {Object[]} teams - The teams.
+     * @returns {void}
+     */
+    function drawTeams(teams: ITeam[]): void {
+        const list = $('team-list');
+
+        list.textContent = '';
+        $('teams-section').hidden = !teams.length;
+        teams.forEach(team => {
+            const card = el('div', undefined, 'card team');
+            const title = el('h3');
+            const stage = STAGE_NAMES[team.stage] ?? team.stage;
+            const member = (m: ITeamMember, free: boolean, hn?: string) => {
+                const line = el('div', undefined, 'team-member');
+                const who = m.name || 'ไม่ระบุชื่อ';
+
+                line.dataset.state = free ? 'free' : 'busy';
+                line.append(el('span', initials(who), 'avatar'), el('span', who, 'person-name'));
+                if (hn) {
+                    line.appendChild(el('span', `กับ ${hn}`, 'team-with'));
+                }
+
+                return line;
+            };
+
+            card.dataset.station = team.id;
+            title.appendChild(el('span', undefined, 'tile')).appendChild(icon('coffee'));
+            title.append(el('span', team.id), el('span', stage, 'team-stage'));
+            card.appendChild(title);
+            card.appendChild(el('div', `ว่าง ${team.free.length}`, 'team-part'));
+            team.free.forEach(m => card.appendChild(member(m, true)));
+            card.appendChild(el('div', `ไม่ว่าง ${team.busy.length}`, 'team-part'));
+            team.busy.forEach(m => card.appendChild(member(m, false, m.hn)));
+            list.appendChild(card);
+        });
+    }
+
+    /**
      * Draws the queues.
      *
      * @param {Object} queues - The queues by stage.
@@ -452,6 +509,11 @@
         hn.title = 'ดูห้องของผู้ป่วย';
         hn.addEventListener('click', () => revealRoom(entry.hn || ''));
         row.appendChild(hn);
+        if (entry.at?.length) {
+            // Staff of a station are with the patient: they are at that station, whatever their stage's queue says.
+            row.classList.add('at-station');
+            row.appendChild(el('span', `อยู่ที่ ${entry.at.join(', ')}`, 'badge at'));
+        }
         if (entry.suggested) {
             row.appendChild(el('span', 'ถัดไป', 'badge next'));
         }
@@ -916,6 +978,7 @@
                     // A list being chosen from would close, and a field being typed in would lose its place, if they
                     // were drawn again.
                     if (!document.activeElement?.matches('select, input.move-hn')) {
+                        drawTeams(state.teams);
                         drawQueues(state.queues);
                         drawRooms(state.rooms, state.moves);
                     }

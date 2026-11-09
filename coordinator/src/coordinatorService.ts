@@ -28,6 +28,7 @@ import {
 } from './rules.ts';
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
+import { type ITeam, describeTeams, stationsAt } from './teams.ts';
 
 /**
  * The states of a move that is under way: it has no audit entry until it ends. `preparing` is a move from when patients
@@ -292,10 +293,31 @@ export class CoordinatorService {
     /**
      * The queues of the stages: the open encounters in each, the longest-waiting first.
      *
+     * @param {IRoom[]} [rooms] - The rooms now; with them, an encounter whose room holds a station's staff names the
+     * station in `at`, which is where the patient is, rather than in the queue.
      * @returns {Queues}
      */
-    queues() {
-        return queues(this._state, new Date(), this.stages().map(s => s.id));
+    queues(rooms?: IRoom[]) {
+        const result = queues(this._state, new Date(), this.stages().map(s => s.id));
+
+        if (!rooms) {
+            return result;
+        }
+
+        const at = stationsAt(this.teams(rooms));
+
+        return Object.fromEntries(Object.entries(result).map(([ stage, entries ]) =>
+            [ stage, entries.map(e => at[e.encounterId] ? { ...e, at: at[e.encounterId] } : e) ]));
+    }
+
+    /**
+     * The stations as teams: the free staff in each lounge, and the busy staff with the patient they are with.
+     *
+     * @param {IRoom[]} rooms - The rooms now, from `rooms()`.
+     * @returns {ITeam[]}
+     */
+    teams(rooms: IRoom[]): ITeam[] {
+        return describeTeams(this._opts.layout, rooms);
     }
 
     /**
