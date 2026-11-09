@@ -165,7 +165,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         retentionSweepMs: integer(env, 'RECORDER_BOT_RETENTION_SWEEP_SECONDS', 3600, 1, MAX_INTERVAL_SECONDS) * 1000,
         roleMarkers: {
             patient: parseRoleMarker(env.RECORDER_BOT_PATIENT_MARKER, 'RECORDER_BOT_PATIENT_MARKER'),
-            staff: parseRoleMarker(env.RECORDER_BOT_STAFF_MARKER, 'RECORDER_BOT_STAFF_MARKER')
+            staff: parseRoleMarker(env.RECORDER_BOT_STAFF_MARKER, 'RECORDER_BOT_STAFF_MARKER'),
+            videoPlayer: parseRoleMarker(env.RECORDER_BOT_VIDEO_PLAYER_MARKER, 'RECORDER_BOT_VIDEO_PLAYER_MARKER')
         },
         spoolDir: required(env, 'RECORDER_BOT_SPOOL_DIR'),
         storageRoot: required(env, 'RECORDER_BOT_STORAGE_ROOT'),

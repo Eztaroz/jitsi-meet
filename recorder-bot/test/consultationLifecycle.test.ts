@@ -833,6 +833,30 @@ describe('identities', () => {
         ]);
     });
 
+    test('records the video player like any participant, under its own role and not as a staff visit', () => {
+        const player = { id: 'video-player@hospital', name: 'Video' };
+        const c = consultation();
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient', identity: patientP });
+        c.send({ type: 'participant_joined', endpointId: 'video1', role: 'video_player', identity: player });
+        c.send({ type: 'track_started', endpointId: 'video1', file: '01-video1-audio.webm', kind: 'audio' });
+        c.send({ type: 'track_started', endpointId: 'video1', file: '02-video1-video.webm', kind: 'video' });
+        c.send({ type: 'participant_left', endpointId: 'video1' });
+
+        assert.deepEqual(c.identities(), [
+            { identity: patientP, role: 'patient', endpointIds: [ 'patient1' ], files: [] },
+            {
+                identity: player,
+                role: 'video_player',
+                endpointIds: [ 'video1' ],
+                files: [ '01-video1-audio.webm', '02-video1-video.webm' ]
+            }
+        ]);
+        assert.deepEqual(c.staffVisits(), []);
+        assert.equal(c.timeline.filter(e => e.type === 'participant_joined' && e.role === 'video_player').length, 1);
+    });
+
     test('without verified identities there are none', () => {
         const c = consultation();
 

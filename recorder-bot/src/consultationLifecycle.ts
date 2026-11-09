@@ -6,7 +6,8 @@
  * timers of its own: the caller runs the timers it asks for and reports back with a `timer_fired` event.
  */
 
-export type Role = 'staff' | 'patient' | 'unknown';
+/** The video player is neither staff nor the patient: a visible, non-human participant that plays a video. */
+export type Role = 'staff' | 'patient' | 'video_player' | 'unknown';
 export type Timer = 'first_join' | 'empty_room' | 'patient_arrival';
 export type StopReason =
     | 'room_destroyed'
