@@ -273,6 +273,10 @@
         "seconds": "seconds",
         "title": "You are being moved to another room"
     },
+    "coordinatorQuestionnaire": {
+        "failed": "Your answers could not be sent. Please try again.",
+        "submit": "Send answers"
+    },
     "customPanel": {
         "close": "Close",
         "title": "AI Assist"

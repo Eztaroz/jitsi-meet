@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { DONE, WAITING, pathwaysOf } from './pathways.ts';
+import { loadQuestionnaires } from './questionnaires.ts';
 import {
     type IClinic,
     type ILayout,
@@ -344,8 +345,9 @@ export function loadLayout(file: string | undefined): ILayout {
     });
 
     const videos = loadVideos(raw.videos, fail);
+    const questionnaires = loadQuestionnaires((raw as { questionnaires?: unknown; }).questionnaires, fail);
 
-    return { centers, ...videos ? { videos } : {} };
+    return { centers, ...questionnaires ? { questionnaires } : {}, ...videos ? { videos } : {} };
 }
 
 /**

@@ -10,6 +10,8 @@ import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
 import { errorCode, log } from './log.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
+import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
+import { describeSent } from './questionnaires.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
 import type { IMove } from './rules.ts';
 import type { ICoordinatorAuth } from './screenAuth.ts';
@@ -252,6 +254,40 @@ export function createApi({ screen, secret, service, staff, survey }: {
             return true;
         }
 
+        const questionnaireMatch = /^\/encounters\/([^/]+)\/questionnaires$/.exec(pathname);
+
+        if (questionnaireMatch && req.method === 'POST') {
+            const questionnaire = (await readJson(req) as { questionnaire?: unknown; } | null)?.questionnaire;
+
+            if (typeof questionnaire !== 'string' || !questionnaire) {
+                throw new HttpError(400, 'questionnaire must be a non-empty string');
+            }
+
+            try {
+                const { refused, sent } = await service.sendQuestionnaire(
+                    decodeURIComponent(questionnaireMatch[1]), questionnaire, issuer);
+
+                if (refused === 'unknown_encounter') {
+                    throw new HttpError(404, 'no such encounter');
+                }
+                if (refused === 'encounter_closed') {
+                    throw new HttpError(409, 'the encounter is done');
+                }
+                if (refused === 'unknown_questionnaire') {
+                    throw new HttpError(400, 'questionnaire is not in the configured catalogue');
+                }
+                send(res, 201, { id: sent?.id });
+            } catch (error) {
+                if (error instanceof ProsodyUnavailableError) {
+                    log.warn('could not send a questionnaire', { error: error.code });
+                    throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
+                }
+                throw error;
+            }
+
+            return true;
+        }
+
         const stageMatch = /^\/encounters\/([^/]+)\/stage$/.exec(pathname);
 
         if (stageMatch && req.method === 'POST') {
@@ -333,6 +369,9 @@ export function createApi({ screen, secret, service, staff, survey }: {
     const handleSurvey = createSurveyRoutes({ auth: survey, service });
     const handleStaff = createStaffRoutes({ auth: staff, service });
 
+    // The patient's client answers a questionnaire with the same patient token as the survey.
+    const handleQuestionnaire = createQuestionnaireRoutes({ auth: survey, service });
+
     /**
      * Handles one request.
      *
@@ -347,6 +386,11 @@ export function createApi({ screen, secret, service, staff, survey }: {
 
         if (path.startsWith('/screen')) {
             await handleScreen(req, res, scheme === 'Bearer' ? token : undefined);
+
+            return;
+        }
+        if (path === '/questionnaire') {
+            await handleQuestionnaire(req, res, scheme === 'Bearer' ? token : undefined);
 
             return;
         }
@@ -422,6 +466,25 @@ export function createApi({ screen, secret, service, staff, survey }: {
                 queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
                     [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ]))
             });
+
+            return;
+        }
+
+        if (pathname === '/questionnaires' && req.method === 'GET') {
+            send(res, 200, { questionnaires: service.questionnaireCatalogue() });
+
+            return;
+        }
+
+        const answersMatch = /^\/encounters\/([^/]+)\/questionnaires$/.exec(pathname);
+
+        if (answersMatch && req.method === 'GET') {
+            const sent = service.questionnairesOf(decodeURIComponent(answersMatch[1]));
+
+            if (!sent) {
+                throw new HttpError(404, 'no such encounter');
+            }
+            send(res, 200, { questionnaires: sent.map(describeSent) });
 
             return;
         }

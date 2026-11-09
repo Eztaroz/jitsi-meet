@@ -1,3 +1,4 @@
+import type { IQuestionnaire } from './questionnaires.ts';
 import { backendSafeRoomName } from './roomName.ts';
 
 /**
@@ -96,6 +97,9 @@ export interface IVideo {
 /** The parts of the hospital the deployment serves, each with its stations (`GLOSSARY.md`). */
 export interface ILayout {
     centers: ICenter[];
+
+    /** The health questionnaires the deployment offers. */
+    questionnaires?: IQuestionnaire[];
 
     /** The deployment's waiting videos. */
     videos?: IVideo[];

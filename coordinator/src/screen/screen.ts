@@ -123,10 +123,24 @@
         status: number;
     }
 
+    interface ISentQuestionnaire {
+        answers?: number[];
+        closedAt?: string;
+        id: string;
+        questions: { choices: string[]; text: string; }[];
+        title: string;
+    }
+
+    interface IQuestionnaires {
+        catalogue: { id: string; title: string; }[];
+        sent: Record<string, ISentQuestionnaire[]>;
+    }
+
     interface IState {
         coordinator: { id: string; name?: string; };
         examination: IExamination;
         moves: IMove[];
+        questionnaires?: IQuestionnaires;
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
         stages: { id: string; name: string; }[];
@@ -149,6 +163,10 @@
 
     /** What the coordinator has chosen in the lists and typed in the fields, kept across the redraws. */
     const choices: Record<string, string> = {};
+
+    /** The health questionnaires the deployment offers, and those sent to each open encounter, from the last refresh. */
+    let questionnaires: IQuestionnaires = { catalogue: [],
+        sent: {} };
 
     /** The name of everyone seen, by endpoint, so that a move can be described after the person has gone. */
     const names: Record<string, string> = {};
@@ -639,7 +657,87 @@
             ticket.appendChild(drawDoctorControl(entry));
         }
 
+        const asked = drawQuestionnaires(entry);
+
+        if (asked) {
+            ticket.appendChild(asked);
+        }
+
         return ticket;
+    }
+
+    /**
+     * Draws the health questionnaires of an encounter: a list to send one from, and what was sent with the answers.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @returns {HTMLElement|undefined} Undefined when the deployment has none and none was sent.
+     */
+    function drawQuestionnaires(entry: IQueueEntry): HTMLElement | undefined {
+        const sent = questionnaires.sent[entry.encounterId] ?? [];
+
+        if (!questionnaires.catalogue.length && !sent.length) {
+            return undefined;
+        }
+
+        const box = el('div', undefined, 'questionnaires');
+
+        if (questionnaires.catalogue.length) {
+            const key = `questionnaire|${entry.encounterId}`;
+            const pick = el('select', undefined, 'questionnaire-pick');
+            const send = button('ส่งแบบสอบถาม', 'questionnaire-send secondary', 'clipboard');
+
+            pick.setAttribute('aria-label', `แบบสอบถามที่จะส่งให้ ${entry.hn || ''}`);
+            questionnaires.catalogue.forEach(q => {
+                const option = el('option', q.title);
+
+                option.value = q.id;
+                pick.appendChild(option);
+            });
+            pick.value = choices[key] || questionnaires.catalogue[0].id;
+            pick.addEventListener('change', () => {
+                choices[key] = pick.value;
+            });
+            send.addEventListener('click', () => sendQuestionnaire(entry, pick.value, send));
+
+            const controls = el('div', undefined, 'controls');
+
+            controls.append(pick, send);
+            box.appendChild(controls);
+        }
+        for (const q of sent) {
+            const item = el('div', undefined, 'questionnaire');
+            const state = q.answers ? 'ตอบแล้ว' : q.closedAt ? 'ปิดแล้ว (เจ้าหน้าที่เข้าห้อง)' : 'รอคำตอบ';
+
+            item.appendChild(el('strong', `${q.title} · ${state}`));
+            q.answers?.forEach((answer, i) => {
+                item.appendChild(el('div', `${q.questions[i].text} — ${q.questions[i].choices[answer]}`, 'answer'));
+            });
+            box.appendChild(item);
+        }
+
+        return box;
+    }
+
+    /**
+     * Sends a health questionnaire to a patient.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string} questionnaire - The questionnaire's id.
+     * @param {HTMLButtonElement} trigger - The button that asked, held down until the answer.
+     * @returns {void}
+     */
+    function sendQuestionnaire(entry: IQueueEntry, questionnaire: string, trigger: HTMLButtonElement): void {
+        trigger.disabled = true;
+        act(`/encounters/${encodeURIComponent(entry.encounterId)}/questionnaires`, { questionnaire }).then(result => {
+            if (result.status === 409) {
+                say('encounter นี้เสร็จสิ้นแล้ว', 'warn');
+            } else if (failed(result)) {
+                say('ส่งแบบสอบถามไม่สำเร็จ', 'error');
+            } else {
+                say(`ส่งแบบสอบถามให้ ${entry.hn || 'ผู้ป่วย'} แล้ว`, 'ok');
+            }
+            refresh();
+        });
     }
 
     /**
@@ -1107,6 +1205,8 @@
                     $('problem').hidden = true;
                     showLive(true);
                     useStages(state.stages);
+                    questionnaires = state.questionnaires ?? { catalogue: [],
+                        sent: {} };
                     drawStats(state);
                     PLAYING_VIDEOS = new Set((state.videos ?? []).map(v => v.encounterId));
 

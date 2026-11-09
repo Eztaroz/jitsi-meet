@@ -30,13 +30,17 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'doctor' | 'move' | 'stage' | 'survey_export' | 'video';
+    kind: 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'survey_export' | 'video';
     outcome: string;
 
     /** The moved participant's verified identity id. */
     participantId?: string;
+
     /** The doctor a doctor change replaced. */
     previousDoctor?: string;
+
+    /** The id of the questionnaire of the catalogue that was sent. */
+    questionnaire?: string;
     reason?: string;
 
     /** A move's origin: a lounge's name, or a keyed reference to a patient's room. */
@@ -147,4 +151,21 @@ export function videoEntry({ action, at, encounterId, issuer, outcome, reason, v
     video?: string;
 }): IAuditEntry {
     return { action, at, encounterId, issuer, kind: 'video', outcome, reason, video };
+}
+
+/**
+ * The entry of a health questionnaire sent to a patient, or refused. It names the encounter, never the patient.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function questionnaireEntry({ at, encounterId, issuer, outcome, questionnaire, reason }: {
+    at: Date;
+    encounterId: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    questionnaire: string;
+    reason?: string;
+}): IAuditEntry {
+    return { at, encounterId, issuer, kind: 'questionnaire_sent', outcome, questionnaire, reason };
 }
