@@ -46,6 +46,9 @@ export interface IEncounter {
 
 /** One patient's place in a stage's queue. */
 export interface IQueueEntry {
+
+    /** The stations whose staff are in the patient's room now; set by the service, which sees the rooms. */
+    at?: string[];
     encounterId: string;
     enteredAt: Date;
 

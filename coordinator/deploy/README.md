@@ -84,7 +84,8 @@ Mind the room claim: it is the room name as Prosody names it, lower-case and URL
 
 Signed in, the coordinator sees:
 
-- the queue of each stage, the longest-waiting first, with the time each patient has waited and the next patient suggested;
+- every station as a team (`teams` in `GET /screen/api/state`): its free staff, who are in its lounge, and its busy staff, who are in a patient's room, each with the patient they are with. A staff member counts for the station whose lounge they were last seen in, so one never seen in a lounge is in no team;
+- the queue of each stage, the longest-waiting first, with the time each patient has waited and the next patient suggested. A patient whose room holds a station's staff is marked "อยู่ที่ <station>" (`at` on the queue entry) instead of only waiting in the queue of their stage;
 - every open room with who is in it, by the name in their token (a patient's room is named by the HN), labelled as a patient's room or as a lounge with its station's stage; the lounges nobody is in are listed as closed; a patient's room that has no open encounter is marked.
 
 From the screen the coordinator can also act. Every action goes through the same routes as the hospital's system, under `/screen/api/` (`POST /moves`, `POST /encounters`, `POST /encounters/<id>/stage`, `POST /encounters/<id>/doctor`, with the coordinator's token), and the audit log names the coordinator's verified id as the issuer, not `system`:
