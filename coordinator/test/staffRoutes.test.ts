@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
 import { createApi } from '../src/api.ts';
-import type { CoordinatorService, IStaffStageResult } from '../src/coordinatorService.ts';
+import type { CoordinatorService, IStaffCallNextResult, IStaffStageResult } from '../src/coordinatorService.ts';
 import { signToken } from '../src/jwt.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
 import type { ICoordinatorAuth } from '../src/screenAuth.ts';
@@ -48,6 +48,7 @@ function tokenOf(role: string, id = 's-1'): string {
 describe('the staff API', () => {
     const asked: unknown[][] = [];
     let result: IStaffStageResult = { moved: true };
+    let nextResult: IStaffCallNextResult = { moved: true };
     let questionnaireResult: Record<string, unknown> = {};
     let server: Server;
     let base: string;
@@ -58,6 +59,11 @@ describe('the staff API', () => {
                 asked.push(args);
 
                 return result;
+            },
+            staffCallNext: async (staff: unknown) => {
+                asked.push([ 'next', staff ]);
+
+                return nextResult;
             },
             staffContext: async (staff: unknown) => ({ staff, where: 'nowhere' }),
             staffQuestionnairesOf: async (...args: unknown[]) => {
@@ -180,5 +186,31 @@ describe('the staff API', () => {
         assert.equal(response.status, 200);
         assert.equal(((await response.json()) as { where: string; }).where, 'nowhere');
         assert.equal((await fetch(`${base}/staff/me`)).status, 401);
+    });
+
+    it('calls the next patient for the staff member, and answers an empty queue plainly', async () => {
+        const call = (token?: string) => fetch(`${base}/staff/next`, {
+            headers: token ? { authorization: `Bearer ${token}` } : {},
+            method: 'POST'
+        });
+
+        nextResult = { encounterId: 'e-1', moved: true };
+
+        const ok = await call(tokenOf('staff'));
+
+        assert.equal(ok.status, 200);
+        assert.deepEqual(await ok.json(), { encounterId: 'e-1', moved: true });
+        assert.equal((await call()).status, 401);
+        assert.equal((await call(tokenOf('patient'))).status, 403);
+
+        nextResult = { moved: false, refused: 'queue_empty' };
+
+        const empty = await call(tokenOf('staff'));
+
+        assert.equal(empty.status, 409);
+        assert.deepEqual(await empty.json(), { error: 'queue_empty' });
+
+        nextResult = { moved: false, refused: 'not_in_lounge' };
+        assert.equal((await call(tokenOf('staff'))).status, 403);
     });
 });

@@ -4,11 +4,20 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { type IAuditEntry, doctorEntry, moveEntry, questionnaireEntry, stageEntry } from './audit.ts';
+import {
+    type IAuditEntry,
+    callNextEntry,
+    doctorEntry,
+    moveEntry,
+    questionnaireEntry,
+    stageEntry,
+    videoEntry
+} from './audit.ts';
+import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
-import { DONE, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
+import { DONE, EXAMINATION, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
 import {
     type IPatientQuestionnaire,
@@ -47,6 +56,28 @@ import {
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
+import { destinationClaims } from './tokens.ts';
+import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts';
+
+/** How long the token a video player joins a room with lasts: it is used at once. */
+const VIDEO_PLAYER_TOKEN_MS = 5 * 60_000;
+
+/** The identity the video player joins with. */
+const VIDEO_PLAYER_IDENTITY = { id: 'video-player', name: 'Video player' };
+
+/** Why a video could not be played or stopped. */
+export type VideoRefusal = 'already_playing' | 'encounter_closed' | 'no_video' | 'not_playing' | 'unknown_encounter'
+    | 'unknown_video' | 'video_player_unavailable';
+
+/** A video that is playing in a patient's room. */
+interface IPlayingVideo {
+    encounterId: string;
+    room: string;
+
+    /** The staff in the room when it started; only those who join later stop it. */
+    staffAtStart: Set<string>;
+    videoId: string;
+}
 
 /**
  * The states of a move that is under way: it has no audit entry until it ends. `preparing` is a move from when patients
@@ -125,6 +156,15 @@ export interface IStaffStageResult {
         | 'unknown_encounter';
 }
 
+export interface IStaffCallNextResult {
+    encounterId?: string;
+
+    /** The staff member's move to the patient's room, if there was a patient to go to. */
+    move?: IMove;
+    moved: boolean;
+    refused?: 'move_refused' | 'not_in_lounge' | 'queue_empty';
+}
+
 /**
  * Finds a staff member in the rooms, by verified identity id.
  *
@@ -157,6 +197,10 @@ export class CoordinatorService {
         store: Store;
         timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
+
+        /** Where the web server hosts the videos' files; with the video player, it turns the videos on. */
+        videoBaseUrl?: string;
+        videoPlayer?: IVideoPlayer;
     };
 
     /** What is kept about each move beside the rules state: who asked, whether it is audited, its deadlines. */
@@ -165,6 +209,10 @@ export class CoordinatorService {
     /** The running timers of the moves, by move id and timer. */
     private readonly _timers = new Map<string, NodeJS.Timeout>();
     private _retention?: NodeJS.Timeout;
+
+    /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
+    private readonly _videos = new Map<string, IPlayingVideo>();
+    private _videoWatch?: NodeJS.Timeout;
 
     private readonly _effects: MoveEffects;
     private _midnight?: NodeJS.Timeout;
@@ -573,6 +621,177 @@ export class CoordinatorService {
     }
 
     /**
+     * Plays a waiting video once in an encounter's room: the video asked for, else the default of the encounter's
+     * stage. It stops when told to, when a staff member joins after it started, and at its end.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
+     * @param {string} [videoId] - A video of the catalogue; unset for the stage's default.
+     * @returns {Promise<{ refused?: VideoRefusal; video?: string; }>}
+     */
+    playVideo(encounterId: string, issuer: string, videoId?: string): Promise<{ refused?: VideoRefusal; video?: string; }> {
+        return this._serial(async () => {
+            const { layout, videoBaseUrl, videoPlayer } = this._opts;
+            const encounter = this._state.encounters.find(e => e.id === encounterId);
+            const chosen = videoId ?? findPathway(layout, encounter?.pathway ?? '')?.stages
+                .find(s => s.id === encounter?.stage)?.defaultVideo;
+            const video = chosen === undefined ? undefined : layout.videos?.find(v => v.id === chosen);
+            const refuse = (refused: VideoRefusal) => {
+                this._audit(videoEntry({
+                    action: 'play', at: new Date(), encounterId, issuer, outcome: 'refused', reason: refused, video: chosen
+                }));
+
+                return { refused };
+            };
+
+            if (!encounter) {
+                return { refused: 'unknown_encounter' as const };
+            }
+            if (encounter.stage === 'done') {
+                return refuse('encounter_closed');
+            }
+            if (chosen === undefined) {
+                return refuse('no_video');
+            }
+            if (!video) {
+                return refuse('unknown_video');
+            }
+            if (!videoPlayer || !videoBaseUrl) {
+                return refuse('video_player_unavailable');
+            }
+            if (this._videos.has(encounterId)) {
+                return refuse('already_playing');
+            }
+
+            const room = encounter.hn;
+            const staffAtStart = new Set((await this.rooms()).find(r => r.kind === 'patient' && sameRoom(r.name, room))
+                ?.occupants.filter(o => o.role === 'staff').map(o => o.endpointId));
+
+            try {
+                await videoPlayer.play({
+                    room,
+                    token: signToken({
+                        claims: destinationClaims({
+                            ...this._opts.token,
+                            identity: VIDEO_PLAYER_IDENTITY,
+                            lifetimeMs: VIDEO_PLAYER_TOKEN_MS,
+                            markers: this._opts.roleMarkers,
+                            now: new Date(),
+                            role: 'video_player',
+                            room
+                        }),
+                        ...this._opts.signingKey
+                    }),
+                    videoUrl: new URL(video.file, videoBaseUrl).href
+                });
+            } catch (error) {
+                if (error instanceof VideoPlayerUnavailableError) {
+                    log.warn('could not play a video', { error: error.code });
+
+                    return refuse(error.code === 'already_playing' ? 'already_playing' : 'video_player_unavailable');
+                }
+                throw error;
+            }
+            this._videos.set(encounterId, { encounterId, room, staffAtStart, videoId: video.id });
+            this._watchVideos();
+            this._audit(videoEntry({ action: 'play', at: new Date(), encounterId, issuer, outcome: 'ok', video: video.id }));
+
+            return { video: video.id };
+        });
+    }
+
+    /**
+     * Stops the video playing in an encounter's room.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
+     * @returns {Promise<{ refused?: VideoRefusal; }>}
+     */
+    stopVideo(encounterId: string, issuer: string): Promise<{ refused?: VideoRefusal; }> {
+        return this._serial(async () => {
+            const playing = this._videos.get(encounterId);
+
+            if (!playing) {
+                this._audit(videoEntry({
+                    action: 'stop', at: new Date(), encounterId, issuer, outcome: 'refused', reason: 'not_playing'
+                }));
+
+                return { refused: 'not_playing' as const };
+            }
+            await this._endVideo(playing, issuer);
+
+            return {};
+        });
+    }
+
+    /**
+     * The videos playing now.
+     *
+     * @returns {{ encounterId: string; video: string; }[]}
+     */
+    playingVideos(): { encounterId: string; video: string; }[] {
+        return [ ...this._videos.values() ].map(v => ({ encounterId: v.encounterId, video: v.videoId }));
+    }
+
+    /**
+     * Stops a video and audits who did.
+     *
+     * @param {IPlayingVideo} playing - The video.
+     * @param {string} issuer - Who stopped it.
+     * @param {string} [reason] - Why, when it was not asked for.
+     * @returns {Promise<void>}
+     */
+    private async _endVideo(playing: IPlayingVideo, issuer: string, reason?: string): Promise<void> {
+        this._videos.delete(playing.encounterId);
+        try {
+            await this._opts.videoPlayer?.stop(playing.room);
+        } catch (error) {
+            log.warn('could not stop a video', { error: error instanceof VideoPlayerUnavailableError ? error.code : 'unknown' });
+        }
+        this._audit(videoEntry({
+            action: 'stop', at: new Date(), encounterId: playing.encounterId, issuer, outcome: 'ok', reason, video: playing.videoId
+        }));
+    }
+
+    /**
+     * Watches the playing videos while there are any: one that has ended is forgotten, and one is stopped when a staff
+     * member joins its room after it started.
+     *
+     * @returns {void}
+     */
+    private _watchVideos(): void {
+        if (this._videoWatch) {
+            return;
+        }
+        this._videoWatch = setInterval(() => {
+            if (!this._videos.size) {
+                clearInterval(this._videoWatch);
+                this._videoWatch = undefined;
+
+                return;
+            }
+            this._serial(async () => {
+                const [ rooms, live ] = await Promise.all([ this.rooms(), this._opts.videoPlayer?.playingRooms() ]);
+
+                for (const playing of [ ...this._videos.values() ]) {
+                    if (!live?.some(r => sameRoom(r, playing.room))) {
+                        this._videos.delete(playing.encounterId);
+                        continue;
+                    }
+
+                    const joined = rooms.find(r => r.kind === 'patient' && sameRoom(r.name, playing.room))?.occupants
+                        .some(o => o.role === 'staff' && !playing.staffAtStart.has(o.endpointId));
+
+                    if (joined) {
+                        await this._endVideo(playing, 'system', 'staff_joined');
+                    }
+                }
+            }).catch(() => undefined);
+        }, POLL_MS);
+        this._videoWatch.unref();
+    }
+
+    /**
      * The newest audit entries.
      *
      * @param {number} limit - How many.
@@ -839,6 +1058,69 @@ export class CoordinatorService {
     }
 
     /**
+     * Moves a staff member in a station's lounge to the longest-waiting patient of the station's stage whose room has
+     * no staff (ADR 0012). In examination the staff member takes from their own doctor queue. A patient that another
+     * staff member is being moved to counts as having staff, so two staff never get the same patient. With nobody
+     * waiting there is no move. Every request is audited with the staff member's identity.
+     *
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<IStaffCallNextResult>}
+     */
+    staffCallNext(staff: { id: string; }): Promise<IStaffCallNextResult> {
+        return this._serial(async () => {
+            const at = new Date();
+            const rooms = await this.rooms();
+            const here = findStaff(rooms, staff.id);
+            const station = here?.room.kind === 'lounge'
+                ? stationsOf(this._opts.layout).find(s => s.id === here.room.station)
+                : undefined;
+            let refused: IStaffCallNextResult['refused'];
+            let target: { encounterId: string; room: IRoom; } | undefined;
+
+            if (!here || !station) {
+                refused = 'not_in_lounge';
+            } else {
+                const entries = station.stage === EXAMINATION
+                    ? examinationQueues(this._state, at).doctors[staff.id] ?? []
+                    : queues(this._state, at, allStages(this._opts.layout).map(s => s.id))[station.stage] ?? [];
+                const pending = new Set(this._state.moves.filter(m => ACTIVE_MOVE.has(m.state)).map(m => m.destination));
+
+                for (const entry of entries) {
+                    const room = rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
+
+                    if (room?.open && !pending.has(room.name) && !room.occupants.some(o => o.role === 'staff')) {
+                        target = { encounterId: entry.encounterId, room };
+                        break;
+                    }
+                }
+                refused = target ? undefined : 'queue_empty';
+            }
+
+            if (!here || !target) {
+                this._audit(callNextEntry({ at, issuer: staff.id, outcome: 'refused', reason: refused }));
+
+                return { moved: false, refused };
+            }
+
+            const move = await this._startMove({
+                endpointId: here.occupant.endpointId, fromRoom: here.room.name, toRoom: target.room.name
+            }, staff.id);
+            const moved = move.state === 'counting_down';
+
+            this._audit(callNextEntry({
+                at,
+                encounterId: target.encounterId,
+                issuer: staff.id,
+                outcome: moved ? 'ok' : 'refused',
+                reason: moved ? undefined : move.reason
+            }));
+
+            return { encounterId: target.encounterId, move, moved, refused: moved ? undefined : 'move_refused' };
+        });
+    }
+
+    /**
      * Starts a move. Call it inside the serial queue.
      *
      * @param {Object} request - Who to move, from which room to which.
@@ -925,6 +1207,8 @@ export class CoordinatorService {
         }
         this._timers.clear();
         this._stopPolling();
+        clearInterval(this._videoWatch);
+        this._videoWatch = undefined;
     }
 
     /**

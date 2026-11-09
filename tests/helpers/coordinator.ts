@@ -127,7 +127,7 @@ export interface IRoom {
         displayName?: string;
         endpointId: string;
         identity?: { id?: string; name?: string; };
-        role: 'hidden' | 'patient' | 'staff' | 'unknown';
+        role: 'hidden' | 'patient' | 'staff' | 'unknown' | 'video_player';
 
         /** For staff, their station (ADR 0011). */
         station?: string;
@@ -316,7 +316,7 @@ export interface IAuditEntry {
     encounterId?: string;
     from?: string;
     issuer: string;
-    kind: 'doctor' | 'move' | 'questionnaire_sent' | 'stage';
+    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage';
     outcome: string;
     participantId?: string;
     previousDoctor?: string;

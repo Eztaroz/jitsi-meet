@@ -9,6 +9,8 @@ import { IconDotsHorizontal } from '../../../base/icons/svg';
 import {
     getLocalParticipant,
     getParticipantById,
+    isPatientParticipant,
+    isVideoPlayerParticipant,
     isVoiceAgentParticipant
 } from '../../../base/participants/functions';
 import { IParticipant } from '../../../base/participants/types';
@@ -276,7 +278,9 @@ function _mapStateToProps(state: IReduxState, ownProps: Partial<IProps>) {
     }
 
     return {
-        _disabled: Boolean(remoteVideoMenu?.disabled),
+        // A patient cannot stop, mute or hide the video player's tile: it has no menu for them.
+        _disabled: Boolean(remoteVideoMenu?.disabled) || (isVideoPlayerParticipant(state, participant)
+            && isPatientParticipant(state, getLocalParticipant(state))),
         _hasAgentMenu: hasVoiceAgentMenuItems(state, true),
         _localVideoOwner: Boolean(ownerId === localParticipantId),
         _menuPosition,

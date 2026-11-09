@@ -9,6 +9,7 @@ import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
 import { keyLookup } from './screenAuth.ts';
 import { Store } from './store.ts';
+import { VideoPlayer } from './videoPlayer.ts';
 
 const config = loadConfig();
 const store = new Store(config.dataDir);
@@ -26,7 +27,9 @@ try {
         signingKey: config.signingKey,
         store,
         timeZone: config.timeZone,
-        token: config.token
+        token: config.token,
+        videoBaseUrl: config.videoPlayer?.baseUrl,
+        videoPlayer: config.videoPlayer && new VideoPlayer(config.videoPlayer.url, config.videoPlayer.secret)
     });
 } catch (error) {
     // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).
