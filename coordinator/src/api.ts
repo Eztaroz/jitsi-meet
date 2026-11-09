@@ -6,7 +6,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
-import type { CoordinatorService } from './coordinatorService.ts';
+import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
 import { errorCode, log } from './log.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
@@ -130,6 +130,17 @@ function encounterBody(service: CoordinatorService, id: string) {
 function moveBody(move: IMove) {
     return { id: move.id, reason: move.reason, state: move.state };
 }
+
+/** What each reason a video could not be played or stopped means to the caller. */
+const VIDEO_REFUSALS: Record<VideoRefusal, [ number, string ]> = {
+    'already_playing': [ 409, 'a video is already playing in the room' ],
+    'encounter_closed': [ 409, 'the encounter is done' ],
+    'no_video': [ 409, 'no video was asked for and the stage has no default video' ],
+    'not_playing': [ 409, 'no video is playing in the room' ],
+    'unknown_encounter': [ 404, 'no such encounter' ],
+    'unknown_video': [ 400, 'the video is not in the catalogue' ],
+    'video_player_unavailable': [ 503, 'the video player cannot play now' ]
+};
 
 /**
  * Reads a move request: who to move, and to which room.
@@ -322,6 +333,31 @@ export function createApi({ screen, secret, service, staff, survey }: {
                 throw new HttpError(409, 'the encounter is done');
             }
             send(res, 200, encounterBody(service, encounter?.id as string));
+
+            return true;
+        }
+
+        const videoMatch = /^\/encounters\/([^/]+)\/video(\/stop)?$/.exec(pathname);
+
+        if (videoMatch && req.method === 'POST') {
+            const encounterId = decodeURIComponent(videoMatch[1]);
+            let refused: VideoRefusal | undefined;
+            let video: string | undefined;
+
+            if (videoMatch[2]) {
+                ({ refused } = await service.stopVideo(encounterId, issuer));
+            } else {
+                const asked = (await readJson(req) as { video?: unknown; } | null)?.video;
+
+                if (asked !== undefined && (typeof asked !== 'string' || !asked)) {
+                    throw new HttpError(400, 'video must be a non-empty string');
+                }
+                ({ refused, video } = await service.playVideo(encounterId, issuer, asked));
+            }
+            if (refused) {
+                throw new HttpError(...VIDEO_REFUSALS[refused]);
+            }
+            send(res, 200, { video });
 
             return true;
         }
