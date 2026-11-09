@@ -12,19 +12,28 @@ import { Store } from './store.ts';
 
 const config = loadConfig();
 const store = new Store(config.dataDir);
-const service = new CoordinatorService({
-    auditKey: config.auditKey,
-    layout: config.layout,
-    prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
-    recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
-    retentionMs: config.retentionMs,
-    retentionSweepMs: config.retentionSweepMs,
-    roleMarkers: config.roleMarkers,
-    signingKey: config.signingKey,
-    store,
-    timeZone: config.timeZone,
-    token: config.token
-});
+let service: CoordinatorService;
+
+try {
+    service = new CoordinatorService({
+        auditKey: config.auditKey,
+        layout: config.layout,
+        prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
+        recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
+        retentionMs: config.retentionMs,
+        retentionSweepMs: config.retentionSweepMs,
+        roleMarkers: config.roleMarkers,
+        signingKey: config.signingKey,
+        store,
+        timeZone: config.timeZone,
+        token: config.token
+    });
+} catch (error) {
+    // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).
+    log.error('refusing to start', { reason: (error as Error).message });
+    store.close();
+    process.exit(1);
+}
 
 service.resume().catch(error => log.error('could not resume the moves', { error: (error as Error).name }));
 service.startDayEnds();

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { IAuditEntry } from './audit.ts';
+import { DEFAULT_PATHWAY_ID } from './pathways.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
 import type { ISurvey } from './surveys.ts';
 
@@ -82,10 +83,11 @@ export class Store {
         )`);
         this._db.exec('CREATE INDEX IF NOT EXISTS surveys_submitted_at ON surveys (submitted_at)');
 
-        // A database made before stages gets the columns added.
+        // A database made before stages or pathways gets the columns added.
         const columns = (this._db.prepare('PRAGMA table_info(encounters)').all() as { name: string; }[]).map(c => c.name);
 
-        for (const [ name, type ] of [ [ 'stage_started_at', 'TEXT' ], [ 'history', 'TEXT' ], [ 'unfinished', 'INTEGER' ] ]) {
+        for (const [ name, type ] of [ [ 'stage_started_at', 'TEXT' ], [ 'history', 'TEXT' ], [ 'unfinished', 'INTEGER' ], [ 'pathway', 'TEXT' ],
+            [ 'visit_number', 'TEXT' ], [ 'center', 'TEXT' ], [ 'clinic', 'TEXT' ] ]) {
             if (!columns.includes(name)) {
                 this._db.exec(`ALTER TABLE encounters ADD COLUMN ${name} ${type}`);
             }
@@ -99,8 +101,9 @@ export class Store {
      */
     load(): IState {
         const rows = this._db.prepare('SELECT * FROM encounters ORDER BY started_at').all() as {
-            history: string | null; hn: string; id: string; stage: IEncounter['stage']; stage_started_at: string | null;
-            started_at: string; unfinished: number | null;
+            center: string | null; clinic: string | null; history: string | null; hn: string; id: string;
+            pathway: string | null; stage: IEncounter['stage']; stage_started_at: string | null; started_at: string;
+            unfinished: number | null; visit_number: string | null;
         }[];
 
         return {
@@ -116,10 +119,16 @@ export class Store {
                     history,
                     hn: r.hn,
                     id: r.id,
+
+                    // An encounter stored before pathways followed the only one there was.
+                    pathway: r.pathway ?? DEFAULT_PATHWAY_ID,
                     stage: r.stage,
                     stageStartedAt,
                     startedAt,
-                    ...r.unfinished ? { unfinished: true as const } : {}
+                    ...r.center ? { center: r.center } : {},
+                    ...r.clinic ? { clinic: r.clinic } : {},
+                    ...r.unfinished ? { unfinished: true as const } : {},
+                    ...r.visit_number ? { visitNumber: r.visit_number } : {}
                 };
             }),
             moves: this._loadMoves().map(({ move }) => move),
@@ -202,7 +211,8 @@ export class Store {
      */
     save(state: IState, records: ReadonlyMap<string, IMoveRecord> = new Map(), audit: IAuditEntry[] = []): void {
         const insert = this._db.prepare(`INSERT OR REPLACE INTO encounters
-            (id, hn, stage, started_at, stage_started_at, history, unfinished) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+            (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
         const keptRooms = new Map((this._db.prepare('SELECT * FROM patient_rooms').all() as {
             identity_id: string; room: string; updated_at: string;
@@ -237,7 +247,8 @@ export class Store {
             this._db.exec('DELETE FROM encounters');
             for (const e of state.encounters) {
                 insert.run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
-                    JSON.stringify(e.history), e.unfinished ? 1 : 0);
+                    JSON.stringify(e.history), e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null,
+                    e.clinic ?? null);
             }
             for (const entry of audit) {
                 this.addAudit(entry);

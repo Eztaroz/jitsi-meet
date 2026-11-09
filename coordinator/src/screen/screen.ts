@@ -16,15 +16,18 @@
     /** How long a room asked for from the queue stays picked out. */
     const SPOTLIGHT_MS = 3000;
     const SVG_NS = 'http://www.w3.org/2000/svg';
-    const STAGES: [string, string, string][] = [
-        [ 'waiting', 'รอคิว', 'clock' ],
-        [ 'intake', 'ให้ข้อมูลก่อนพบแพทย์', 'clipboard' ],
-        [ 'examination', 'พบแพทย์', 'stethoscope' ],
-        [ 'aftercare', 'หลังพบแพทย์', 'heart' ]
-    ];
-    const STAGE_NAMES: Record<string, string> = { aftercare: 'หลังพบแพทย์',
-        examination: 'พบแพทย์',
-        intake: 'ให้ข้อมูลก่อนพบแพทย์' };
+
+    /** The icons of the stages that have one; any other stage gets the clipboard. */
+    const STAGE_ICONS: Record<string, string> = { aftercare: 'heart',
+        examination: 'stethoscope',
+        waiting: 'clock' };
+
+    /**
+     * The stages that have a queue, with their name and icon, and every stage's name: both come from the pathways in
+     * the service's configuration, with each state.
+     */
+    let STAGES: [string, string, string][] = [];
+    let STAGE_NAMES: Record<string, string> = {};
 
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
@@ -112,6 +115,7 @@
         moves: IMove[];
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
+        stages: { id: string; name: string; }[];
     }
 
     /** What the coordinator has chosen in the lists and typed in the fields, kept across the redraws. */
@@ -342,6 +346,18 @@
     }
 
     /**
+     * Takes the stages from the pathways: `done` has no queue.
+     *
+     * @param {Object[]} stages - The stages, in order.
+     * @returns {void}
+     */
+    function useStages(stages: { id: string; name: string; }[]): void {
+        STAGES = stages.filter(stage => stage.id !== 'done')
+            .map(stage => [ stage.id, stage.name, STAGE_ICONS[stage.id] ?? 'clipboard' ]);
+        STAGE_NAMES = Object.fromEntries(stages.map(stage => [ stage.id, stage.name ]));
+    }
+
+    /**
      * Draws the figures at the top.
      *
      * @param {Object} state - The state.
@@ -351,14 +367,14 @@
         const waiting = state.queues.waiting ?? [];
         const longest = Math.max(0, ...waiting.map(e => e.waitedSeconds));
         const inStage = (stage: string) => (state.queues[stage] ?? []).length;
+        const active = STAGES.filter(stage => stage[0] !== 'waiting');
         const open = state.rooms.filter(r => r.open);
         const people = (role: string) => open.reduce((n, r) => n + r.occupants.filter(o => o.role === role).length, 0);
 
         $('stat-waiting').textContent = String(waiting.length);
         $('stat-waiting-note').textContent = waiting.length ? `นานสุด ${waitedInWords(longest)}` : 'ไม่มีผู้ป่วยรอ';
-        $('stat-active').textContent = String(inStage('intake') + inStage('examination') + inStage('aftercare'));
-        $('stat-active-note').textContent
-            = `ให้ข้อมูล ${inStage('intake')} · พบแพทย์ ${inStage('examination')} · หลัง ${inStage('aftercare')}`;
+        $('stat-active').textContent = String(active.reduce((n, stage) => n + inStage(stage[0]), 0));
+        $('stat-active-note').textContent = active.map(stage => `${stage[1]} ${inStage(stage[0])}`).join(' · ');
         $('stat-rooms').textContent = `${open.length}/${state.rooms.length}`;
         $('stat-rooms-note').textContent = `ผู้ป่วย ${people('patient')} · เจ้าหน้าที่ ${people('staff')}`;
         $('stat-moving').textContent = String(state.moves.filter(isUnderWay).length);
@@ -381,7 +397,7 @@
      * @returns {string}
      */
     function nextStage(index: number): string {
-        return (STAGES[index + 1] ?? STAGES[index - 1])[0];
+        return (STAGES[index + 1] ?? STAGES[index - 1] ?? STAGES[index])[0];
     }
 
     /**
@@ -894,6 +910,7 @@
                     $('who-avatar').textContent = initials(who);
                     $('problem').hidden = true;
                     showLive(true);
+                    useStages(state.stages);
                     drawStats(state);
 
                     // A list being chosen from would close, and a field being typed in would lose its place, if they
