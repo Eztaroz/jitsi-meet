@@ -104,23 +104,18 @@ function hnFrom(body: unknown): string {
 }
 
 /**
- * Reads the station of a request: the room and the patient's verified identity id, together or neither.
+ * Refuses a request that still names a station: recorded rooms are patients' own rooms only (ADR 0011).
  *
  * @param {unknown} body - The request body.
- * @returns {Object|undefined}
+ * @returns {void}
  */
-function stationFrom(body: unknown): { patientId: string; room: string; } | undefined {
+function refuseStationFields(body: unknown) {
     const { patient, room } = body as { patient?: unknown; room?: unknown; };
 
-    if (room === undefined && patient === undefined) {
-        return undefined;
+    if (room !== undefined || patient !== undefined) {
+        throw new HttpError(400,
+            'station consultations are gone: send only hn, the bot joins the patient\'s own room (ADR 0011)');
     }
-    if (typeof room !== 'string' || !room.trim() || typeof patient !== 'string' || !patient.trim()
-            || room.length > MAX_HN_LENGTH || patient.length > MAX_HN_LENGTH) {
-        throw new HttpError(400, 'room and patient must both be given, as non-empty strings');
-    }
-
-    return { patientId: patient, room };
 }
 
 /**
@@ -165,11 +160,12 @@ export function createApi({ consultations, maxConsultations, secret }: {
         if (pathname === '/consultations' && req.method === 'POST') {
             const body = await readJson(req);
             const hn = hnFrom(body);
-            const station = stationFrom(body);
+
+            refuseStationFields(body);
             let started;
 
             try {
-                started = consultations.start(hn, station);
+                started = consultations.start(hn);
             } catch (error) {
                 if (error instanceof AtCapacityError) {
                     throw new HttpError(503, 'the recorder bot service is recording as many consultations as it may');
