@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { DEFAULT_PATHWAY, DEFAULT_PATHWAY_ID, DONE, EXAMINATION, WAITING } from './pathways.ts';
+import type { ISentQuestionnaire } from './questionnaires.ts';
 
 /** A stage's id, as the encounter's pathway configures it (ADR 0013). */
 export type Stage = string;
@@ -31,6 +32,9 @@ export interface IEncounter {
 
     /** The id of the pathway the encounter follows, resolved when it started (ADR 0013). */
     pathway: string;
+
+    /** The health questionnaires sent to the patient during the encounter, oldest first, with their answers. */
+    questionnaires?: ISentQuestionnaire[];
     stage: Stage;
 
     /** When the encounter entered its current stage: the queue is ordered by it. */

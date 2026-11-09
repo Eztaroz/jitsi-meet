@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import type { IAuditEntry } from './audit.ts';
 import { DEFAULT_PATHWAY_ID } from './pathways.ts';
+import type { ISentQuestionnaire } from './questionnaires.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
 import type { ISurvey } from './surveys.ts';
 
@@ -31,6 +32,25 @@ export interface IMoveRecord {
  */
 export function newMoveRecord(issuer = 'system'): IMoveRecord {
     return { audited: false, deadlines: {}, issuer };
+}
+
+/**
+ * Reads the health questionnaires of an encounter back from their JSON, with their dates.
+ *
+ * @param {string} json - What was saved.
+ * @returns {ISentQuestionnaire[]}
+ */
+function readQuestionnaires(json: string): ISentQuestionnaire[] {
+    type Saved = Omit<ISentQuestionnaire, 'answeredAt' | 'closedAt' | 'sentAt'> & {
+        answeredAt?: string; closedAt?: string; sentAt: string;
+    };
+
+    return (JSON.parse(json) as Saved[]).map(q => ({
+        ...q,
+        answeredAt: q.answeredAt ? new Date(q.answeredAt) : undefined,
+        closedAt: q.closedAt ? new Date(q.closedAt) : undefined,
+        sentAt: new Date(q.sentAt)
+    }));
 }
 
 export class Store {
@@ -87,7 +107,8 @@ export class Store {
         const columns = (this._db.prepare('PRAGMA table_info(encounters)').all() as { name: string; }[]).map(c => c.name);
 
         for (const [ name, type ] of [ [ 'stage_started_at', 'TEXT' ], [ 'history', 'TEXT' ], [ 'unfinished', 'INTEGER' ], [ 'pathway', 'TEXT' ],
-            [ 'visit_number', 'TEXT' ], [ 'center', 'TEXT' ], [ 'clinic', 'TEXT' ], [ 'doctor', 'TEXT' ] ]) {
+            [ 'visit_number', 'TEXT' ], [ 'center', 'TEXT' ], [ 'clinic', 'TEXT' ], [ 'doctor', 'TEXT' ],
+            [ 'questionnaires', 'TEXT' ] ]) {
             if (!columns.includes(name)) {
                 this._db.exec(`ALTER TABLE encounters ADD COLUMN ${name} ${type}`);
             }
@@ -101,8 +122,9 @@ export class Store {
      */
     load(): IState {
         const rows = this._db.prepare('SELECT * FROM encounters ORDER BY started_at').all() as {
-            center: string | null; clinic: string | null; doctor: string | null; history: string | null; hn: string; id: string;
-            pathway: string | null; stage: IEncounter['stage']; stage_started_at: string | null; started_at: string;
+            center: string | null; clinic: string | null; doctor: string | null; history: string | null; hn: string;
+            id: string; pathway: string | null; questionnaires: string | null; stage: IEncounter['stage'];
+            stage_started_at: string | null; started_at: string;
             unfinished: number | null; visit_number: string | null;
         }[];
 
@@ -128,6 +150,7 @@ export class Store {
                     ...r.center ? { center: r.center } : {},
                     ...r.clinic ? { clinic: r.clinic } : {},
                     ...r.doctor ? { doctor: r.doctor } : {},
+                    ...r.questionnaires ? { questionnaires: readQuestionnaires(r.questionnaires) } : {},
                     ...r.unfinished ? { unfinished: true as const } : {},
                     ...r.visit_number ? { visitNumber: r.visit_number } : {}
                 };
@@ -212,8 +235,9 @@ export class Store {
      */
     save(state: IState, records: ReadonlyMap<string, IMoveRecord> = new Map(), audit: IAuditEntry[] = []): void {
         const insert = this._db.prepare(`INSERT OR REPLACE INTO encounters
-            (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic, doctor)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+            (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic, doctor,
+                questionnaires)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
         const keptRooms = new Map((this._db.prepare('SELECT * FROM patient_rooms').all() as {
             identity_id: string; room: string; updated_at: string;
@@ -249,7 +273,7 @@ export class Store {
             for (const e of state.encounters) {
                 insert.run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
                     JSON.stringify(e.history), e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null,
-                    e.clinic ?? null, e.doctor ?? null);
+                    e.clinic ?? null, e.doctor ?? null, e.questionnaires?.length ? JSON.stringify(e.questionnaires) : null);
             }
             for (const entry of audit) {
                 this.addAudit(entry);
