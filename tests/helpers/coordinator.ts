@@ -279,6 +279,7 @@ export interface IAuditEntry {
     destination?: string;
     doctor?: string;
     encounterId?: string;
+    from?: string;
     issuer: string;
     kind: 'doctor' | 'move' | 'stage';
     outcome: string;

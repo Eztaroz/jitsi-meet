@@ -734,6 +734,11 @@ export interface IConfig {
      * @deprecated Use `speakerStats.order` instead.
      */
     speakerStatsOrder?: Array<'role' | 'name' | 'hasLeft'>;
+    /**
+     * Where the coordinator service's API is, for the staff's own requests (see react/features/staff-actions): the
+     * web server's proxy of it. Defaults to "/coordinator" on the page's own origin.
+     */
+    staffApiUrl?: string;
     startAudioMuted?: number;
     startLastN?: number;
     startLowBandwidthMode?: boolean;

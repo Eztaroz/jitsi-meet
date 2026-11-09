@@ -14,6 +14,7 @@ import { RecorderBotUnavailableError } from './recorderBot.ts';
 import type { IMove } from './rules.ts';
 import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
+import { createStaffRoutes } from './staffRoutes.ts';
 import { createSurveyRoutes } from './surveyRoutes.ts';
 
 /** Who the audit log names for a call with the shared bearer secret. */
@@ -180,10 +181,11 @@ function reportTime(value: string | null, fallback: Date): Date {
  * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ screen, secret, service, survey }: {
+export function createApi({ screen, secret, service, staff, survey }: {
     screen?: ICoordinatorAuth;
     secret: string;
     service: CoordinatorService;
+    staff?: ICoordinatorAuth;
     survey?: ICoordinatorAuth;
 }): Server {
     /**
@@ -293,6 +295,7 @@ export function createApi({ screen, secret, service, survey }: {
 
     const handleScreen = createScreenRoutes({ act, screen, service });
     const handleSurvey = createSurveyRoutes({ auth: survey, service });
+    const handleStaff = createStaffRoutes({ auth: staff, service });
 
     /**
      * Handles one request.
@@ -308,6 +311,11 @@ export function createApi({ screen, secret, service, survey }: {
 
         if (path.startsWith('/screen')) {
             await handleScreen(req, res, scheme === 'Bearer' ? token : undefined);
+
+            return;
+        }
+        if (path === '/staff' || path.startsWith('/staff/')) {
+            await handleStaff(req, res, scheme === 'Bearer' ? token : undefined);
 
             return;
         }

@@ -49,7 +49,10 @@ const api = createApi({
     // A patient's page sends the survey with the patient's token, from the same issuer as the coordinators'.
     survey: issuer && config.roleMarkers.patient && { ...issuer, marker: config.roleMarkers.patient },
     secret: config.apiSecret,
-    service
+    service,
+
+    // Staff act with their own token from the same issuer, which carries the staff marker.
+    staff: issuer && config.roleMarkers.staff && { ...issuer, marker: config.roleMarkers.staff }
 });
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));
