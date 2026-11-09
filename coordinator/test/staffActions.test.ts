@@ -34,7 +34,14 @@ describe('staff change a stage, through the coordinator service', () => {
         store = new Store(mkdtempSync(join(tmpdir(), 'staff-')));
         service = new CoordinatorService({
             auditKey: 'audit-key',
-            layout: { centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ] },
+            layout: {
+                centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ],
+                questionnaires: [ {
+                    id: 'lifestyle',
+                    questions: [ { choices: [ 'Yes', 'No' ], text: 'Do you smoke?' } ],
+                    title: 'Lifestyle'
+                } ]
+            },
             prosody: {
                 rooms: async () => ({ rooms }),
                 sendMove: async ({ endpointId, move, room }: { endpointId: string; move: { destination: string; }; room: string; }) => {
@@ -155,5 +162,58 @@ describe('staff change a stage, through the coordinator service', () => {
         assert.equal((await service.staffContext(SAM)).where, 'lounge');
         rooms = [];
         assert.equal((await service.staffContext(SAM)).where, 'nowhere');
+    });
+
+    it('lets staff in the patient\'s room send any configured questionnaire, and audits the staff member', async () => {
+        const id = await samInPatientsRoom();
+        const result = await service.staffSendQuestionnaire(id, 'lifestyle', SAM);
+
+        assert.equal(result.refused, undefined);
+        assert.deepEqual(service.questionnairesOf(id)?.map(q => [ q.questionnaire, q.sentBy ]), [ [ 'lifestyle', 's-1' ] ]);
+
+        const entry = service.audit(10).find(e => e.kind === 'questionnaire_sent');
+
+        assert.deepEqual([ entry?.issuer, entry?.outcome, entry?.encounterId ], [ 's-1', 'ok', id ]);
+    });
+
+    it('refuses staff who are elsewhere, for sending and for reading, and audits the refusal', async () => {
+        const id = await samInPatientsRoom();
+
+        rooms = [ { name: 'lounge-intake', occupants: [ staffAt('s-1', 'e-sam') ] }, { name: 'hn-1', occupants: [ patientAt ] } ];
+        assert.equal((await service.staffSendQuestionnaire(id, 'lifestyle', SAM)).refused, 'not_in_patients_room');
+        assert.equal((await service.staffQuestionnairesOf(id, SAM)).refused, 'not_in_patients_room');
+        assert.deepEqual(service.questionnairesOf(id), []);
+
+        const entry = service.audit(10).find(e => e.kind === 'questionnaire_sent');
+
+        assert.deepEqual([ entry?.issuer, entry?.outcome, entry?.reason ], [ 's-1', 'refused', 'not_in_patients_room' ]);
+    });
+
+    it('refuses an unknown questionnaire and an unknown encounter', async () => {
+        const id = await samInPatientsRoom();
+
+        assert.equal((await service.staffSendQuestionnaire(id, 'nope', SAM)).refused, 'unknown_questionnaire');
+        assert.equal((await service.staffSendQuestionnaire('missing', 'lifestyle', SAM)).refused, 'unknown_encounter');
+    });
+
+    it('shows staff in the room the answers of this encounter and nothing of another', async () => {
+        const first = await samInPatientsRoom();
+        const { sent: sending } = await service.staffSendQuestionnaire(first, 'lifestyle', SAM);
+
+        await service.answerQuestionnaire('p-1', sending?.id as string, [ 1 ]);
+        assert.deepEqual((await service.staffQuestionnairesOf(first, SAM)).questionnaires?.map(q => q.answers), [ [ 1 ] ]);
+        await service.changeStage(first, 'done', 'coord-1');
+
+        const second = (await service.startEncounter('hn-1')).encounter?.id as string;
+
+        assert.deepEqual((await service.staffQuestionnairesOf(second, SAM)).questionnaires, []);
+        assert.equal((await service.staffQuestionnairesOf(first, SAM)).refused, 'not_in_patients_room');
+    });
+
+    it('lists the catalogue in the staff member\'s context in a patient\'s room only', async () => {
+        await samInPatientsRoom();
+        assert.deepEqual((await service.staffContext(SAM)).questionnaires, [ { id: 'lifestyle', title: 'Lifestyle' } ]);
+        rooms = [ { name: 'lounge-intake', occupants: [ staffAt('s-1', 'e-sam') ] } ];
+        assert.equal((await service.staffContext(SAM)).questionnaires, undefined);
     });
 });

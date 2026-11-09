@@ -316,10 +316,11 @@ export interface IAuditEntry {
     encounterId?: string;
     from?: string;
     issuer: string;
-    kind: 'call_next' | 'doctor' | 'move' | 'stage';
+    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage';
     outcome: string;
     participantId?: string;
     previousDoctor?: string;
+    questionnaire?: string;
     reason?: string;
     source?: string;
     to?: string;

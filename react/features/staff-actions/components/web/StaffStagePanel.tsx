@@ -6,8 +6,8 @@ import { makeStyles } from 'tss-react/mui';
 import { IReduxState } from '../../../app/types';
 import { getLocalParticipant, isPatientParticipant, isPatientsRoom } from '../../../base/participants/functions';
 import Button from '../../../base/ui/components/web/Button';
-import { changeStage, fetchStaffContext } from '../../functions.web';
-import { IStaffContext } from '../../types';
+import { changeStage, fetchQuestionnaires, fetchStaffContext, sendQuestionnaire } from '../../functions.web';
+import { IStaffContext, IStaffQuestionnaire } from '../../types';
 
 /** How often the staff member's place is asked again, in milliseconds. */
 const REFRESH_MS = 3000;
@@ -37,6 +37,11 @@ const useStyles = makeStyles()(theme => {
             color: theme.palette.text01,
             padding: theme.spacing(1)
         },
+        answers: {
+            flexBasis: '100%',
+            maxHeight: '30vh',
+            overflowY: 'auto'
+        },
         error: {
             color: theme.palette.warning01,
             flexBasis: '100%'
@@ -59,6 +64,9 @@ const StaffStagePanel = () => {
     const [ context, setContext ] = useState<IStaffContext | undefined>();
     const [ chosen, setChosen ] = useState('');
     const [ error, setError ] = useState<string | undefined>();
+    const [ chosenQuestionnaire, setChosenQuestionnaire ] = useState('');
+    const [ questionnaireError, setQuestionnaireError ] = useState(false);
+    const [ sentQuestionnaires, setSentQuestionnaires ] = useState<IStaffQuestionnaire[]>([]);
     const { t } = useTranslation();
     const { classes } = useStyles();
 
@@ -73,8 +81,11 @@ const StaffStagePanel = () => {
         const refresh = async () => {
             const fresh = await fetchStaffContext(store.getState());
 
+            const answers = fresh?.encounter ? await fetchQuestionnaires(store.getState(), fresh.encounter.id) : undefined;
+
             if (!cancelled) {
                 setContext(fresh);
+                setSentQuestionnaires(answers ?? []);
             }
         };
 
@@ -95,6 +106,15 @@ const StaffStagePanel = () => {
         }
         setError(await changeStage(store.getState(), context.encounter.id, chosen));
     }, [ chosen, context, store ]);
+
+    const onPickQuestionnaire = useCallback((event: React.ChangeEvent<HTMLSelectElement>) =>
+        setChosenQuestionnaire(event.target.value), []);
+    const onSendQuestionnaire = useCallback(async () => {
+        if (!context?.encounter || !chosenQuestionnaire) {
+            return;
+        }
+        setQuestionnaireError(Boolean(await sendQuestionnaire(store.getState(), context.encounter.id, chosenQuestionnaire)));
+    }, [ chosenQuestionnaire, context, store ]);
 
     if (context?.where !== 'patients_room' || !context.encounter) {
         return null;
@@ -129,6 +149,54 @@ const StaffStagePanel = () => {
                 labelKey = 'staffActions.apply'
                 onClick = { onApply } />
             { error && <span className = { classes.error }>{ t('staffActions.refused') }</span> }
+            { Boolean(context.questionnaires?.length) && (
+                <>
+                    <select
+                        aria-label = { t('staffActions.pickQuestionnaire') }
+                        className = { classes.select }
+                        id = 'staff-questionnaire-picker'
+                        onChange = { onPickQuestionnaire }
+                        value = { chosenQuestionnaire }>
+                        <option value = ''>{ t('staffActions.pickQuestionnaire') }</option>
+                        { context.questionnaires?.map(questionnaire => (
+                            <option
+                                key = { questionnaire.id }
+                                value = { questionnaire.id }>
+                                { questionnaire.title }
+                            </option>
+                        )) }
+                    </select>
+                    <Button
+                        accessibilityLabel = { t('staffActions.sendQuestionnaire') }
+                        disabled = { !chosenQuestionnaire }
+                        id = 'staff-questionnaire-send'
+                        labelKey = 'staffActions.sendQuestionnaire'
+                        onClick = { onSendQuestionnaire } />
+                </>
+            ) }
+            { questionnaireError
+                && <span className = { classes.error }>{ t('staffActions.questionnaireNotSent') }</span> }
+            { sentQuestionnaires.length > 0 && (
+                <div
+                    className = { classes.answers }
+                    id = 'staff-questionnaire-answers'>
+                    { sentQuestionnaires.map(sent => (
+                        <div
+                            className = 'staff-questionnaire'
+                            key = { sent.id }>
+                            <strong>{ sent.title }</strong>
+                            { sent.answers
+                                ? sent.questions.map((question, index) => (
+                                    <div key = { index }>
+                                        { t('staffActions.answer', {
+                                            choice: question.choices[sent.answers?.[index] ?? 0],
+                                            question: question.text
+                                        }) }
+                                    </div>))
+                                : <div>{ t('staffActions.noAnswersYet') }</div> }
+                        </div>)) }
+                </div>
+            ) }
         </div>
     );
 };

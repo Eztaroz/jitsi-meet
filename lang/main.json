@@ -1481,11 +1481,16 @@
     "staffActions": {
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
+        "answer": "{{question}}: {{choice}}",
         "nextPatient": "Next patient",
         "nextRefused": "Could not call the next patient.",
+        "noAnswersYet": "No answers yet.",
+        "pickQuestionnaire": "Send a questionnaire...",
         "pickStage": "Change stage to...",
         "queueEmpty": "Nobody is waiting for your station.",
-        "refused": "The stage was not changed."
+        "questionnaireNotSent": "The questionnaire was not sent.",
+        "refused": "The stage was not changed.",
+        "sendQuestionnaire": "Send questionnaire"
     },
     "startupoverlay": {
         "genericTitle": "The meeting needs to use your microphone and camera.",

@@ -138,6 +138,8 @@ function seenStaffStations(state: IState, rooms: IRoomView[]): Record<string, st
 export interface IStaffContext {
     encounter?: { id: string; stage: string; stageName: string; };
 
+    /** In a patient's room: the questionnaires the staff member can send. */
+    questionnaires?: { id: string; title: string; }[];
     /** The stages the staff member can put the encounter in: every stage of its pathway but `done`. */
     stages?: { id: string; name: string; }[];
     station?: string;
@@ -419,6 +421,74 @@ export class CoordinatorService {
 
             return { sent };
         });
+    }
+
+    /**
+     * Sends a health questionnaire on a staff member's request (ADR 0012): only while the staff member is in that
+     * patient's own room. A refusal is audited with the staff member.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} questionnaireId - The questionnaire's id in the catalogue.
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<Object>} The sending, or why it was refused.
+     */
+    async staffSendQuestionnaire(encounterId: string, questionnaireId: string, staff: { id: string; }): Promise<{
+        refused?: 'encounter_closed' | 'not_in_patients_room' | 'unknown_encounter' | 'unknown_questionnaire';
+        sent?: ISentQuestionnaire;
+    }> {
+        if (this._state.encounters.some(e => e.id === encounterId && e.stage !== DONE)
+            && !await this._staffInPatientsRoom(encounterId, staff.id)) {
+            this._audit(questionnaireEntry({
+                at: new Date(),
+                encounterId,
+                issuer: staff.id,
+                outcome: 'refused',
+                questionnaire: questionnaireId,
+                reason: 'not_in_patients_room'
+            }));
+
+            return { refused: 'not_in_patients_room' };
+        }
+
+        return this.sendQuestionnaire(encounterId, questionnaireId, staff.id);
+    }
+
+    /**
+     * The questionnaires of an encounter with the patient's answers, for a staff member in that patient's own room.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<Object>} The questionnaires of this encounter only, or why it was refused.
+     */
+    async staffQuestionnairesOf(encounterId: string, staff: { id: string; }): Promise<{
+        questionnaires?: ISentQuestionnaire[];
+        refused?: 'not_in_patients_room' | 'unknown_encounter';
+    }> {
+        const questionnaires = this.questionnairesOf(encounterId);
+
+        if (!questionnaires) {
+            return { refused: 'unknown_encounter' };
+        }
+        if (!await this._staffInPatientsRoom(encounterId, staff.id)) {
+            return { refused: 'not_in_patients_room' };
+        }
+
+        return { questionnaires };
+    }
+
+    /**
+     * Whether a staff member is in the own room of the patient of an encounter now.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} staffId - The staff member's verified identity id.
+     * @returns {Promise<boolean>}
+     */
+    private async _staffInPatientsRoom(encounterId: string, staffId: string): Promise<boolean> {
+        const here = findStaff(await this.rooms(), staffId);
+
+        return here?.room.kind === 'patient' && here.room.encounterId === encounterId;
     }
 
     /**
@@ -913,6 +983,7 @@ export class CoordinatorService {
             stages: (findPathway(this._opts.layout, encounter.pathway)?.stages ?? [])
                 .filter(s => s.id !== DONE)
                 .map(({ id, name }) => ({ id, name })),
+            questionnaires: this.questionnaireCatalogue().map(({ id, title }) => ({ id, title })),
             station: here.occupant.station,
             where: 'patients_room'
         };
