@@ -276,6 +276,9 @@ h2 { align-items: center; display: flex; font-size: 1.05rem; font-weight: 700; g
 .controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 12px; }
 .controls select { flex: 1 1 100%; min-width: 0; }
 .controls button { flex: 1 1 0; }
+.questionnaires { border-top: 1px solid var(--line); font-size: .85rem; }
+.questionnaire { padding: 4px 12px 8px; }
+.questionnaire .answer { color: var(--muted, inherit); padding-left: 10px; }
 
 /* Rooms */
 .toolbar { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }

@@ -4,15 +4,21 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { type IAuditEntry, moveEntry, stageEntry } from './audit.ts';
+import { type IAuditEntry, moveEntry, questionnaireEntry, stageEntry } from './audit.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
 import { allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
+import {
+    type IPatientQuestionnaire,
+    type IQuestionnaire,
+    type ISentQuestionnaire,
+    parseAnswers
+} from './questionnaires.ts';
 import type { RecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
-import { type ILayout, type IRoleMarkers, type IRoom, type IStage, describeRooms } from './rooms.ts';
+import { type ILayout, type IRoleMarkers, type IRoom, type IStage, describeRooms, sameRoom } from './rooms.ts';
 import {
     type Command,
     type IEncounter,
@@ -238,6 +244,185 @@ export class CoordinatorService {
             }));
 
             return result;
+        });
+    }
+
+    /**
+     * The health questionnaires the deployment offers.
+     *
+     * @returns {IQuestionnaire[]}
+     */
+    questionnaireCatalogue(): IQuestionnaire[] {
+        return this._opts.layout.questionnaires ?? [];
+    }
+
+    /**
+     * The health questionnaires sent to a patient during an encounter, oldest first, with their answers. Only that
+     * encounter's: another encounter of the same patient keeps its own.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {ISentQuestionnaire[]|undefined} Undefined when there is no such encounter.
+     */
+    questionnairesOf(encounterId: string): ISentQuestionnaire[] | undefined {
+        const encounter = this._state.encounters.find(e => e.id === encounterId);
+
+        return encounter && (encounter.questionnaires ?? []);
+    }
+
+    /**
+     * Sends a health questionnaire from the catalogue to the patient of an open encounter, at any stage. Several can be
+     * sent to one encounter; each is kept apart. The sending is audited.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} questionnaireId - The questionnaire's id in the catalogue.
+     * @param {string} issuer - Who sends: `system`, or a coordinator's or staff member's verified identity id.
+     * @returns {Promise<Object>} The sending, or why it was refused.
+     */
+    sendQuestionnaire(encounterId: string, questionnaireId: string, issuer: string): Promise<{
+        refused?: 'encounter_closed' | 'unknown_encounter' | 'unknown_questionnaire';
+        sent?: ISentQuestionnaire;
+    }> {
+        return this._serial(async () => {
+            const at = new Date();
+            const encounter = this._state.encounters.find(e => e.id === encounterId);
+            const questionnaire = this.questionnaireCatalogue().find(q => q.id === questionnaireId);
+            let refused: 'encounter_closed' | 'unknown_encounter' | 'unknown_questionnaire' | undefined;
+
+            if (!encounter) {
+                refused = 'unknown_encounter';
+            } else if (encounter.stage === 'done') {
+                refused = 'encounter_closed';
+            } else if (!questionnaire) {
+                refused = 'unknown_questionnaire';
+            }
+            if (refused || !encounter || !questionnaire) {
+                this._audit(questionnaireEntry({
+                    at, encounterId, issuer, outcome: 'refused', questionnaire: questionnaireId, reason: refused
+                }));
+
+                return { refused };
+            }
+
+            const room = await this._roomOf(encounter);
+            const sent: ISentQuestionnaire = {
+                id: randomUUID(),
+                questionnaire: questionnaire.id,
+                questions: questionnaire.questions,
+                sentAt: at,
+                sentBy: issuer,
+                staffAtSend: (room?.occupants ?? []).filter(o => o.role === 'staff').map(o => o.endpointId),
+                title: questionnaire.title
+            };
+
+            this._setQuestionnaires(encounter.id, [ ...encounter.questionnaires ?? [], sent ]);
+            this._audit(questionnaireEntry({ at, encounterId, issuer, outcome: 'ok', questionnaire: questionnaire.id }));
+
+            return { sent };
+        });
+    }
+
+    /**
+     * What a patient's client shows now: the oldest questionnaire sent to the patient's open encounter that they have
+     * not answered and that no staff member has joined after. A questionnaire that staff joined after is closed, for
+     * good: it holds nobody up.
+     *
+     * @param {string} identityId - The patient's verified identity id.
+     * @returns {Promise<IPatientQuestionnaire|undefined>} Undefined when nothing is waiting for them.
+     */
+    pendingQuestionnaire(identityId: string): Promise<IPatientQuestionnaire | undefined> {
+        return this._serial(async () => {
+            const found = await this._questionnaireOf(identityId);
+            const open = found?.encounter.questionnaires?.find(q => !q.answeredAt && !q.closedAt);
+
+            return open && { id: open.id, questions: open.questions, title: open.title };
+        });
+    }
+
+    /**
+     * Keeps a patient's answers to a questionnaire that is waiting for them.
+     *
+     * @param {string} identityId - The patient's verified identity id.
+     * @param {string} sentId - The id of the sending.
+     * @param {unknown} answers - For each question, the index (0 or 1) of the choice.
+     * @returns {Promise<Object>} Why it was refused, if it was.
+     */
+    answerQuestionnaire(identityId: string, sentId: string, answers: unknown): Promise<{
+        refused?: 'invalid_answers' | 'unknown_questionnaire';
+    }> {
+        return this._serial(async () => {
+            const found = await this._questionnaireOf(identityId);
+            const sent = found?.encounter.questionnaires?.find(q => q.id === sentId && !q.answeredAt && !q.closedAt);
+
+            if (!found || !sent) {
+                return { refused: 'unknown_questionnaire' as const };
+            }
+
+            const parsed = parseAnswers(answers, sent.questions);
+
+            if (!parsed) {
+                return { refused: 'invalid_answers' as const };
+            }
+            this._setQuestionnaires(found.encounter.id, (found.encounter.questionnaires ?? [])
+                .map(q => q === sent ? { ...q, answeredAt: new Date(), answers: parsed } : q));
+
+            return {};
+        });
+    }
+
+    /**
+     * Finds the open encounter of a patient from where they are now, and closes the questionnaires that staff have
+     * joined the room after.
+     *
+     * @param {string} identityId - The patient's verified identity id.
+     * @returns {Promise<Object|undefined>} The encounter as it is after closing; undefined when the patient is in no
+     * patient's room that has an open encounter.
+     */
+    private async _questionnaireOf(identityId: string): Promise<{ encounter: IEncounter; } | undefined> {
+        const rooms = describeRooms(await this._opts.prosody.rooms(), this._opts.roleMarkers, this._opts.layout);
+        const room = rooms.find(r => r.kind === 'patient'
+            && r.occupants.some(o => o.role === 'patient' && o.identity?.id === identityId));
+        const encounter = room && this._state.encounters.find(e => e.stage !== 'done' && sameRoom(e.hn, room.name));
+
+        if (!room || !encounter) {
+            return undefined;
+        }
+
+        const staff = room.occupants.filter(o => o.role === 'staff').map(o => o.endpointId);
+        const joined = (q: ISentQuestionnaire) => staff.some(s => !q.staffAtSend.includes(s));
+
+        if (encounter.questionnaires?.some(q => !q.answeredAt && !q.closedAt && joined(q))) {
+            const closedAt = new Date();
+
+            this._setQuestionnaires(encounter.id, encounter.questionnaires
+                .map(q => !q.answeredAt && !q.closedAt && joined(q) ? { ...q, closedAt } : q));
+        }
+
+        return { encounter: this._state.encounters.find(e => e.id === encounter.id) as IEncounter };
+    }
+
+    /**
+     * Finds an encounter's room among the open rooms.
+     *
+     * @param {IEncounter} encounter - The encounter.
+     * @returns {Promise<IRoom|undefined>}
+     */
+    private async _roomOf(encounter: IEncounter): Promise<IRoom | undefined> {
+        const rooms = describeRooms(await this._opts.prosody.rooms(), this._opts.roleMarkers, this._opts.layout);
+
+        return rooms.find(r => r.kind === 'patient' && sameRoom(r.name, encounter.hn));
+    }
+
+    /**
+     * Replaces the questionnaires of an encounter and saves.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {ISentQuestionnaire[]} questionnaires - Its questionnaires.
+     * @returns {void}
+     */
+    private _setQuestionnaires(encounterId: string, questionnaires: ISentQuestionnaire[]): void {
+        this._commit({
+            ...this._state,
+            encounters: this._state.encounters.map(e => e.id === encounterId ? { ...e, questionnaires } : e)
         });
     }
 

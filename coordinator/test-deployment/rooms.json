@@ -8,5 +8,22 @@
                 { "id": "aftercare", "stage": "aftercare", "lounge": "lounge-aftercare" }
             ]
         }
+    ],
+    "questionnaires": [
+        {
+            "id": "lifestyle",
+            "title": "Lifestyle",
+            "questions": [
+                { "text": "Do you smoke?", "choices": [ "Yes", "No" ] },
+                { "text": "Do you drink alcohol?", "choices": [ "Yes", "No" ] }
+            ]
+        },
+        {
+            "id": "pain",
+            "title": "Pain",
+            "questions": [
+                { "text": "Does it hurt today?", "choices": [ "Yes", "No" ] }
+            ]
+        }
     ]
 }
