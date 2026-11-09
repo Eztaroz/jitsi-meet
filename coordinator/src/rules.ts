@@ -6,7 +6,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { DEFAULT_PATHWAY, DEFAULT_PATHWAY_ID, DONE, WAITING } from './pathways.ts';
+import { DEFAULT_PATHWAY, DEFAULT_PATHWAY_ID, DONE, EXAMINATION, WAITING } from './pathways.ts';
 
 /** A stage's id, as the encounter's pathway configures it (ADR 0013). */
 export type Stage = string;
@@ -18,6 +18,9 @@ export interface IEncounter {
 
     /** The clinic the encounter is for, if the request that started it named one. */
     clinic?: string;
+
+    /** The doctor of the encounter: a staff member's verified identity id. Examination queues are per doctor. */
+    doctor?: string;
 
     /** Every stage the encounter has been in, with when it entered it. */
     history: { at: Date; stage: Stage; }[];
@@ -43,12 +46,21 @@ export interface IEncounter {
 
 /** One patient's place in a stage's queue. */
 export interface IQueueEntry {
+
+    /** The stations whose staff are in the patient's room now; set by the service, which sees the rooms. */
+    at?: string[];
     encounterId: string;
     enteredAt: Date;
 
     /** The first of its queue: who the system suggests is next. */
     suggested: boolean;
     waitedSeconds: number;
+}
+
+/** Examination's queue split by doctor, by the doctor's verified identity id, and the patients with no doctor yet. */
+export interface IExaminationQueues {
+    doctors: Record<string, IQueueEntry[]>;
+    unassigned: IQueueEntry[];
 }
 
 /** The queues by stage id; `done` has none. */
@@ -126,6 +138,12 @@ export type RulesEvent = { at: Date; } & (
         pathway?: string;
         type: 'start_encounter';
         visitNumber?: string;
+    }
+    | {
+        /** The staff member's verified identity id; null takes the doctor away. */
+        doctor: string | null;
+        encounterId: string;
+        type: 'set_doctor';
     }
     | {
         encounterId: string;
@@ -352,6 +370,28 @@ export function queues(state: IState, now: Date, stages: readonly string[] = DEF
 }
 
 /**
+ * Returns the examination queue split by doctor: each doctor's patients, the longest-waiting first, and the patients in
+ * examination with no doctor.
+ *
+ * @param {IState} state - The state.
+ * @param {Date} now - When.
+ * @returns {IExaminationQueues}
+ */
+export function examinationQueues(state: IState, now: Date): IExaminationQueues {
+    const entries = queues(state, now, [ EXAMINATION ])[EXAMINATION] ?? [];
+    const result: IExaminationQueues = { doctors: {}, unassigned: [] };
+
+    for (const entry of entries) {
+        const doctor = state.encounters.find(e => e.id === entry.encounterId)?.doctor;
+        const list = doctor === undefined ? result.unassigned : result.doctors[doctor] ??= [];
+
+        list.push({ ...entry, suggested: list.length === 0 });
+    }
+
+    return result;
+}
+
+/**
  * Starts a move, or refuses it. Only staff are moved: into a patient's own room while it is open, or into a lounge,
  * open or not. Patients stay in their own room (ADR 0011).
  *
@@ -450,6 +490,25 @@ export function step(state: IState, event: RulesEvent, newId: () => string = ran
         }
 
         const changed = enter(encounter, event.stage, event.at);
+
+        return {
+            commands: [],
+            encounter: { ...changed, created: false },
+            state: { ...state, encounters: state.encounters.map(e => e === encounter ? changed : e) }
+        };
+    }
+    case 'set_doctor': {
+        const encounter = state.encounters.find(e => e.id === event.encounterId);
+
+        if (!encounter) {
+            return { commands: [], refused: 'unknown_encounter', state };
+        }
+        if (encounter.stage === DONE) {
+            return { commands: [], refused: 'encounter_closed', state };
+        }
+
+        const { doctor: _previous, ...rest } = encounter;
+        const changed: IEncounter = event.doctor === null ? rest : { ...rest, doctor: event.doctor };
 
         return {
             commands: [],

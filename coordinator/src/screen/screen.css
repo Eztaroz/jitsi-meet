@@ -231,6 +231,15 @@ h2 { align-items: center; display: flex; font-size: 1.05rem; font-weight: 700; g
 }
 .ticket:hover { border-color: var(--line-strong); }
 .ticket:has(.suggested) { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 0 3px var(--ok-soft); }
+.team { --tone: var(--lounge); --tone-soft: var(--lounge-soft); display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; }
+.team h3 { align-items: center; display: flex; font-size: .95rem; gap: 10px; line-height: 1.3; }
+.team h3 .tile { height: 30px; width: 30px; }
+.team-stage { color: var(--muted); font-size: .76rem; font-weight: 400; }
+.team-part { color: var(--muted); font-size: .76rem; font-weight: 600; margin-top: 4px; }
+.team-member { align-items: center; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.team-member .avatar { height: 26px; width: 26px; }
+.team-with { color: var(--muted); font-size: .8rem; }
+.badge.at { background: var(--lounge-soft); color: var(--lounge); }
 .queue-entry { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; padding: 10px 12px 6px; }
 .position {
     color: var(--faint);
@@ -276,6 +285,11 @@ h2 { align-items: center; display: flex; font-size: 1.05rem; font-weight: 700; g
 .controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 12px; }
 .controls select { flex: 1 1 100%; min-width: 0; }
 .controls button { flex: 1 1 0; }
+.doctor-controls { padding-top: 0; }
+.doctor-controls input { flex: 2 1 0; min-width: 0; }
+.doctor-group { display: flex; flex-direction: column; gap: 10px; }
+.doctor-group h4 { align-items: center; display: flex; font-size: .85rem; gap: 8px; }
+.doctor-group h4 .count { margin-left: auto; }
 
 /* Rooms */
 .toolbar { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }

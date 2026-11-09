@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { type IAuditEntry, moveEntry, stageEntry } from './audit.ts';
+import { type IAuditEntry, doctorEntry, moveEntry, stageEntry } from './audit.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
@@ -24,18 +24,22 @@ import {
 import {
     type Command,
     type IEncounter,
+    type IExaminationQueues,
     type IMove,
+    type IQueueEntry,
     type IRoomView,
     type IState,
     type IStep,
     type RulesEvent,
     type Stage,
+    examinationQueues,
     learnStaffStations,
     queues,
     step
 } from './rules.ts';
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
+import { type ITeam, describeTeams, stationsAt } from './teams.ts';
 
 /**
  * The states of a move that is under way: it has no audit entry until it ends. `preparing` is a move from when patients
@@ -289,6 +293,30 @@ export class CoordinatorService {
     }
 
     /**
+     * Sets, changes or takes away the doctor of an encounter.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string|null} doctor - A staff member's verified identity id; null takes the doctor away.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
+     * @returns {Promise<IStep>}
+     */
+    setDoctor(encounterId: string, doctor: string | null, issuer: string): Promise<IStep> {
+        return this._serial(async () => {
+            const at = new Date();
+            const previousDoctor = this._state.encounters.find(e => e.id === encounterId)?.doctor;
+            const result = step(this._state, { at, doctor, encounterId, type: 'set_doctor' });
+
+            this._commit(result.state);
+            this._audit(doctorEntry({
+                at, doctor: doctor ?? undefined, encounterId, issuer, outcome: result.refused ? 'refused' : 'ok',
+                previousDoctor, reason: result.refused
+            }));
+
+            return result;
+        });
+    }
+
+    /**
      * The newest audit entries.
      *
      * @param {number} limit - How many.
@@ -339,10 +367,50 @@ export class CoordinatorService {
     /**
      * The queues of the stages: the open encounters in each, the longest-waiting first.
      *
+     * @param {IRoom[]} [rooms] - The rooms now; with them, an encounter whose room holds a station's staff names the
+     * station in `at`, which is where the patient is, rather than in the queue.
      * @returns {Queues}
      */
-    queues() {
-        return queues(this._state, new Date(), this.stages().map(s => s.id));
+    queues(rooms?: IRoom[]) {
+        const result = queues(this._state, new Date(), this.stages().map(s => s.id));
+
+        if (!rooms) {
+            return result;
+        }
+
+        const at = stationsAt(this.teams(rooms));
+
+        return Object.fromEntries(Object.entries(result).map(([ stage, entries ]) =>
+            [ stage, entries.map(e => at[e.encounterId] ? { ...e, at: at[e.encounterId] } : e) ]));
+    }
+
+    /**
+     * The stations as teams: the free staff in each lounge, and the busy staff with the patient they are with.
+     *
+     * @param {IRoom[]} rooms - The rooms now, from `rooms()`.
+     * @returns {ITeam[]}
+     */
+    teams(rooms: IRoom[]): ITeam[] {
+        return describeTeams(this._opts.layout, rooms);
+    }
+
+    /**
+     * Examination's queue split by doctor, with the patients who have no doctor yet. Each entry names the patient's HN,
+     * for the readers that are allowed to see it.
+     *
+     * @returns {Object}
+     */
+    examinationQueues(): { doctors: Record<string, (IQueueEntry & { hn?: string; })[]>;
+        unassigned: (IQueueEntry & { hn?: string; })[]; } {
+        const split: IExaminationQueues = examinationQueues(this._state, new Date());
+        const named = (entries: IQueueEntry[]) => entries.map(e => ({
+            ...e, hn: this._state.encounters.find(x => x.id === e.encounterId)?.hn
+        }));
+
+        return {
+            doctors: Object.fromEntries(Object.entries(split.doctors).map(([ doctor, entries ]) => [ doctor, named(entries) ])),
+            unassigned: named(split.unassigned)
+        };
     }
 
     /**
