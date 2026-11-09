@@ -23,12 +23,12 @@
         [ 'aftercare', 'หลังพบแพทย์', 'heart' ]
     ];
     const STAGE_NAMES: Record<string, string> = { aftercare: 'หลังพบแพทย์',
+        examination: 'พบแพทย์',
         intake: 'ให้ข้อมูลก่อนพบแพทย์' };
 
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
         [ 'patient', 'ห้องผู้ป่วย', 'door' ],
-        [ 'station', 'จุดบริการ', 'stethoscope' ],
         [ 'lounge', 'ห้องพักเจ้าหน้าที่', 'coffee' ]
     ];
     const ROLES: Record<string, string> = { hidden: 'ระบบบันทึก',
@@ -50,17 +50,12 @@
     const REASONS: Record<string, string> = {
         'already_being_moved': 'กำลังย้ายผู้นี้อยู่แล้ว',
         'could_not_send_move': 'ส่งคำสั่งย้ายไม่ได้',
-        'destination_holds_a_patient': 'ห้องปลายทางมีผู้ป่วยอยู่แล้ว',
         'destination_not_open': 'ห้องปลายทางยังไม่เปิด',
-        'not_the_patients_room': 'ย้ายผู้ป่วยเข้าได้เฉพาะห้องของตนเองหรือห้องตรวจ',
         'participant_did_not_arrive': 'ผู้ถูกย้ายไม่ไปถึงห้องปลายทาง',
         'participant_not_found': 'ไม่พบผู้ที่จะย้ายในห้อง',
         'participant_not_movable': 'ย้ายผู้นี้ไม่ได้',
-        'patient_into_lounge': 'ห้ามย้ายผู้ป่วยเข้าห้องพักเจ้าหน้าที่',
-        'patient_room_unknown': 'ไม่ทราบห้องของผู้ป่วยรายนี้',
-        'recorder_bot_at_capacity': 'ระบบบันทึกเต็ม ย้ายไม่ได้',
-        'recorder_bot_not_ready': 'ระบบบันทึกไม่พร้อมภายใน 30 วินาที',
-        'recorder_bot_unreachable': 'ติดต่อระบบบันทึกไม่ได้'
+        'patient_moves_retired': 'ยกเลิกแล้ว เพราะระบบไม่ย้ายผู้ป่วยอีกต่อไป',
+        'patients_never_move': 'ผู้ป่วยอยู่ในห้องของตนเองตลอด เจ้าหน้าที่เป็นฝ่ายเข้าไปหา'
     };
     const OUTCOMES: Record<string, string> = { cancelled: 'ผู้ถูกย้ายกดยกเลิก',
         done: 'ย้ายสำเร็จ',
@@ -78,7 +73,6 @@
         displayName?: string;
         endpointId: string;
         identity?: { name?: string; };
-        ownRoom?: string;
         role: string;
     }
 
@@ -377,7 +371,7 @@
      * @returns {boolean}
      */
     function isUnderWay(m: IMove): boolean {
-        return m.state === 'counting_down' || m.state === 'preparing';
+        return m.state === 'counting_down';
     }
 
     /**
@@ -516,10 +510,9 @@
      */
     function kindName(room: IRoom): string {
         if (room.kind === 'lounge') {
-            return 'ห้องพักเจ้าหน้าที่';
-        }
-        if (room.kind === 'station') {
-            return `จุดบริการ: ${STAGE_NAMES[room.stage ?? ''] || ''}`;
+            const stage = STAGE_NAMES[room.stage ?? ''];
+
+            return stage ? `ห้องพักเจ้าหน้าที่: ${stage}` : 'ห้องพักเจ้าหน้าที่';
         }
 
         return 'ห้องผู้ป่วย';
@@ -700,9 +693,10 @@
         if (moving) {
             const badge = el('span', `กำลังย้ายไป ${moving.destination || '…'}`, 'badge moving');
 
-            badge.title = moving.state === 'preparing' ? 'กำลังเตรียมระบบบันทึกที่ปลายทาง' : 'ผู้ถูกย้ายเห็นการนับถอยหลังอยู่';
+            badge.title = 'ผู้ถูกย้ายเห็นการนับถอยหลังอยู่';
             line.appendChild(badge);
-        } else if (o.role === 'patient' || o.role === 'staff') {
+        } else if (o.role === 'staff') {
+            // Patients stay in their own room (ADR 0011): only staff are moved.
             line.appendChild(moveControls(o, room, rooms));
         }
 
@@ -710,7 +704,7 @@
     }
 
     /**
-     * Draws the controls that move someone: the rooms they may go to and, for staff, a field for a room by its HN.
+     * Draws the controls that move a staff member: the rooms they may go to, and a field for a room by its HN.
      *
      * @param {Object} o - The occupant.
      * @param {Object} room - Their room.
@@ -723,39 +717,36 @@
         const pick = el('select', undefined, 'move-to');
         const go = button('ย้าย', 'move-go primary', 'arrow');
 
-        // Staff may be sent to a closed patient's room that is in no list: the coordinator names it by the HN.
-        // A patient has no such input: their own room is always in the list, and no other patient's room is allowed.
-        const typed = o.role === 'patient' ? undefined : el('input', undefined, 'move-hn');
-        const destination = () => (typed?.value.trim() ?? '') || pick.value;
+        // A patient's room that is in no list can be named by its HN; the service refuses it while it is closed.
+        const typed = el('input', undefined, 'move-hn');
+        const destination = () => typed.value.trim() || pick.value;
         const update = () => {
             go.disabled = !destination();
         };
 
         pick.setAttribute('aria-label', `ย้าย ${names[o.endpointId]} ไปห้อง`);
-        addDestinations(pick, o, room, rooms);
+        addDestinations(pick, room, rooms);
         pick.value = choices[key] || '';
         pick.addEventListener('change', () => {
             choices[key] = pick.value;
             update();
         });
         controls.appendChild(pick);
-        if (typed) {
-            typed.type = 'text';
-            typed.placeholder = 'หรือพิมพ์ HN';
-            typed.autocomplete = 'off';
-            typed.setAttribute('aria-label', 'HN ของห้องปลายทาง');
-            typed.value = choices[`hn|${key}`] || '';
-            typed.addEventListener('input', () => {
-                choices[`hn|${key}`] = typed.value;
-                update();
-            });
-            typed.addEventListener('keydown', event => {
-                if (event.key === 'Enter' && !go.disabled) {
-                    go.click();
-                }
-            });
-            controls.appendChild(typed);
-        }
+        typed.type = 'text';
+        typed.placeholder = 'หรือพิมพ์ HN';
+        typed.autocomplete = 'off';
+        typed.setAttribute('aria-label', 'HN ของห้องปลายทาง');
+        typed.value = choices[`hn|${key}`] || '';
+        typed.addEventListener('input', () => {
+            choices[`hn|${key}`] = typed.value;
+            update();
+        });
+        typed.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !go.disabled) {
+                go.click();
+            }
+        });
+        controls.appendChild(typed);
         go.addEventListener('click', () => {
             const to = destination();
 
@@ -770,8 +761,8 @@
     }
 
     /**
-     * Lists the rooms someone may be moved to, grouped by kind. A patient goes only into a station or their own room;
-     * staff may go to any room (ADR 0005).
+     * Lists the rooms a staff member may be moved to, grouped by kind: the open patients' rooms, and the lounges, open
+     * or not (ADR 0011).
      *
      * @param {HTMLSelectElement} pick - The list.
      * @param {Object} o - The occupant.
@@ -779,30 +770,18 @@
      * @param {Object[]} rooms - Every room.
      * @returns {void}
      */
-    function addDestinations(pick: HTMLSelectElement, o: IOccupant, room: IRoom, rooms: IRoom[]): void {
+    function addDestinations(pick: HTMLSelectElement, room: IRoom, rooms: IRoom[]): void {
         const blank = el('option', 'ย้ายไปห้อง…');
-
-        // A patient's own room closes when they leave it, and the service lists only open patients' rooms: offer it
-        // still, so that they can be moved back home.
-        const own = o.role === 'patient' ? o.ownRoom : undefined;
-        const candidates: IRoom[] = own && own !== room.name && !rooms.some(other => other.name === own)
-            ? [ ...rooms, { kind: 'patient', name: own, occupants: [], open: false } ]
-            : rooms;
 
         blank.value = '';
         pick.appendChild(blank);
-        [ 'station', 'patient', 'lounge' ].forEach(kind => {
+        [ 'patient', 'lounge' ].forEach(kind => {
             const group = el('optgroup');
 
             group.label = KINDS.find(k => k[0] === kind)?.[1] ?? kind;
-            candidates.filter(other => other.kind === kind && other.name !== room.name
-                    && (o.role !== 'patient' || other.kind === 'station' || other.name === o.ownRoom))
+            rooms.filter(other => other.kind === kind && other.name !== room.name)
                 .forEach(other => {
-                    const notes = [
-                        other.kind === 'station' ? STAGE_NAMES[other.stage ?? ''] : '',
-                        other.name === o.ownRoom ? 'ห้องของผู้ป่วยเอง' : '',
-                        other.kind === 'station' && other.occupants.some(p => p.role === 'patient') ? 'มีผู้ป่วยอยู่' : ''
-                    ].filter(Boolean);
+                    const notes = [ other.kind === 'lounge' ? STAGE_NAMES[other.stage ?? ''] : '' ].filter(Boolean);
                     const option = el('option',
                         other.name + (notes.length ? ` — ${notes.join(' · ')}` : '') + (other.open ? '' : ' (ปิดอยู่)'));
 

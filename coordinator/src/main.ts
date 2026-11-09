@@ -15,7 +15,6 @@ const store = new Store(config.dataDir);
 const service = new CoordinatorService({
     auditKey: config.auditKey,
     layout: config.layout,
-    prepareWaitMs: config.prepareWaitMs,
     prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
     recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
     retentionMs: config.retentionMs,

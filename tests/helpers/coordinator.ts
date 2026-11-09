@@ -86,16 +86,22 @@ export async function getEncounter(id: string): Promise<{ body: IEncounter; stat
 
 /** A room as the API reports it. */
 export interface IRoom {
-    kind: 'lounge' | 'patient' | 'station';
+    kind: 'lounge' | 'patient';
     name: string;
     occupants: {
         displayName?: string;
         endpointId: string;
         identity?: { id?: string; name?: string; };
         role: 'hidden' | 'patient' | 'staff' | 'unknown';
+
+        /** For staff, their station (ADR 0011). */
+        station?: string;
     }[];
     open: boolean;
     stage?: string;
+
+    /** For a lounge, its station. */
+    station?: string;
 }
 
 /**
@@ -137,31 +143,6 @@ export async function waitForRoom(
         }
         if (Date.now() > deadline) {
             throw new Error(`timed out waiting for ${description}; the rooms were ${JSON.stringify(seen)}`);
-        }
-        await new Promise(resolve => setTimeout(resolve, 500));
-    }
-}
-
-/**
- * Waits until no patient is in a station. A patient that an earlier spec left there, or whose browser an earlier spec
- * has just closed, makes the service refuse every move into the station (`destination_holds_a_patient`) until they go.
- *
- * @param {string} station - The station's name.
- * @param {number} timeout - How long to wait, in milliseconds.
- * @returns {Promise<void>}
- */
-export async function waitForStationFree(station: string, timeout = 60_000): Promise<void> {
-    const deadline = Date.now() + timeout;
-
-    for (;;) {
-        const room = (await getRooms()).find(r => r.name === station);
-        const patients = room?.occupants.filter(o => o.role === 'patient') ?? [];
-
-        if (patients.length === 0) {
-            return;
-        }
-        if (Date.now() > deadline) {
-            throw new Error(`${station} still holds a patient after ${timeout} ms: ${JSON.stringify(patients)}`);
         }
         await new Promise(resolve => setTimeout(resolve, 500));
     }

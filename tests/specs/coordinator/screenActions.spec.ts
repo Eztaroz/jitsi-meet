@@ -6,11 +6,8 @@ import {
     coordinatorUnavailableReason,
     getAudit,
     getQueues,
-    postMove,
     screenUrl,
-    waitForMove,
     waitForRoom,
-    waitForStationFree,
     withServiceLog
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
@@ -19,25 +16,28 @@ import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
-    description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, moves \
-a patient to a station, changes an encounter\'s stage and marks it done. A participant being moved shows as \
+    description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, \
+changes an encounter\'s stage and marks it done, and moves a staff member from their lounge into a patient\'s room. \
+A patient is offered no move, since patients stay in their own room (ADR 0011). A staff member being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
-participant, refused. A patient in a station is offered their own room, though it closed when they left it, and is \
-moved back there from the screen. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
+staff member, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
 Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service \
 on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3', 'p4' ]
 });
+
+const LOUNGE = 'lounge-intake';
 
 describe('Coordinator: acting from the screen', () => {
     const coordinatorA = { id: `coordinator-a-${uuidv4()}`, name: 'ผู้ประสานงาน เอ' };
     const coordinatorB = { id: `coordinator-b-${uuidv4()}`, name: 'ผู้ประสานงาน บี' };
     // The screen shows every recent move, other specs' too: a name of its own tells this one's.
     const patient = { id: `patient-${uuidv4()}`, name: `Patient ${uuidv4().slice(0, 8)}` };
+    const nurse = { id: `nurse-${uuidv4()}`, name: `Nurse ${uuidv4().slice(0, 8)}` };
     let hn: string;
     let a: Participant;
     let b: Participant;
-    let patientBrowser: Participant;
+    let nurseBrowser: Participant;
 
     /**
      * Opens the screen in a participant's browser and signs a coordinator in.
@@ -79,7 +79,7 @@ describe('Coordinator: acting from the screen', () => {
         }
 
         hn = uniqueHn('ACT');
-        patientBrowser = await joinMuc({
+        await joinMuc({
             name: 'p4',
             token: generateToken({
                 displayName: patient.name,
@@ -89,14 +89,13 @@ describe('Coordinator: acting from the screen', () => {
         }, { roomName: patientLinkRoom(hn) });
         a = await joinMuc({ name: 'p1', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
         b = await joinMuc({ name: 'p2', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
-        // A patient may be moved only into a station or their own room: a staff member keeps a station open for them.
-        await joinMuc({
+        nurseBrowser = await joinMuc({
             name: 'p3',
             token: generateToken({
-                displayName: 'Nurse N',
-                userClaims: { ...expectations.recorderBot.staffClaims, id: `nurse-${uuidv4()}` }
+                displayName: nurse.name,
+                userClaims: { ...expectations.recorderBot.staffClaims, id: nurse.id }
             })
-        }, { roomName: 'intake-1' });
+        }, { roomName: LOUNGE });
         await openScreen(a, coordinatorA);
         await openScreen(b, coordinatorB);
         await waitForRoom(r => r !== undefined, hn, 'the patient\'s room');
@@ -146,137 +145,90 @@ describe('Coordinator: acting from the screen', () => {
             .toBe(coordinatorA.id);
     });
 
-    it('offers a patient only stations and their own room, and offers staff every room', async () => {
+    it('offers a patient no move, and offers staff the patients\' rooms and the lounges', async () => {
         const room = hn.toLowerCase();
 
-        await a.driver.waitUntil(async () => (await roomText(a, 'intake-1')).includes('Nurse N'),
-            { timeoutMsg: 'the nurse is not shown in the station' });
-
-        // The screen shows every room, other specs' too: look at this spec's patient only.
-        const choices = await a.driver.execute((name: string) => {
-            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
-            const lines = (root: ParentNode, role: string) => Array.from(root.querySelectorAll(`.occupant[data-role="${role}"]`))
-                .map(line => ({
-                    hasTypedHn: line.querySelector('.move-hn') !== null,
-                    values: Array.from(line.querySelectorAll('select.move-to option')).map(o => (o as HTMLOptionElement).value)
-                        .filter(Boolean)
-                }));
-
-            return { patient: lines(card, 'patient'), staff: lines(document, 'staff') };
-        }, room);
-
-        expect(choices.patient.length).toBe(1);
-        expect(choices.patient[0].hasTypedHn).toBe(false);
-        // Only a station, or the patient's own room, which is not offered while they are in it.
-        expect(choices.patient[0].values.includes('intake-1')).toBe(true);
-        expect(choices.patient[0].values.every(v => v.startsWith('intake-') || v.startsWith('aftercare-'))).toBe(true);
-        expect(choices.staff.length).toBeGreaterThan(0);
-        expect(choices.staff.some(c => c.hasTypedHn)).toBe(true);
-        expect(choices.staff.some(c => c.values.includes('lounge-1'))).toBe(true);
-    });
-
-    it('moves a patient to a station: both screens show them moving, and the participant can cancel', async () => {
-        const room = hn.toLowerCase();
-        const station = 'intake-1';
-
+        await a.driver.waitUntil(async () => (await roomText(a, LOUNGE)).includes(nurse.name),
+            { timeoutMsg: 'the nurse is not shown in the lounge' });
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
-        await a.driver.waitUntil(
-            async () => (await roomText(a, station)).length > 0, { timeoutMsg: 'the station is not shown' });
-        // A patient that an earlier spec left in the station makes the service refuse this move at once, and then no
-        // screen ever shows it moving (#43).
-        await waitForStationFree(station);
-        await a.driver.execute((name: string, to: string) => {
-            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
-            const select = card.querySelector('.occupant[data-role="patient"] select.move-to') as HTMLSelectElement;
 
-            select.value = to;
-            select.dispatchEvent(new Event('change'));
-            (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();
-        }, room, station);
+        const choices = await a.driver.execute((patientRoom: string, lounge: string, who: string) => {
+            const card = (name: string) => Array.from(document.querySelectorAll('.room'))
+                .find(e => (e as HTMLElement).dataset.room === name)!;
+            const patientLine = card(patientRoom).querySelector('.occupant[data-role="patient"]')!;
+            const nurseLine = Array.from(card(lounge).querySelectorAll('.occupant[data-role="staff"]'))
+                .find(e => (e as HTMLElement).innerText.includes(who))!;
 
-        // The recorder bot is asked to record the patient's time in the station before they are told.
-        await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
-            async () => (await roomText(screen, room)).includes('กำลังย้าย'),
-            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
+            return {
+                patient: patientLine.querySelector('.move') !== null,
+                staff: {
+                    hasTypedHn: nurseLine.querySelector('.move-hn') !== null,
+                    values: Array.from(nurseLine.querySelectorAll('select.move-to option'))
+                        .map(o => (o as HTMLOptionElement).value)
+                        .filter(Boolean)
+                }
+            };
+        }, room, LOUNGE, nurse.name);
 
-        await (await patientBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
-        await (await patientBrowser.driver.$('#coordinator-move-cancel')).click();
-
-        for (const screen of [ a, b ]) {
-            await screen.driver.waitUntil(
-                async () => (await (await screen.driver.$('#outcomes')).getText()).includes(`${patient.name}: ผู้ถูกย้ายกดยกเลิก`),
-                { timeout: 15_000, timeoutMsg: 'the cancellation is not shown' });
-        }
+        // Patients stay in their own room (ADR 0011).
+        expect(choices.patient).toBe(false);
+        expect(choices.staff.hasTypedHn).toBe(true);
+        expect(choices.staff.values).toContain(room);
+        expect(choices.staff.values).toContain('lounge-aftercare');
+        expect(choices.staff.values).not.toContain(LOUNGE);
     });
 
-    it('shows a refused move with its reason in Thai', async () => {
-        await b.driver.waitUntil(async () => (await roomText(b, hn.toLowerCase())).includes(patient.name));
-        await b.driver.execute((name: string) => {
-            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
-            const select = card.querySelector('.occupant[data-role="patient"] select.move-to') as HTMLSelectElement;
-
-            // The screen does not offer a lounge to a patient; the option is added to see how it shows a refusal.
-            const option = document.createElement('option');
-
-            option.value = 'lounge-1';
-            select.appendChild(option);
-            select.value = 'lounge-1';
-            select.dispatchEvent(new Event('change'));
-            (card.querySelector('.occupant[data-role="patient"] .move-go') as HTMLElement).click();
-        }, hn.toLowerCase());
-
-        await b.driver.waitUntil(async () => (await (await b.driver.$('#notice')).getText()).includes('ห้ามย้ายผู้ป่วยเข้าห้องพักเจ้าหน้าที่'),
-            { timeout: 10_000, timeoutMsg: 'the reason is not shown' });
-    });
-
-    it('names the coordinator in the audit log for what they did, not the system', async () => {
-        const entries = await getAudit(1000);
-        const mine = entries.filter(e => e.kind === 'move' && e.participantId === patient.id);
-
-        expect(mine.length).toBe(2);
-        expect(mine.every(e => e.issuer === coordinatorA.id || e.issuer === coordinatorB.id)).toBe(true);
-        expect(mine.find(e => e.outcome === 'cancelled')?.issuer).toBe(coordinatorA.id);
-        expect(mine.find(e => e.outcome === 'refused')?.issuer).toBe(coordinatorB.id);
-    });
-
-    it('moves a patient in a station back to their own room, which closed when they left it', async () => {
-        const room = hn.toLowerCase();
-        const station = 'intake-1';
-        const patientLine = (browser: Participant) => browser.driver.execute((name: string, who: string) => {
-            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name);
-            const line = card && Array.from(card.querySelectorAll('.occupant[data-role="patient"]'))
-                .find(e => (e as HTMLElement).innerText.includes(who));
-
-            return line
-                ? Array.from(line.querySelectorAll('select.move-to option')).map(o => (o as HTMLOptionElement).value)
-                : undefined;
-        }, station, patient.name);
-
-        await waitForStationFree(station);
-        const home = await waitForRoom(r => r?.occupants.some(o => o.identity?.id === patient.id) === true, hn, 'the patient at home');
-        const endpoint = home!.occupants.find(o => o.identity?.id === patient.id)!.endpointId;
-        const { body } = await postMove(room, endpoint, station);
-
-        await waitForMove(body.id, 'done');
-        // The recorder bot leaves with the patient: their own room closes, and the service lists it nowhere.
-        await waitForRoom(r => r === undefined || !r.open || r.occupants.length === 0, hn, 'their room closed');
-
-        await a.driver.waitUntil(async () => (await patientLine(a)) !== undefined,
-            { timeout: 15_000, timeoutMsg: 'the patient is not shown in the station' });
-        expect(await patientLine(a)).toContain(room);
-
-        await a.driver.execute((name: string, who: string, to: string) => {
-            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name)!;
-            const line = Array.from(card.querySelectorAll('.occupant[data-role="patient"]'))
+    it('moves a staff member into the patient\'s room: both screens show them moving, and they can cancel', async () => {
+        await a.driver.execute((lounge: string, who: string, to: string) => {
+            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === lounge)!;
+            const line = Array.from(card.querySelectorAll('.occupant[data-role="staff"]'))
                 .find(e => (e as HTMLElement).innerText.includes(who))!;
             const select = line.querySelector('select.move-to') as HTMLSelectElement;
 
             select.value = to;
             select.dispatchEvent(new Event('change'));
             (line.querySelector('.move-go') as HTMLElement).click();
-        }, station, patient.name, room);
+        }, LOUNGE, nurse.name, hn.toLowerCase());
 
-        await waitForRoom(r => r?.occupants.some(o => o.identity?.id === patient.id) === true, hn, 'the patient back home',
-            60_000);
+        await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
+            async () => (await roomText(screen, LOUNGE)).includes('กำลังย้าย'),
+            { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
+
+        await (await nurseBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
+        await (await nurseBrowser.driver.$('#coordinator-move-cancel')).click();
+
+        for (const screen of [ a, b ]) {
+            await screen.driver.waitUntil(
+                async () => (await (await screen.driver.$('#outcomes')).getText()).includes(`${nurse.name}: ผู้ถูกย้ายกดยกเลิก`),
+                { timeout: 15_000, timeoutMsg: 'the cancellation is not shown' });
+        }
+    });
+
+    it('shows a refused move with its reason in Thai', async () => {
+        await b.driver.waitUntil(async () => !(await roomText(b, LOUNGE)).includes('กำลังย้าย'),
+            { timeout: 15_000, timeoutMsg: 'the nurse is still shown moving' });
+        await b.driver.execute((lounge: string, who: string, to: string) => {
+            const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === lounge)!;
+            const line = Array.from(card.querySelectorAll('.occupant[data-role="staff"]'))
+                .find(e => (e as HTMLElement).innerText.includes(who))!;
+            const typed = line.querySelector('.move-hn') as HTMLInputElement;
+
+            // A patient's room that nobody is in is closed: a staff member cannot be sent into it.
+            typed.value = to;
+            typed.dispatchEvent(new Event('input'));
+            (line.querySelector('.move-go') as HTMLElement).click();
+        }, LOUNGE, nurse.name, `closed-${uuidv4()}`);
+
+        await b.driver.waitUntil(async () => (await (await b.driver.$('#notice')).getText()).includes('ห้องปลายทางยังไม่เปิด'),
+            { timeout: 10_000, timeoutMsg: 'the reason is not shown' });
+    });
+
+    it('names the coordinator in the audit log for what they did, not the system', async () => {
+        const entries = await getAudit(1000);
+        const mine = entries.filter(e => e.kind === 'move' && e.participantId === nurse.id);
+
+        expect(mine.length).toBe(2);
+        expect(mine.find(e => e.outcome === 'cancelled')?.issuer).toBe(coordinatorA.id);
+        expect(mine.find(e => e.outcome === 'refused')?.issuer).toBe(coordinatorB.id);
     });
 });

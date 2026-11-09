@@ -4,13 +4,15 @@ import { describe, it } from 'node:test';
 import { auditRef, moveEntry, stageEntry } from '../src/audit.ts';
 import type { IMove } from '../src/rules.ts';
 
-const layout = { lounges: [ { room: 'lounge-1' } ], stations: [ { room: 'intake-1', stage: 'intake' as const } ] };
+const layout = {
+    centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' as const } ] } ]
+};
 const T = new Date('2030-01-01T08:00:00Z');
 
 describe('referring to a room in the audit log', () => {
-    it('names a station or a lounge as it is, since that is not patient data', () => {
-        assert.equal(auditRef('key', 'intake-1', layout), 'intake-1');
-        assert.equal(auditRef('key', 'Lounge-1', layout), 'Lounge-1');
+    it('names a station\'s lounge as it is, since that is not patient data', () => {
+        assert.equal(auditRef('key', 'lounge-intake', layout), 'lounge-intake');
+        assert.equal(auditRef('key', 'Lounge-Intake', layout), 'Lounge-Intake');
     });
 
     it('refers to a patient\'s room by a keyed reference that does not contain the HN', () => {
@@ -32,7 +34,7 @@ describe('referring to a room in the audit log', () => {
 
 describe('the audit entry of a move', () => {
     const move = (over: Partial<IMove>): IMove => ({
-        destination: 'intake-1', endpointId: 'e1', id: 'm-1', identityId: 'u-1', origin: 'HN/12345', startedAt: T,
+        destination: 'lounge-intake', endpointId: 'e1', id: 'm-1', identityId: 'u-1', origin: 'HN/12345', startedAt: T,
         state: 'done', ...over
     });
 
@@ -41,7 +43,7 @@ describe('the audit entry of a move', () => {
 
         assert.deepEqual(entry, {
             at: T,
-            destination: 'intake-1',
+            destination: 'lounge-intake',
             issuer: 'system',
             kind: 'move',
             outcome: 'done',
@@ -53,15 +55,15 @@ describe('the audit entry of a move', () => {
     });
 
     it('records the reason a move was refused or failed, and who the coordinator was', () => {
-        const refused = moveEntry(move({ reason: 'destination_holds_a_patient', state: 'refused' }), {
+        const refused = moveEntry(move({ reason: 'patients_never_move', state: 'refused' }), {
             at: T, issuer: 'coordinator-7', key: 'key', layout
         });
-        const failed = moveEntry(move({ reason: 'recorder_bot_at_capacity', state: 'failed' }), {
+        const failed = moveEntry(move({ reason: 'participant_did_not_arrive', state: 'failed' }), {
             at: T, issuer: 'system', key: 'key', layout
         });
 
-        assert.deepEqual([ refused.outcome, refused.reason, refused.issuer ], [ 'refused', 'destination_holds_a_patient', 'coordinator-7' ]);
-        assert.deepEqual([ failed.outcome, failed.reason ], [ 'failed', 'recorder_bot_at_capacity' ]);
+        assert.deepEqual([ refused.outcome, refused.reason, refused.issuer ], [ 'refused', 'patients_never_move', 'coordinator-7' ]);
+        assert.deepEqual([ failed.outcome, failed.reason ], [ 'failed', 'participant_did_not_arrive' ]);
     });
 });
 

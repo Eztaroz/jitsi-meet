@@ -23,7 +23,7 @@ import { generateToken } from '../../helpers/token';
 setTestProperties(__filename, {
     description: 'Every move and every stage change is written to the audit log with when, who asked (the system), \
 who was moved, from where to where, and what came of it: done, cancelled, refused. A patient\'s room is a keyed \
-reference and never the HN, a station is named. Encounters and audit entries older than the retention period are \
+reference and never the HN, a lounge is named. Encounters and audit entries older than the retention period are \
 deleted by the sweep, and recent ones are left. No HN reaches the service\'s logs or the audit log. Skipped unless the \
 deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1', 'p2' ]

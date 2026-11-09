@@ -11,7 +11,7 @@ import { MoveEffects } from './moveEffects.ts';
 import type { Prosody } from './prosody.ts';
 import type { RecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
-import { type ILayout, type IOccupant, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
+import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
 import {
     type Command,
     type IMove,
@@ -20,13 +20,17 @@ import {
     type IStep,
     type RulesEvent,
     type Stage,
+    learnStaffStations,
     queues,
     step
 } from './rules.ts';
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 
-/** The states of a move that is under way: it has no audit entry until it ends. */
+/**
+ * The states of a move that is under way: it has no audit entry until it ends. `preparing` is a move from when patients
+ * were moved, which is failed on resume.
+ */
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
 const POLL_MS = 1000;
 
@@ -54,11 +58,34 @@ function seenPatientRooms(state: IState, rooms: IRoomView[]): Record<string, str
     return seen;
 }
 
+/**
+ * Where the staff whose station is known were seen in that station's lounge.
+ *
+ * @param {IState} state - The state.
+ * @param {IRoomView[]} rooms - The rooms.
+ * @returns {Record<string, string>} The station by verified identity id.
+ */
+function seenStaffStations(state: IState, rooms: IRoomView[]): Record<string, string> {
+    const seen: Record<string, string> = {};
+
+    for (const room of rooms) {
+        if (room.kind !== 'lounge' || !room.station) {
+            continue;
+        }
+        for (const o of room.occupants) {
+            if (o.role === 'staff' && o.identity?.id && state.staffStations[o.identity.id] === room.station) {
+                seen[o.identity.id] = room.station;
+            }
+        }
+    }
+
+    return seen;
+}
+
 export class CoordinatorService {
     private readonly _opts: {
         auditKey: string;
         layout: ILayout;
-        prepareWaitMs?: number;
         prosody: Prosody;
         recorderBot: RecorderBot;
         retentionMs: number;
@@ -93,24 +120,9 @@ export class CoordinatorService {
         this._state = opts.store.load();
         this._records = opts.store.loadMoveRecords();
         this._effects = new MoveEffects(opts, {
-            consultation: (moveId, consultationId) => {
-                const record = this._records.get(moveId);
-
-                if (record) {
-                    this._records.set(moveId, { ...record, consultationId });
-                    this._persist();
-                }
-            },
             failSend: moveId => this._commit(step(this._state, {
-                at: new Date(), moveId, reason: 'could_not_send_move', type: 'destination_failed'
-            }).state),
-            isPreparing: moveId => this._state.moves.some(m => m.id === moveId && m.state === 'preparing'),
-            knownHn: hn => this._state.encounters.find(e => backendSafeRoomName(e.hn) === backendSafeRoomName(hn))?.hn,
-            report: event => this._serial(async () => {
-                const rooms = event.type === 'destination_ready' ? await this.rooms().catch(() => []) : [];
-
-                await this._apply(event, rooms);
-            })
+                at: new Date(), moveId, reason: 'could_not_send_move', type: 'move_failed'
+            }).state)
         });
     }
 
@@ -124,26 +136,30 @@ export class CoordinatorService {
     }
 
     /**
-     * Reads the rooms from Prosody, with the configured ones nobody is in.
+     * Reads the rooms from Prosody, with the lounges nobody is in. Each staff member carries their station: the one
+     * whose lounge they are in, or, in a patient's room, the one whose lounge they were last seen in (ADR 0011).
      *
      * @returns {Promise<IRoom[]>}
      */
     async rooms(): Promise<IRoom[]> {
         const rooms = describeRooms(await this._opts.prosody.rooms(), this._opts.roleMarkers, this._opts.layout);
+        const { staffStations } = learnStaffStations(this._state, rooms);
 
-        const ownRoomOf = (o: IOccupant) => o.role === 'patient' && o.identity?.id
-            ? this._state.patientRooms[o.identity.id]
-            : undefined;
+        if (staffStations !== this._state.staffStations) {
+            // Kept after whatever is being applied now, as every change of the state is.
+            this._serial(async () => this._commit(learnStaffStations(this._state, rooms)))
+                .catch(error => log.error('could not keep the stations of staff', { error: (error as Error).name }));
+        }
 
         return rooms.map(room => {
             const encounter = room.kind === 'patient'
                 ? this._state.encounters.find(e => e.stage !== 'done'
                     && backendSafeRoomName(e.hn) === backendSafeRoomName(room.name))
                 : undefined;
-            const occupants = room.occupants.map(o => {
-                const ownRoom = ownRoomOf(o);
+            const occupants = room.kind !== 'patient' ? room.occupants : room.occupants.map(o => {
+                const station = o.role === 'staff' && o.identity?.id ? staffStations[o.identity.id] : undefined;
 
-                return ownRoom === undefined ? o : { ...o, ownRoom };
+                return station === undefined ? o : { ...o, station };
             });
 
             return encounter ? { ...room, encounterId: encounter.id, occupants } : { ...room, occupants };
@@ -305,15 +321,20 @@ export class CoordinatorService {
     /**
      * Picks up the moves that were under way when the service last stopped: restarts each pending timer for the time
      * left, and settles at once, the way a normal timeout does, any whose deadline passed while the service was down.
-     * Call it once after creating the service.
+     * A move that was preparing a patient's destination, from when patients were moved, fails (ADR 0011). Call it once
+     * after creating the service.
      *
      * @returns {Promise<void>}
      */
     resume(): Promise<void> {
         return this._serial(async () => {
+            for (const move of this._state.moves.filter(m => m.state === 'preparing')) {
+                await this._apply({ at: new Date(), moveId: move.id, reason: 'patient_moves_retired', type: 'move_failed' }, []);
+            }
+
             const active = this._state.moves.filter(m => ACTIVE_MOVE.has(m.state));
 
-            if (active.some(m => m.state === 'counting_down')) {
+            if (active.length) {
                 // A participant may have arrived while the service was down.
                 const rooms = await this.rooms().catch(() => undefined);
 
@@ -323,31 +344,18 @@ export class CoordinatorService {
             }
             for (const saved of active) {
                 const move = this._state.moves.find(m => m.id === saved.id);
-                const timer = move?.state === 'counting_down' ? 'move_arrival' : 'move_prepare';
 
-                if (!move || !ACTIVE_MOVE.has(move.state)) {
+                if (move?.state !== 'counting_down') {
                     continue;
                 }
 
-                const record = this._records.get(move.id);
-                const deadline = record?.deadlines[timer];
+                const deadline = this._records.get(move.id)?.deadlines.move_arrival;
 
-                if (record?.consultationId) {
-                    this._effects.restore(move.id, record.consultationId);
-                }
                 if (!deadline || deadline.getTime() <= Date.now()) {
-                    await this._apply({ at: new Date(), moveId: move.id, timer, type: 'timer_fired' }, []);
+                    await this._apply({ at: new Date(), moveId: move.id, timer: 'move_arrival', type: 'timer_fired' }, []);
                     continue;
                 }
-                this._startTimer(move.id, timer, deadline);
-                if (move.state === 'preparing') {
-                    // The wait goes on against the stored deadline, not a fresh one.
-                    if (!move.station) {
-                        this._effects.prepareDestination(move.id, move.destination, undefined, deadline);
-                    } else if (record?.consultationId) {
-                        this._effects.resumePreparing(move.id, record.consultationId, deadline);
-                    }
-                }
+                this._startTimer(move.id, 'move_arrival', deadline);
             }
             if (this._state.moves.some(m => ACTIVE_MOVE.has(m.state))) {
                 this._ensurePolling();
@@ -389,11 +397,12 @@ export class CoordinatorService {
      * @returns {Promise<IStep>}
      */
     private async _apply(event: RulesEvent, rooms: IRoom[], newId?: () => string): Promise<IStep> {
-        const result = step(this._state, event, newId, this._opts.prepareWaitMs);
+        const result = step(this._state, event, newId);
 
         this._commit(result.state);
         if (event.type === 'rooms_snapshot' || event.type === 'request_move') {
             this._opts.store.touchPatientRooms(seenPatientRooms(this._state, event.rooms));
+            this._opts.store.touchStaffStations(seenStaffStations(this._state, event.rooms));
         }
         for (const command of result.commands) {
             await this._run(command, rooms);
@@ -440,7 +449,7 @@ export class CoordinatorService {
      * @param {Date} deadline - When it fires.
      * @returns {void}
      */
-    private _startTimer(moveId: string, timer: 'move_arrival' | 'move_prepare', deadline: Date): void {
+    private _startTimer(moveId: string, timer: 'move_arrival', deadline: Date): void {
         const key = `${moveId}:${timer}`;
         const record = this._records.get(moveId) ?? newMoveRecord();
 
@@ -513,7 +522,8 @@ export class CoordinatorService {
                 ...this._state,
                 encounters: this._state.encounters.filter(e => e.startedAt >= cutoff),
                 moves: this._state.moves.filter(m => m.startedAt >= cutoff),
-                patientRooms: this._opts.store.patientRooms()
+                patientRooms: this._opts.store.patientRooms(),
+                staffStations: this._opts.store.staffStations()
             };
             for (const id of this._records.keys()) {
                 if (!this._state.moves.some(m => m.id === id)) {
@@ -545,12 +555,6 @@ export class CoordinatorService {
         case 'start_timer':
             this._startTimer(command.moveId, command.timer, new Date(Date.now() + command.afterMs));
             break;
-        case 'prepare_destination':
-            this._effects.prepareDestination(command.moveId, command.hn, command.station);
-            break;
-        case 'stop_station_consultation':
-            this._effects.stopStationConsultation(command.moveId);
-            break;
         case 'send_move':
             await this._effects.sendMove(command, rooms);
             break;
@@ -568,9 +572,7 @@ export class CoordinatorService {
         }
         this._poll = setInterval(() => {
             if (!this._state.moves.some(m => m.state === 'counting_down')) {
-                if (!this._state.moves.some(m => m.state === 'preparing')) {
-                    this._stopPolling();
-                }
+                this._stopPolling();
 
                 return;
             }

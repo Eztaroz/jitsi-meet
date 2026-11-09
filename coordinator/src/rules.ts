@@ -46,9 +46,10 @@ export const COUNTDOWN_MS = 5000;
 /** How long a participant has, after the countdown, to appear in the destination, in milliseconds. */
 export const ARRIVAL_WAIT_MS = 30_000;
 
-/** How long the recorder bot has to be in a destination that was closed before the participant is sent, in ms. */
-export const PREPARE_WAIT_MS = 30_000;
-
+/**
+ * What a move is. `preparing` is only ever read back from a database of the time when patients were moved, and such a
+ * move is failed when the service starts (ADR 0011).
+ */
 export type MoveState = 'cancelled' | 'counting_down' | 'done' | 'failed' | 'preparing' | 'refused';
 
 export interface IMove {
@@ -62,9 +63,6 @@ export interface IMove {
     reason?: string;
     startedAt: Date;
     state: MoveState;
-
-    /** Set when the move takes a patient into a station, where they are recorded (ADR 0006). */
-    station?: { hn: string; patientId: string; };
 }
 
 export interface IState {
@@ -73,23 +71,19 @@ export interface IState {
 
     /** Where each patient's own room is, by their verified identity id: learned from where they are seen. */
     patientRooms: Record<string, string>;
-}
 
-/** The patient and the station they are moved into, which travel together while their time there is recorded (ADR 0006). */
-export interface IStationConsultation {
-
-    /** The patient's verified identity id. */
-    patientId: string;
-
-    /** The station. */
-    room: string;
+    /**
+     * The station of each staff member, by their verified identity id: the one whose lounge they were last seen in
+     * (ADR 0011).
+     */
+    staffStations: Record<string, string>;
 }
 
 /** A room as the rooms module describes it; only what the rules need. */
 export interface IRoomView {
 
-    /** What the room is. A room that is not configured as a station or a lounge is a patient's own. */
-    kind?: 'lounge' | 'patient' | 'station';
+    /** What the room is. A room that is not configured as a lounge is a patient's own. */
+    kind?: 'lounge' | 'patient';
     name: string;
 
     occupants: {
@@ -100,8 +94,12 @@ export interface IRoomView {
         identity?: { id?: string; };
         role: 'hidden' | 'patient' | 'staff' | 'unknown';
     }[];
-    /** False for a configured room that nobody is in. Defaults to true. */
+
+    /** False for a lounge that nobody is in. Defaults to true. */
     open?: boolean;
+
+    /** For a lounge, its station. */
+    station?: string;
 }
 
 export type RulesEvent = { at: Date; } & (
@@ -112,23 +110,16 @@ export type RulesEvent = { at: Date; } & (
     | { type: 'close_day'; }
     | { endpointId: string; fromRoom: string; rooms: IRoomView[]; toRoom: string; type: 'request_move'; }
     | { rooms: IRoomView[]; type: 'rooms_snapshot'; }
-    | { moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'timer_fired'; }
+    | { moveId: string; timer: 'move_arrival'; type: 'timer_fired'; }
 
-    /** The recorder bot is in the destination the participant was waiting for. */
-    | { moveId: string; type: 'destination_ready'; }
-    | { moveId: string; reason: 'could_not_send_move' | 'recorder_bot_at_capacity' | 'recorder_bot_unreachable'; type: 'destination_failed'; }
+    /** A move cannot go on: its command could not be sent, or it was left from when patients were moved. */
+    | { moveId: string; reason: 'could_not_send_move' | 'patient_moves_retired'; type: 'move_failed'; }
 );
 
 export type Command =
     | { hn: string; type: 'record_room'; }
     | { destination: string; endpointId: string; moveId: string; room: string; type: 'send_move'; }
-    | { afterMs: number; moveId: string; timer: 'move_arrival' | 'move_prepare'; type: 'start_timer'; }
-
-    /** Open the destination, a patient's own room, by asking the recorder bot to record it, and report back. */
-    | { hn: string; moveId: string; station?: IStationConsultation; type: 'prepare_destination'; }
-
-    /** Stop the consultation started in a station for a move that did not bring the patient. Nothing is kept. */
-    | { moveId: string; type: 'stop_station_consultation'; };
+    | { afterMs: number; moveId: string; timer: 'move_arrival'; type: 'start_timer'; };
 
 export interface IStartResult extends IEncounter {
 
@@ -156,7 +147,7 @@ export interface IStep {
  * @returns {IState}
  */
 export function initialState(): IState {
-    return { encounters: [], moves: [], patientRooms: {} };
+    return { encounters: [], moves: [], patientRooms: {}, staffStations: {} };
 }
 
 /**
@@ -217,19 +208,48 @@ function learnPatientRooms(state: IState, rooms: IRoomView[]): IState {
 }
 
 /**
- * The command that stops what a move started in a station, for a move that ended without the patient arriving.
+ * Learns the station of each staff member: a staff member seen in a station's lounge is with that station, and stays
+ * with it while they are in patients' rooms (ADR 0011).
  *
- * @param {IMove|undefined} move - The move.
- * @returns {Command[]}
+ * @param {IState} state - The state.
+ * @param {IRoomView[]} rooms - The rooms.
+ * @returns {IState} The state, the same when nothing is new.
  */
-function stopStation(move: IMove | undefined): Command[] {
-    return move?.station ? [ { moveId: move.id, type: 'stop_station_consultation' } ] : [];
+export function learnStaffStations(state: IState, rooms: IRoomView[]): IState {
+    let learned: Record<string, string> | undefined;
+
+    for (const room of rooms) {
+        if (room.kind !== 'lounge' || !room.station) {
+            continue;
+        }
+        for (const o of room.occupants) {
+            if (o.role === 'staff' && o.identity?.id && state.staffStations[o.identity.id] !== room.station) {
+                learned ??= { ...state.staffStations };
+                learned[o.identity.id] = room.station;
+            }
+        }
+    }
+
+    return learned ? { ...state, staffStations: learned } : state;
 }
 
-/** The states of a move that is under way. */
-const ACTIVE: ReadonlySet<MoveState> = new Set([ 'counting_down', 'preparing' ]);
+/**
+ * Learns what the rooms tell about patients' own rooms and staff's stations.
+ *
+ * @param {IState} state - The state.
+ * @param {IRoomView[]} rooms - The rooms.
+ * @returns {IState} The state, the same when nothing is new.
+ */
+function learn(state: IState, rooms: IRoomView[]): IState {
+    return learnStaffStations(learnPatientRooms(state, rooms), rooms);
+}
 
-/** The commands that send a participant and wait for them to arrive. */
+/**
+ * The commands that send a participant and wait for them to arrive.
+ *
+ * @param {IMove} move - The move.
+ * @returns {Command[]}
+ */
 function sendCommands(move: IMove): Command[] {
     return [
         { destination: move.destination, endpointId: move.endpointId, moveId: move.id, room: move.origin, type: 'send_move' },
@@ -291,20 +311,16 @@ export function queues(state: IState, now: Date): Queues {
 }
 
 /**
- * Starts a move, or refuses it.
+ * Starts a move, or refuses it. Only staff are moved: into a patient's own room while it is open, or into a lounge,
+ * open or not. Patients stay in their own room (ADR 0011).
  *
- * @param {IState} state - The current state.
+ * @param {IState} startState - The current state.
  * @param {RulesEvent} event - The request.
  * @param {() => string} newId - Makes an opaque id.
  * @returns {IStep}
  */
-function requestMove(
-        startState: IState,
-        event: RulesEvent & { type: 'request_move'; },
-        newId: () => string,
-        prepareWaitMs: number
-): IStep {
-    const state = learnPatientRooms(startState, event.rooms);
+function requestMove(startState: IState, event: RulesEvent & { type: 'request_move'; }, newId: () => string): IStep {
+    const state = learn(startState, event.rooms);
     const origin = event.rooms.find(r => r.name === event.fromRoom);
     const occupant = origin?.occupants.find(o => o.endpointId === event.endpointId);
     const base = {
@@ -316,40 +332,18 @@ function requestMove(
         startedAt: event.at
     };
     const destination = event.rooms.find(r => r.name === event.toRoom);
-    const destinationOpen = destination !== undefined && destination.open !== false;
-    const toLounge = destination?.kind === 'lounge';
-    const toStation = destination?.kind === 'station';
-    const isPatient = occupant?.role === 'patient';
-
-    // A patient in a station is recorded under their HN, which is their own room's name.
-    const patientHn = !isPatient ? undefined
-        : origin?.kind === undefined || origin.kind === 'patient' ? event.fromRoom
-            : base.identityId ? state.patientRooms[base.identityId] : undefined;
     let reason: string | undefined;
-    let prepare = false;
 
     if (!occupant) {
         reason = 'participant_not_found';
-    } else if (occupant.role !== 'staff' && !isPatient) {
+    } else if (occupant.role === 'patient') {
+        reason = 'patients_never_move';
+    } else if (occupant.role !== 'staff') {
         reason = 'participant_not_movable';
-    } else if (isPatient && toLounge) {
-        reason = 'patient_into_lounge';
-    } else if (isPatient && !toStation && (!base.identityId || state.patientRooms[base.identityId] !== event.toRoom)) {
-        // Anything that is neither a station nor a lounge is a patient's own room (ADR 0005).
-        reason = 'not_the_patients_room';
-    } else if (isPatient && destinationOpen
-            && destination.occupants.some(o => o.role === 'patient' && o.identity?.id !== occupant.identity?.id)) {
-        reason = 'destination_holds_a_patient';
-    } else if (!destinationOpen) {
-        // Only a patient's own room is opened for a move, and only for a patient.
-        prepare = isPatient && (destination === undefined || destination.kind === 'patient');
-        if (!prepare) {
-            reason = 'destination_not_open';
-        }
-    } else if (isPatient && toStation && (!base.identityId || !patientHn)) {
-        reason = base.identityId ? 'patient_room_unknown' : 'participant_not_movable';
-    }
-    if (!reason && state.moves.some(m => ACTIVE.has(m.state) && sameParticipant(m, base))) {
+    } else if (!destination || (destination.kind !== 'lounge' && destination.open === false)) {
+        // A lounge nobody is in opens as staff come into it; a patient's room is open while the patient is in it.
+        reason = 'destination_not_open';
+    } else if (state.moves.some(m => m.state === 'counting_down' && sameParticipant(m, base))) {
         reason = 'already_being_moved';
     }
 
@@ -357,30 +351,6 @@ function requestMove(
         const refused: IMove = { ...base, reason, state: 'refused' };
 
         return { commands: [], move: refused, state: { ...state, moves: [ ...state.moves, refused ] } };
-    }
-
-    const station = isPatient && toStation && patientHn && base.identityId
-        ? { hn: patientHn, patientId: base.identityId }
-        : undefined;
-
-    if (prepare || station) {
-        const preparing: IMove = { ...base, state: 'preparing', ...station ? { station } : {} };
-
-        return {
-            commands: [
-                station
-                    ? {
-                        hn: station.hn,
-                        moveId: preparing.id,
-                        station: { patientId: station.patientId, room: event.toRoom },
-                        type: 'prepare_destination'
-                    }
-                    : { hn: event.toRoom, moveId: preparing.id, type: 'prepare_destination' },
-                { afterMs: prepareWaitMs, moveId: preparing.id, timer: 'move_prepare', type: 'start_timer' }
-            ],
-            move: preparing,
-            state: { ...state, moves: [ ...state.moves, preparing ] }
-        };
     }
 
     const move: IMove = { ...base, state: 'counting_down' };
@@ -393,25 +363,38 @@ function requestMove(
 }
 
 /**
+ * Fails a move that is under way.
+ *
+ * @param {IState} state - The state.
+ * @param {string} moveId - The move.
+ * @param {string} reason - Why.
+ * @returns {IStep}
+ */
+function fail(state: IState, moveId: string, reason: string): IStep {
+    const move = state.moves.find(m => m.id === moveId && (m.state === 'counting_down' || m.state === 'preparing'));
+
+    return {
+        commands: [],
+        state: move
+            ? { ...state, moves: state.moves.map(m => m === move ? { ...m, reason, state: 'failed' as const } : m) }
+            : state
+    };
+}
+
+/**
  * Applies one event.
  *
  * @param {IState} state - The current state.
  * @param {RulesEvent} event - The event.
  * @param {() => string} newId - Makes an opaque id; replaceable by callers that need determinism.
- * @param {number} prepareWaitMs - How long a move waits for its closed destination to be opened.
  * @returns {IStep}
  */
-export function step(
-        state: IState,
-        event: RulesEvent,
-        newId: () => string = randomUUID,
-        prepareWaitMs: number = PREPARE_WAIT_MS
-): IStep {
+export function step(state: IState, event: RulesEvent, newId: () => string = randomUUID): IStep {
     switch (event.type) {
     case 'start_encounter':
         return startEncounter(state, event.hn, event.at, newId);
     case 'request_move':
-        return requestMove(state, event, newId, prepareWaitMs);
+        return requestMove(state, event, newId);
     case 'change_stage': {
         const encounter = state.encounters.find(e => e.id === event.encounterId);
 
@@ -431,8 +414,8 @@ export function step(
         };
     }
     case 'close_day':
-        // The day's encounters end. What was learned about where each patient's own room is stays until the retention
-        // sweep, so a patient in a station at midnight can still be sent back to their own room (ADR 0005).
+        // The day's encounters end. What was learned about patients' own rooms and staff's stations stays until the
+        // retention sweep.
         return {
             commands: [],
             state: {
@@ -443,12 +426,11 @@ export function step(
             }
         };
     case 'rooms_snapshot': {
-        const learned = learnPatientRooms(state, event.rooms);
+        const learned = learn(state, event.rooms);
         const arrived = (m: IMove) => m.identityId !== undefined
             && event.rooms.some(r => r.name === m.destination && r.occupants.some(o => o.identity?.id === m.identityId));
         const cancelled = (m: IMove) => event.rooms.some(r => r.name === m.origin
             && r.occupants.some(o => o.endpointId === m.endpointId && o.cancelledMove === m.id));
-        const commands: Command[] = [];
         const next = (m: IMove): IMove => {
             if (m.state !== 'counting_down') {
                 return m;
@@ -457,54 +439,21 @@ export function step(
                 return { ...m, state: 'done' };
             }
             if (cancelled(m)) {
-                commands.push(...stopStation(m));
-
                 return { ...m, state: 'cancelled' };
             }
 
             return m;
         };
-
-        return { commands, state: { ...learned, moves: learned.moves.map(next) } };
-    }
-    case 'destination_ready': {
-        const move = state.moves.find(m => m.id === event.moveId && m.state === 'preparing');
-
-        if (!move) {
-            return { commands: [], state };
-        }
-
-        const sent: IMove = { ...move, state: 'counting_down' };
+        const moves = learned.moves.map(next);
 
         return {
-            commands: sendCommands(sent),
-            state: { ...state, moves: state.moves.map(m => m.id === move.id ? sent : m) }
+            commands: [],
+            state: moves.some((m, i) => m !== learned.moves[i]) ? { ...learned, moves } : learned
         };
     }
-    case 'destination_failed': {
-        const move = state.moves.find(m => m.id === event.moveId && ACTIVE.has(m.state));
-
-        return {
-            commands: stopStation(move),
-            state: {
-                ...state,
-                moves: state.moves.map(m => m === move ? { ...m, reason: event.reason, state: 'failed' as const } : m)
-            }
-        };
-    }
-    case 'timer_fired': {
-        const [ from, reason ] = event.timer === 'move_arrival'
-            ? [ 'counting_down', 'participant_did_not_arrive' ] as const
-            : [ 'preparing', 'recorder_bot_not_ready' ] as const;
-        const move = state.moves.find(m => m.id === event.moveId && m.state === from);
-
-        return {
-            commands: stopStation(move),
-            state: {
-                ...state,
-                moves: state.moves.map(m => m === move ? { ...m, reason, state: 'failed' as const } : m)
-            }
-        };
-    }
+    case 'move_failed':
+        return fail(state, event.moveId, event.reason);
+    case 'timer_fired':
+        return fail(state, event.moveId, 'participant_did_not_arrive');
     }
 }

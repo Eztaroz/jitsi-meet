@@ -6,7 +6,7 @@
 import { createHmac } from 'node:crypto';
 
 import { backendSafeRoomName } from './roomName.ts';
-import type { ILayout } from './rooms.ts';
+import { type ILayout, stationsOf } from './rooms.ts';
 import type { IMove, Stage } from './rules.ts';
 
 export interface IAuditEntry {
@@ -15,7 +15,7 @@ export interface IAuditEntry {
     /** How many surveys an export held. */
     count?: number;
 
-    /** A move's destination: a station's or a lounge's name, or a keyed reference. */
+    /** A move's destination: a lounge's name, or a keyed reference to a patient's room. */
     destination?: string;
 
     /** An encounter's id. */
@@ -31,24 +31,24 @@ export interface IAuditEntry {
     participantId?: string;
     reason?: string;
 
-    /** A move's origin: a station's or a lounge's name, or a keyed reference. */
+    /** A move's origin: a lounge's name, or a keyed reference to a patient's room. */
     source?: string;
     to?: Stage;
 }
 
 /**
- * Refers to a room. A station or a lounge is named as it is; any other room is a patient's, named by their HN, and is
+ * Refers to a room. A station's lounge is named as it is; any other room is a patient's, named by their HN, and is
  * referred to by a keyed reference.
  *
  * @param {string} key - The key of the references.
  * @param {string} room - The room.
- * @param {ILayout} layout - The configured rooms.
+ * @param {ILayout} layout - The stations, with their lounges.
  * @returns {string}
  */
 export function auditRef(key: string, room: string, layout: ILayout): string {
     const safe = backendSafeRoomName(room);
 
-    if ([ ...layout.stations, ...layout.lounges ].some(r => backendSafeRoomName(r.room) === safe)) {
+    if (stationsOf(layout).some(s => backendSafeRoomName(s.lounge) === safe)) {
         return room;
     }
 
@@ -63,7 +63,7 @@ export function auditRef(key: string, room: string, layout: ILayout): string {
  * @param {Date} options.at - When it ended.
  * @param {string} options.issuer - Who asked.
  * @param {string} options.key - The key of the references.
- * @param {ILayout} options.layout - The configured rooms.
+ * @param {ILayout} options.layout - The stations, with their lounges.
  * @returns {IAuditEntry}
  */
 export function moveEntry(move: IMove, { at, issuer, key, layout }: {

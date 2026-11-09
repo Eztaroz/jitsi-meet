@@ -15,11 +15,8 @@ export interface IMoveRecord {
     /** Whether the move's end is in the audit log. */
     audited: boolean;
 
-    /** The consultation the move started in a station, to stop it if the patient never comes. */
-    consultationId?: string;
-
     /** The absolute deadline of each pending timer. */
-    deadlines: { move_arrival?: Date; move_prepare?: Date; };
+    deadlines: { move_arrival?: Date; };
 
     /** Who asked: `system`, or a coordinator's verified identity id. */
     issuer: string;
@@ -72,6 +69,12 @@ export class Store {
             updated_at TEXT NOT NULL
         )`);
 
+        this._db.exec(`CREATE TABLE IF NOT EXISTS staff_stations (
+            identity_id TEXT PRIMARY KEY,
+            station TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )`);
+
         this._db.exec(`CREATE TABLE IF NOT EXISTS surveys (
             id TEXT PRIMARY KEY,
             submitted_at TEXT NOT NULL,
@@ -120,7 +123,8 @@ export class Store {
                 };
             }),
             moves: this._loadMoves().map(({ move }) => move),
-            patientRooms: this.patientRooms()
+            patientRooms: this.patientRooms(),
+            staffStations: this.staffStations()
         };
     }
 
@@ -147,6 +151,19 @@ export class Store {
     }
 
     /**
+     * Reads the station of each staff member, by verified identity id.
+     *
+     * @returns {Record<string, string>}
+     */
+    staffStations(): Record<string, string> {
+        const rows = this._db.prepare('SELECT identity_id, station FROM staff_stations').all() as {
+            identity_id: string; station: string;
+        }[];
+
+        return Object.fromEntries(rows.map(r => [ r.identity_id, r.station ]));
+    }
+
+    /**
      * Reads the saved moves with their records.
      *
      * @returns {Object[]}
@@ -158,6 +175,7 @@ export class Store {
 
         return rows.map(r => {
             const move = JSON.parse(r.move) as IMove & { startedAt: string; };
+            // A record from when patients were moved may also hold a consultation id and a preparation deadline.
             const record = JSON.parse(r.record) as Omit<IMoveRecord, 'deadlines'> & {
                 deadlines: Record<string, string>;
             };
@@ -165,11 +183,9 @@ export class Store {
             return {
                 move: { ...move, startedAt: new Date(move.startedAt) },
                 record: {
-                    ...record,
-                    deadlines: {
-                        ...record.deadlines.move_arrival ? { move_arrival: new Date(record.deadlines.move_arrival) } : {},
-                        ...record.deadlines.move_prepare ? { move_prepare: new Date(record.deadlines.move_prepare) } : {}
-                    }
+                    audited: record.audited,
+                    deadlines: record.deadlines.move_arrival ? { move_arrival: new Date(record.deadlines.move_arrival) } : {},
+                    issuer: record.issuer
                 }
             };
         });
@@ -191,6 +207,9 @@ export class Store {
         const keptRooms = new Map((this._db.prepare('SELECT * FROM patient_rooms').all() as {
             identity_id: string; room: string; updated_at: string;
         }[]).map(r => [ r.identity_id, r ]));
+        const keptStations = new Map((this._db.prepare('SELECT * FROM staff_stations').all() as {
+            identity_id: string; station: string; updated_at: string;
+        }[]).map(r => [ r.identity_id, r ]));
 
         this._db.exec('BEGIN');
         try {
@@ -207,6 +226,13 @@ export class Store {
 
                 this._db.prepare('INSERT INTO patient_rooms (identity_id, room, updated_at) VALUES (?, ?, ?)')
                     .run(identityId, room, kept?.room === room ? kept.updated_at : new Date().toISOString());
+            }
+            this._db.exec('DELETE FROM staff_stations');
+            for (const [ identityId, station ] of Object.entries(state.staffStations)) {
+                const kept = keptStations.get(identityId);
+
+                this._db.prepare('INSERT INTO staff_stations (identity_id, station, updated_at) VALUES (?, ?, ?)')
+                    .run(identityId, station, kept?.station === station ? kept.updated_at : new Date().toISOString());
             }
             this._db.exec('DELETE FROM encounters');
             for (const e of state.encounters) {
@@ -295,12 +321,31 @@ export class Store {
     }
 
     /**
-     * Deletes the encounters, moves, patients' own rooms, surveys and audit entries older than a time.
+     * Marks the staff's stations as seen now, so that a station that is seen again unchanged is not swept as old.
+     *
+     * @param {Record<string, string>} seen - The station whose lounge each staff member was seen in, by verified
+     * identity id.
+     * @returns {void}
+     */
+    touchStaffStations(seen: Record<string, string>): void {
+        const touch = this._db.prepare('UPDATE staff_stations SET updated_at = ? WHERE identity_id = ? AND station = ?');
+        const at = new Date().toISOString();
+
+        for (const [ identityId, station ] of Object.entries(seen)) {
+            touch.run(at, identityId, station);
+        }
+    }
+
+    /**
+     * Deletes the encounters, moves, patients' own rooms, staff's stations, surveys and audit entries older than a
+     * time.
      *
      * @param {Date} cutoff - What is older than this goes.
      * @returns {Object} How many of each.
      */
-    sweep(cutoff: Date): { audit: number; encounters: number; moves: number; patientRooms: number; surveys: number; } {
+    sweep(cutoff: Date): {
+        audit: number; encounters: number; moves: number; patientRooms: number; staffStations: number; surveys: number;
+    } {
         const at = cutoff.toISOString();
 
         return {
@@ -308,6 +353,7 @@ export class Store {
             encounters: Number(this._db.prepare('DELETE FROM encounters WHERE started_at < ?').run(at).changes),
             moves: Number(this._db.prepare('DELETE FROM moves WHERE started_at < ?').run(at).changes),
             patientRooms: Number(this._db.prepare('DELETE FROM patient_rooms WHERE updated_at < ?').run(at).changes),
+            staffStations: Number(this._db.prepare('DELETE FROM staff_stations WHERE updated_at < ?').run(at).changes),
             surveys: Number(this._db.prepare('DELETE FROM surveys WHERE submitted_at < ?').run(at).changes)
         };
     }

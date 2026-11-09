@@ -101,7 +101,7 @@ export function createScreenRoutes({ act, screen, service }: {
                 send(res, 200, {
                     coordinator,
                     moves: service.state.moves
-                        .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down' || m.state === 'preparing')
+                        .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down')
                         .map(m => ({
                             destination: m.destination,
                             endpointId: m.endpointId,

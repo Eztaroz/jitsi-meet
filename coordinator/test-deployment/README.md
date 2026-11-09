@@ -42,10 +42,3 @@ set -a; . ../recorder-bot/test-deployment/tests.env; . ../recorder-bot/test-depl
 npm run test-single -- 'specs/coordinator/*.spec.ts'
 ```
 
-All the specs but one run together. `specs/coordinator/moveCapacity.spec.ts` fills the recorder bot to see a move fail when it is at capacity, so run it on its own:
-
-```bash
-npm run test-single -- specs/coordinator/moveCapacity.spec.ts
-```
-
-`specs/coordinator/movePrepareWait.spec.ts` freezes the browser that the recorder bot launches in its container (`RECORDER_BOT_CONTAINER`) for the move back, so that the bot cannot open the room within this deployment's 15-second prepare wait (`COORDINATOR_PREPARE_WAIT_SECONDS`) while its service still answers (a paused container would make it unreachable instead). Run it on its own too, and not straight after `moveCapacity.spec.ts`: wait until the stations are empty.

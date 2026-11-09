@@ -1,8 +1,6 @@
 /**
  * The client of the recorder bot service's control API.
  */
-import type { IStationConsultation } from './rules.ts';
-
 export class RecorderBotUnavailableError extends Error {
     readonly code: string;
 
@@ -36,15 +34,14 @@ export class RecorderBot {
      * Asks the recorder bot to record a patient's room.
      *
      * @param {string} hn - The patient's HN.
-     * @param {IStationConsultation} station - Set to record one patient's time in a station instead (ADR 0006).
      * @returns {Promise<string>} The consultation's id.
      */
-    async recordRoom(hn: string, station?: IStationConsultation): Promise<string> {
+    async recordRoom(hn: string): Promise<string> {
         let response: Response;
 
         try {
             response = await fetch(`${this._url}/consultations`, {
-                body: JSON.stringify(station ? { hn, patient: station.patientId, room: station.room } : { hn }),
+                body: JSON.stringify({ hn }),
                 headers: { authorization: `Bearer ${this._secret}`, 'content-type': 'application/json' },
                 method: 'POST',
                 signal: AbortSignal.timeout(10_000)
@@ -61,52 +58,5 @@ export class RecorderBot {
         }
 
         return (await response.json() as { consultationId: string; }).consultationId;
-    }
-
-    /**
-     * Stops a consultation before its time. A station's consultation whose patient never arrived is discarded.
-     *
-     * @param {string} consultationId - The consultation.
-     * @returns {Promise<void>}
-     */
-    async stop(consultationId: string): Promise<void> {
-        let response: Response;
-
-        try {
-            response = await fetch(`${this._url}/consultations/${consultationId}/stop`, {
-                headers: { authorization: `Bearer ${this._secret}` },
-                method: 'POST',
-                signal: AbortSignal.timeout(60_000)
-            });
-        } catch {
-            throw new RecorderBotUnavailableError('unreachable');
-        }
-        if (!response.ok) {
-            throw new RecorderBotUnavailableError('rejected');
-        }
-    }
-
-    /**
-     * Reads a consultation's status.
-     *
-     * @param {string} consultationId - The consultation.
-     * @returns {Promise<string>} Its status, such as `waiting_for_participants`.
-     */
-    async status(consultationId: string): Promise<string> {
-        let response: Response;
-
-        try {
-            response = await fetch(`${this._url}/consultations/${consultationId}`, {
-                headers: { authorization: `Bearer ${this._secret}` },
-                signal: AbortSignal.timeout(10_000)
-            });
-        } catch {
-            throw new RecorderBotUnavailableError('unreachable');
-        }
-        if (!response.ok) {
-            throw new RecorderBotUnavailableError('rejected');
-        }
-
-        return (await response.json() as { status: string; }).status;
     }
 }

@@ -27,39 +27,72 @@ export interface IOccupant {
     displayName?: string;
     endpointId: string;
     identity?: { id?: string; name?: string; };
-
-    /** For a patient whose own room the service has learned, that room, wherever the patient is now. */
-    ownRoom?: string;
     role: Role;
+
+    /**
+     * For staff, the station they are with: the one whose lounge they are in, or, in a patient's own room, the one
+     * whose lounge they were last seen in (ADR 0011).
+     */
+    station?: string;
 
     /** Whether the occupant's client says it obeys move commands. */
     supportsMove: boolean;
 }
 
-/** The stages a station can belong to. */
-export type StationStage = 'aftercare' | 'intake';
+/** The stages a station can serve. */
+export type StationStage = 'aftercare' | 'examination' | 'intake';
 
-/** The rooms the deployment fixes: stations, each for a stage, and lounges (`GLOSSARY.md`). */
+/** A center's team of staff for one stage, and the lounge where its free staff wait (ADR 0011). */
+export interface IStation {
+    id: string;
+
+    /** The room name of the station's lounge. */
+    lounge: string;
+    stage: StationStage;
+}
+
+/** The parts of the hospital the deployment serves, each with its stations (`GLOSSARY.md`). */
 export interface ILayout {
-    lounges: { room: string; }[];
-    stations: { room: string; stage: StationStage; }[];
+    centers: { id: string; stations: IStation[]; }[];
 }
 
 export interface IRoom {
 
     /** For a patient's room, the open encounter of that HN, if there is one. */
     encounterId?: string;
-    kind: 'lounge' | 'patient' | 'station';
+    kind: 'lounge' | 'patient';
 
     /** The room name, which for a patient's room is the HN. */
     name: string;
     occupants: IOccupant[];
 
-    /** False for a configured room that nobody is in. */
+    /** False for a lounge that nobody is in. */
     open: boolean;
 
-    /** The stage of a station. */
+    /** For a lounge, its station. */
     stage?: StationStage;
+    station?: string;
+}
+
+/**
+ * Lists every station of every center.
+ *
+ * @param {ILayout} layout - The layout.
+ * @returns {IStation[]}
+ */
+export function stationsOf(layout: ILayout): IStation[] {
+    return layout.centers.flatMap(c => c.stations);
+}
+
+/**
+ * Finds the station whose lounge a room is.
+ *
+ * @param {ILayout} layout - The layout.
+ * @param {string} room - A room name, as Prosody or a person writes it.
+ * @returns {IStation|undefined}
+ */
+export function stationOfLounge(layout: ILayout, room: string): IStation | undefined {
+    return stationsOf(layout).find(s => sameRoom(s.lounge, room));
 }
 
 interface IRawIdentity {
@@ -139,19 +172,16 @@ function decodeRoomName(name: string): string {
  * @param {IRoleMarkers} markers - Which identities are patients and which staff.
  * @returns {IRoom[]}
  */
-export function describeRooms(raw: unknown, markers: IRoleMarkers, layout: ILayout = { lounges: [], stations: [] }): IRoom[] {
+export function describeRooms(raw: unknown, markers: IRoleMarkers, layout: ILayout = { centers: [] }): IRoom[] {
     const rooms = (raw as { rooms?: unknown; } | undefined)?.rooms;
     const open = describeOpenRooms(Array.isArray(rooms) ? rooms : [], markers, layout);
     const isOpen = (configured: string) => open.some(r => sameRoom(r.name, configured));
 
-    // The configured rooms nobody is in are listed too, closed, so that they can be moved into.
+    // The lounges nobody is in are listed too, closed, so that staff can be moved into them.
     return [
         ...open,
-        ...layout.stations.filter(s => !isOpen(s.room)).map(s => {
-            return { kind: 'station' as const, name: s.room, occupants: [], open: false, stage: s.stage };
-        }),
-        ...layout.lounges.filter(l => !isOpen(l.room)).map(l => {
-            return { kind: 'lounge' as const, name: l.room, occupants: [], open: false };
+        ...stationsOf(layout).filter(s => !isOpen(s.lounge)).map(s => {
+            return { kind: 'lounge' as const, name: s.lounge, occupants: [], open: false, stage: s.stage, station: s.id };
         })
     ];
 }
@@ -163,7 +193,7 @@ export function describeRooms(raw: unknown, markers: IRoleMarkers, layout: ILayo
  * @param {string} b - The other.
  * @returns {boolean}
  */
-function sameRoom(a: string, b: string): boolean {
+export function sameRoom(a: string, b: string): boolean {
     return backendSafeRoomName(a) === backendSafeRoomName(b);
 }
 
@@ -180,14 +210,13 @@ function describeOpenRooms(rooms: { name?: string; occupants?: unknown; }[], mar
         const occupants = Array.isArray(room.occupants) ? room.occupants as IRawOccupant[] : [];
 
         const name = decodeRoomName(room.name ?? '');
-        const station = layout.stations.find(st => sameRoom(st.room, name));
-        const lounge = layout.lounges.some(l => sameRoom(l.room, name));
+        const station = stationOfLounge(layout, name);
 
         return {
-            kind: station ? 'station' : lounge ? 'lounge' : 'patient',
+            kind: station ? 'lounge' : 'patient',
             name,
             open: true,
-            stage: station?.stage,
+            ...station ? { stage: station.stage, station: station.id } : {},
             occupants: occupants.map(o => {
                 let role: Role = 'unknown';
 
@@ -207,6 +236,7 @@ function describeOpenRooms(rooms: { name?: string; occupants?: unknown; }[], mar
                         ? { id: o.identity.user.id, name: o.identity.user.name }
                         : undefined,
                     role,
+                    ...station && role === 'staff' ? { station: station.id } : {},
                     supportsMove: Boolean(o.supportsMove)
                 };
             })

@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 
-import { type ILayout, type IRoleMarker, type IRoleMarkers, parseRoleMarker } from './rooms.ts';
-import { PREPARE_WAIT_MS } from './rules.ts';
+import {
+    type ILayout,
+    type IRoleMarker,
+    type IRoleMarkers,
+    type IStation,
+    type StationStage,
+    parseRoleMarker,
+    sameRoom
+} from './rooms.ts';
 
 /**
  * The coordinator service's settings, read from environment variables. `coordinator/deploy/README.md` documents each.
@@ -21,11 +28,8 @@ export interface IConfig {
     /** The directory holding the database; mount a volume here. */
     dataDir: string;
 
-    /** The stations and lounges (`COORDINATOR_ROOMS_FILE`). */
+    /** The center, its stations and each station's lounge (`COORDINATOR_ROOMS_FILE`). */
     layout: ILayout;
-
-    /** How long the recorder bot has to open a closed destination before the move fails, in ms (`COORDINATOR_PREPARE_WAIT_SECONDS`). */
-    prepareWaitMs: number;
 
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
@@ -108,7 +112,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
             : undefined,
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
-        prepareWaitMs: loadPrepareWait(env.COORDINATOR_PREPARE_WAIT_SECONDS),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
         recorderBotSecret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
         recorderBotUrl: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, ''),
@@ -129,36 +132,69 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
 }
 
 /**
- * Reads the stations and lounges from a JSON file: `{ "stations": [ { "room", "stage" } ], "lounges": [ { "room" } ] }`.
+ * Reads the centers, their stations and each station's lounge from a JSON file (ADR 0011):
+ * `{ "centers": [ { "id", "stations": [ { "id", "stage", "lounge" } ] } ] }`. There is one center for now.
  *
  * @param {string|undefined} file - The file; unset for none.
  * @returns {ILayout}
- * @throws {Error} When the file is malformed.
+ * @throws {Error} When the file is malformed, or in the format of station rooms.
  */
 export function loadLayout(file: string | undefined): ILayout {
     if (!file) {
-        return { lounges: [], stations: [] };
+        return { centers: [] };
     }
 
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<Record<keyof ILayout, { room?: unknown; stage?: unknown; }[]>>;
-    const named = (entries: { room?: unknown; stage?: unknown; }[] | undefined, what: string) => (entries ?? []).map(e => {
-        if (typeof e.room !== 'string' || !e.room.trim()) {
-            throw new Error(`COORDINATOR_ROOMS_FILE: every ${what} needs a "room"`);
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as { centers?: unknown; lounges?: unknown; stations?: unknown; };
+    const fail = (why: string) => new Error(`COORDINATOR_ROOMS_FILE: ${why}`);
+
+    if (raw.stations !== undefined || raw.lounges !== undefined) {
+        throw fail('top-level "stations" and "lounges" are station rooms, which are gone: patients stay in their own '
+            + 'room and a station is a team with its own lounge (ADR 0011). Write { "centers": [ { "id", "stations": '
+            + '[ { "id", "stage", "lounge" } ] } ] }');
+    }
+
+    if (!Array.isArray(raw.centers) || raw.centers.length !== 1) {
+        throw fail('needs "centers" with exactly one center');
+    }
+
+    const text = (value: unknown) => typeof value === 'string' && value.trim() !== '';
+    const lounges: string[] = [];
+    const ids: string[] = [];
+
+    const centers = (raw.centers as { id?: unknown; stations?: unknown; }[]).map(center => {
+        if (!text(center.id)) {
+            throw fail('every center needs an "id"');
+        }
+        if (!Array.isArray(center.stations)) {
+            throw fail(`center "${center.id}" needs "stations"`);
         }
 
-        return e as { room: string; stage?: unknown; };
-    });
-
-    return {
-        lounges: named(raw.lounges, 'lounge').map(l => ({ room: l.room })),
-        stations: named(raw.stations, 'station').map(s => {
-            if (s.stage !== 'intake' && s.stage !== 'aftercare') {
-                throw new Error('COORDINATOR_ROOMS_FILE: every station needs a "stage", intake or aftercare');
+        const stations = (center.stations as { id?: unknown; lounge?: unknown; stage?: unknown; }[]).map(s => {
+            if (!text(s.id) || !text(s.lounge)) {
+                throw fail('every station needs an "id" and a "lounge"');
+            }
+            if (s.stage !== 'intake' && s.stage !== 'examination' && s.stage !== 'aftercare') {
+                throw fail(`station "${s.id}" needs a "stage": intake, examination or aftercare`);
             }
 
-            return { room: s.room, stage: s.stage };
-        })
-    };
+            const station: IStation = { id: s.id as string, lounge: s.lounge as string, stage: s.stage as StationStage };
+
+            if (ids.includes(station.id)) {
+                throw fail(`two stations are "${station.id}"`);
+            }
+            if (lounges.some(l => sameRoom(l, station.lounge))) {
+                throw fail(`two stations have the lounge "${station.lounge}"`);
+            }
+            ids.push(station.id);
+            lounges.push(station.lounge);
+
+            return station;
+        });
+
+        return { id: center.id as string, stations };
+    });
+
+    return { centers };
 }
 
 /**
@@ -178,25 +214,4 @@ export function loadTimeZone(zone: string | undefined): string {
     }
 
     return timeZone;
-}
-
-/**
- * Reads how long the recorder bot has to open a destination.
- *
- * @param {string|undefined} seconds - `COORDINATOR_PREPARE_WAIT_SECONDS`; unset for the default.
- * @returns {number} Milliseconds.
- * @throws {Error} When it is not a positive number.
- */
-export function loadPrepareWait(seconds: string | undefined): number {
-    if (!seconds?.trim()) {
-        return PREPARE_WAIT_MS;
-    }
-
-    const value = Number(seconds);
-
-    if (!Number.isFinite(value) || value <= 0) {
-        throw new Error(`COORDINATOR_PREPARE_WAIT_SECONDS must be a positive number, got "${seconds}"`);
-    }
-
-    return value * 1000;
 }
