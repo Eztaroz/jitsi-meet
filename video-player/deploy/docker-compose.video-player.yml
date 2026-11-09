@@ -1,0 +1,29 @@
+# The video player service, as an addition to a docker-jitsi-meet deployment. Copy this file next to that deployment's
+# docker-compose.yml and start both:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.video-player.yml up -d
+#
+# Build the image first from this fork:
+#
+#   docker build -t video-player:<version> video-player/
+#
+# Every setting is described in video-player/deploy/README.md. Put the secret in the deployment's .env, never in this
+# file.
+services:
+    video-player:
+        image: ${VIDEO_PLAYER_IMAGE:-video-player:latest}
+        restart: unless-stopped
+        # As Playwright recommends for Chromium in a container.
+        init: true
+        ipc: host
+        # Only the coordinator service should reach the control API. Bind it to an internal address.
+        ports:
+            - '${VIDEO_PLAYER_API_BIND:-127.0.0.1}:${VIDEO_PLAYER_API_PORT:-8091}:${VIDEO_PLAYER_API_PORT:-8091}'
+        environment:
+            - VIDEO_PLAYER_API_PORT=${VIDEO_PLAYER_API_PORT:-8091}
+            - VIDEO_PLAYER_API_SECRET
+            - VIDEO_PLAYER_JITSI_URL=${PUBLIC_URL}
+            - VIDEO_PLAYER_MAX_ROOMS
+            - TZ
+        depends_on:
+            - web
