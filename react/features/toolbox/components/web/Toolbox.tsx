@@ -5,7 +5,11 @@ import { makeStyles } from 'tss-react/mui';
 
 import { IReduxState } from '../../../app/types';
 import { isMobileBrowser } from '../../../base/environment/utils';
-import { getLocalParticipant, isLocalParticipantModerator } from '../../../base/participants/functions';
+import {
+    getLocalParticipant,
+    isLocalParticipantModerator,
+    isPatientsRoom
+} from '../../../base/participants/functions';
 import ContextMenu from '../../../base/ui/components/web/ContextMenu';
 import { isReactionsButtonEnabled, shouldDisplayReactionsButtons } from '../../../reactions/functions.web';
 import { isCCTabEnabled } from '../../../subtitles/functions.any';
@@ -114,7 +118,9 @@ export default function Toolbox({
     const reducedUI = useSelector((state: IReduxState) => state['features/base/responsive-ui'].reducedUI);
     const allButtons = useToolboxButtons(customToolbarButtons);
     const isMobile = isMobileBrowser();
-    const endConferenceSupported = Boolean(conference?.isEndConferenceSupported() && isModerator);
+    // Ending a patient's own room would end their consultation mid-encounter (ADR 0011, 0012).
+    const inPatientsRoom = useSelector(isPatientsRoom);
+    const endConferenceSupported = Boolean(conference?.isEndConferenceSupported() && isModerator && !inPatientsRoom);
 
     useKeyboardShortcuts(toolbarButtonsToUse);
 

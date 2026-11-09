@@ -18,6 +18,8 @@ services:
             - ../../coordinator/test-deployment/keys/asap:/usr/share/jitsi-meet/.well-known/coordinator:ro
             # Proxies /coordinator/ to the coordinator service over this server's TLS (ADR 0008).
             - ../../coordinator/deploy/nginx/coordinator.conf:/config/nginx-custom/coordinator.conf:ro
+            # Marks patients for the client, which hides the buttons that end a patient's room or remove the patient.
+            - ../../coordinator/test-deployment/custom-config.js:/config/custom-config.js:ro
 
     prosody:
         # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
@@ -25,6 +27,9 @@ services:
             - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
             - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
             - ../../resources/prosody-plugins/mod_muc_patient_never_moderator.lua:/prosody-plugins-custom/mod_muc_patient_never_moderator.lua:ro
+            - ../../resources/prosody-plugins/patient_marker.lib.lua:/prosody-plugins-custom/patient_marker.lib.lua:ro
+            # Refuses the end of a patient's room for everyone; reads the MUC component's muc_patient_marker.
+            - ../../resources/prosody-plugins/mod_end_conference.lua:/prosody-plugins-custom/mod_end_conference.lua:ro
         environment:
             ENABLE_BREAKOUT_ROOMS: 'false'
             # Refuses a client that does not announce that it obeys moves, apart from the hosts listed in

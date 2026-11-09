@@ -612,6 +612,13 @@ export interface IConfig {
         hideMoreActionsButton?: boolean;
         hideMuteAllButton?: boolean;
     };
+    /**
+     * Marks the participants who are patients, in the form "user.<claim>=<value>" for a claim in the participant's
+     * token context.user, e.g. "user.hospital_role=patient". Staff in a patient's own room get no "end meeting for
+     * all", and no kick or demote-to-visitor for the patient. Prosody refuses the same actions, so this only hides
+     * the buttons.
+     */
+    patientMarker?: string;
     pcStatsInterval?: number;
     peopleSearchQueryTypes?: string[];
     peopleSearchTokenLocation?: string;
