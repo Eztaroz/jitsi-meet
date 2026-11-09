@@ -16,6 +16,7 @@ import { RecorderBotUnavailableError } from './recorderBot.ts';
 import type { IMove } from './rules.ts';
 import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
+import { createStaffRoutes } from './staffRoutes.ts';
 import { createSurveyRoutes } from './surveyRoutes.ts';
 
 /** Who the audit log names for a call with the shared bearer secret. */
@@ -106,6 +107,7 @@ function encounterBody(service: CoordinatorService, id: string) {
     return {
         center: e.center,
         clinic: e.clinic,
+        doctor: e.doctor,
         history: e.history,
         hn: e.hn,
         id: e.id,
@@ -181,10 +183,11 @@ function reportTime(value: string | null, fallback: Date): Date {
  * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ screen, secret, service, survey }: {
+export function createApi({ screen, secret, service, staff, survey }: {
     screen?: ICoordinatorAuth;
     secret: string;
     service: CoordinatorService;
+    staff?: ICoordinatorAuth;
     survey?: ICoordinatorAuth;
 }): Server {
     /**
@@ -299,11 +302,36 @@ export function createApi({ screen, secret, service, survey }: {
             return true;
         }
 
+        const doctorMatch = /^\/encounters\/([^/]+)\/doctor$/.exec(pathname);
+
+        if (doctorMatch && req.method === 'POST') {
+            const doctor = (await readJson(req) as { doctor?: unknown; } | null)?.doctor;
+
+            // eslint-disable-next-line no-control-regex
+            if (doctor !== null && (typeof doctor !== 'string' || !doctor.trim() || doctor.length > MAX_HN_LENGTH
+                    || /[ -]/.test(doctor))) {
+                throw new HttpError(400, `doctor must be a non-empty string of at most ${MAX_HN_LENGTH} characters, or null`);
+            }
+
+            const { encounter, refused } = await service.setDoctor(decodeURIComponent(doctorMatch[1]), doctor, issuer);
+
+            if (refused === 'unknown_encounter') {
+                throw new HttpError(404, 'no such encounter');
+            }
+            if (refused === 'encounter_closed') {
+                throw new HttpError(409, 'the encounter is done');
+            }
+            send(res, 200, encounterBody(service, encounter?.id as string));
+
+            return true;
+        }
+
         return false;
     }
 
     const handleScreen = createScreenRoutes({ act, screen, service });
     const handleSurvey = createSurveyRoutes({ auth: survey, service });
+    const handleStaff = createStaffRoutes({ auth: staff, service });
 
     // The patient's client answers a questionnaire with the same patient token as the survey.
     const handleQuestionnaire = createQuestionnaireRoutes({ auth: survey, service });
@@ -327,6 +355,11 @@ export function createApi({ screen, secret, service, survey }: {
         }
         if (path === '/questionnaire') {
             await handleQuestionnaire(req, res, scheme === 'Bearer' ? token : undefined);
+
+            return;
+        }
+        if (path === '/staff' || path.startsWith('/staff/')) {
+            await handleStaff(req, res, scheme === 'Bearer' ? token : undefined);
 
             return;
         }
@@ -392,8 +425,11 @@ export function createApi({ screen, secret, service, survey }: {
             const queues = service.queues();
             const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
 
-            send(res, 200, { queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
-                [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])) });
+            send(res, 200, {
+                examination: service.examinationQueues(),
+                queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
+                    [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ]))
+            });
 
             return;
         }

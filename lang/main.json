@@ -1478,6 +1478,12 @@
         "timelineEnd": "End",
         "timelineStart": "Start"
     },
+    "staffActions": {
+        "apply": "Change stage",
+        "currentStage": "Stage: {{stage}}",
+        "pickStage": "Change stage to...",
+        "refused": "The stage was not changed."
+    },
     "startupoverlay": {
         "genericTitle": "The meeting needs to use your microphone and camera.",
         "policyText": " ",

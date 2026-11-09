@@ -18,21 +18,26 @@ export interface IAuditEntry {
     /** A move's destination: a lounge's name, or a keyed reference to a patient's room. */
     destination?: string;
 
+    /** The doctor a doctor change set; absent when it took the doctor away. */
+    doctor?: string;
+
     /** An encounter's id. */
     encounterId?: string;
     from?: Stage;
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'move' | 'questionnaire_sent' | 'stage' | 'survey_export';
+    kind: 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'survey_export';
     outcome: string;
 
     /** The moved participant's verified identity id. */
     participantId?: string;
 
+    /** The doctor a doctor change replaced. */
+    previousDoctor?: string;
+
     /** The id of the questionnaire of the catalogue that was sent. */
     questionnaire?: string;
-
     reason?: string;
 
     /** A move's origin: a lounge's name, or a keyed reference to a patient's room. */
@@ -104,6 +109,24 @@ export function stageEntry({ at, encounterId, from, issuer, outcome, reason, to 
     to: Stage;
 }): IAuditEntry {
     return { at, encounterId, from, issuer, kind: 'stage', outcome, reason, to };
+}
+
+/**
+ * The entry of a change of an encounter's doctor.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function doctorEntry({ at, doctor, encounterId, issuer, outcome, previousDoctor, reason }: {
+    at: Date;
+    doctor?: string;
+    encounterId: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    previousDoctor?: string;
+    reason?: string;
+}): IAuditEntry {
+    return { at, doctor, encounterId, issuer, kind: 'doctor', outcome, previousDoctor, reason };
 }
 
 /**
