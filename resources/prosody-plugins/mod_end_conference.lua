@@ -44,6 +44,16 @@ end
 
 module:log('info', 'Starting end_conference for %s', muc_component_host);
 
+-- A patient's own room is never ended from a client: it would end their consultation mid-encounter (ADR 0011, 0012).
+-- The marker is the MUC component's muc_patient_marker option, the one mod_muc_patient_never_moderator reads, and
+-- needs patient_marker.lib.lua beside this module. Without it every moderator can end every room, as upstream.
+local patients = module:require('patient_marker').new(module,
+    module:context(muc_component_host):get_option_string('muc_patient_marker'));
+if not patients then
+    module:log('warn', 'No usable muc_patient_marker on %s: a patient\'s room can be ended by its moderators.',
+        muc_component_host);
+end
+
 -- receives messages from clients to the component to end a conference
 function on_message(event)
     local session = event.origin;
@@ -78,6 +88,11 @@ function on_message(event)
         end
         if occupant.role ~= 'moderator' then
             module:log('warn', 'Occupant %s is not moderator and not allowed this operation for %s', from, room.jid);
+            return false;
+        end
+
+        if patients and patients.room_has_patient(room) then
+            module:log('info', 'Refusing to end %s for everyone: a patient is in it', room.jid);
             return false;
         end
 

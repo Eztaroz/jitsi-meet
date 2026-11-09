@@ -44,8 +44,6 @@ const RAW_DIR = 'raw';
 /** What the manifest is made of. */
 export interface IEvidenceInput {
 
-    /** The room the consultation took place in, when that was a station and not the patient's own room. */
-    conferenceRoom?: string;
     consultationId: string;
     end: Date;
     hn: string;
@@ -363,7 +361,6 @@ export class EvidenceRecording {
             consultationId: input.consultationId,
             hn: input.hn,
             room: input.room,
-            station: input.conferenceRoom,
             meetingId: input.meetingId,
             start: input.start,
             end: input.end,
@@ -375,15 +372,6 @@ export class EvidenceRecording {
             gaps: input.timeline.flatMap(e => e.type === 'gap' ? [ { end: e.end, start: e.start } ] : [])
         });
         await rename(path.join(this.folder, `${MANIFEST}.tmp`), path.join(this.folder, MANIFEST));
-    }
-
-    /**
-     * Deletes the consultation's folder from the spool: nothing of it is kept.
-     *
-     * @returns {Promise<void>}
-     */
-    discard(): Promise<void> {
-        return rm(this.folder, { force: true, recursive: true });
     }
 
     /**

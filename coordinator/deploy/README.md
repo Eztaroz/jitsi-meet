@@ -174,3 +174,11 @@ With token authentication (Jicofo authentication), the recorder bot cannot start
 ### What is kept over a restart
 
 The service keeps where each patient's own room is, and each staff member's station, in its database by verified identity id (no HN is added to what is stored beyond the room name), so that they survive a restart; moves under way resume for the time left. The midnight close keeps them. Only the 90-day retention sweep forgets them, and a room or a station that is seen again unchanged counts as fresh for the sweep.
+
+## Staff cannot end, kick or demote in a patient's room
+
+No staff member can end a patient's own room or take the patient out of it, since either would end the consultation mid-encounter (ADR 0011, 0012). In a room with a patient in it, the client hides "end meeting for all" from everyone, and kick and demote-to-visitor for the patient, and Prosody refuses the same three, so that hiding the buttons is not the only guard. Mute and ask-to-unmute stay, and so does every moderator action in a room without a patient (a lounge). Nobody can unmute the patient: staff ask them to.
+
+- Kick and demote-to-visitor are refused by `mod_muc_patient_never_moderator`, with the same `muc_patient_marker`. It now needs `patient_marker.lib.lua` beside it: mount `resources/prosody-plugins/patient_marker.lib.lua` into the `prosody` container at `/prosody-plugins-custom/` too. Kicks by the system (the coordinator service, Jicofo) are not refused.
+- "End meeting for all" goes to the `end_conference` component, so `mod_end_conference` refuses it. Give it `patient_marker.lib.lua` the same way. It reads the marker from the MUC component's `muc_patient_marker`. Without a usable marker it logs a warning and any moderator can end any room, as upstream.
+- The client hides the buttons by its own config option, in the same form as the marker for the token's `context.user` (`group=` markers do not work there): `config.patientMarker = 'user.hospital_role=patient';` in the web server's `config.js`.

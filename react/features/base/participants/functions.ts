@@ -678,6 +678,37 @@ export function isLocalParticipantModerator(stateful: IStateful) {
 }
 
 /**
+ * Whether a participant is a patient, by the deployment's {@code patientMarker} config option, which is of the form
+ * "user.<claim>=<value>": the participant's token has that claim in its context.user, with that value as text.
+ * Without the option nobody is a patient.
+ *
+ * @param {Object|Function} stateful - Object or function that can be resolved to the Redux state.
+ * @param {IParticipant} [participant] - The participant to check.
+ * @returns {boolean}
+ */
+export function isPatientParticipant(stateful: IStateful, participant?: IParticipant) {
+    const marker = toState(stateful)['features/base/config'].patientMarker;
+    const match = marker?.match(/^user\.([^=]+)=(.+)$/);
+    const value = match ? participant?.userContext?.[match[1]] : undefined;
+
+    return value !== undefined && value !== null && String(value) === match?.[2];
+}
+
+/**
+ * Whether the conference is a patient's own room, that is, whether a patient is in it. A patient never moves, so a
+ * patient is only ever in their own room (ADR 0011).
+ *
+ * @param {Object|Function} stateful - Object or function that can be resolved to the Redux state.
+ * @returns {boolean}
+ */
+export function isPatientsRoom(stateful: IStateful) {
+    const { local, remote } = toState(stateful)['features/base/participants'];
+
+    return isPatientParticipant(stateful, local) || Array.from(remote.values())
+        .some(participant => isPatientParticipant(stateful, participant));
+}
+
+/**
  * Resolves the first loadable avatar URL for a participant.
  *
  * @param {Object} participant - The participant to resolve avatars for.

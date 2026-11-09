@@ -12,7 +12,7 @@ setTestProperties(__filename, {
     description: 'The deployment has neither the welcome page nor a close page, so a participant who leaves a room \
 lands on static/left.html rather than staying on a meeting that looks frozen. A participant who hangs up is told \
 that they have left and offered to rejoin the room with the same token; once a staff member has ended the meeting \
-for everyone, it says that the consultation has ended, with nothing to rejoin. A patient, and only a patient, is \
+for everyone (in a room without a patient: staff cannot end a patient\'s own room), it says that the consultation has ended, with nothing to rejoin. A patient, and only a patient, is \
 asked the satisfaction survey there, which the coordinator service keeps. Skipped unless the deployment is the JWT \
 variant of the recorder bot\'s test deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1', 'p2' ]
@@ -90,16 +90,17 @@ describe('Coordinator: the page a participant lands on once they have left', () 
         expect(new URL(await patient.driver.getUrl()).pathname.toLowerCase()).toBe(`/${room.toLowerCase()}`);
     });
 
+    // A patient's own room cannot be ended by staff (ADR 0012), so the room here has staff only.
     it('tells everyone that the consultation has ended once a staff member has ended the meeting for everyone, and \
-asks only the patient the survey', async () => {
+asks no staff member the survey', async () => {
         const room = patientLinkRoom(uniqueHn('ENDED'));
-        const patient = await joinMuc({ name: 'p1', token: patientToken() }, { roomName: room });
-        const staff = await joinMuc({ name: 'p2', token: staffToken() }, { roomName: room });
+        const first = await joinMuc({ name: 'p1', token: staffToken() }, { roomName: room });
+        const second = await joinMuc({ name: 'p2', token: staffToken() }, { roomName: room });
 
-        await staff.driver.waitUntil(() => staff.isModerator(), { timeout: 15_000 });
-        await staff.getToolbar().clickEndMeetingForAllButton();
+        await first.driver.waitUntil(() => first.isModerator(), { timeout: 15_000 });
+        await first.getToolbar().clickEndMeetingForAllButton();
 
-        for (const participant of [ patient, staff ]) {
+        for (const participant of [ first, second ]) {
             const ok = participant.driver.$('#modal-dialog-ok-button');
 
             await ok.waitForDisplayed({ timeout: 15_000 });
@@ -107,11 +108,10 @@ asks only the patient the survey', async () => {
             expect(await waitForLeftPage(participant)).toBe('The consultation has ended');
             expect(await participant.driver.$('#left-rejoin').isDisplayed()).toBe(false);
         }
-        await patient.driver.$('#left-survey').waitForDisplayed({ timeout: 10_000 });
 
-        // The page asks the coordinator service before it shows the survey: give the staff member's page the time the
-        // patient's took.
-        await staff.driver.pause(3000);
-        expect(await staff.driver.$('#left-survey').isExisting()).toBe(false);
+        // The page asks the coordinator service before it shows the survey: give it the time to have shown it.
+        await first.driver.pause(3000);
+        expect(await first.driver.$('#left-survey').isExisting()).toBe(false);
+        expect(await second.driver.$('#left-survey').isExisting()).toBe(false);
     });
 });
