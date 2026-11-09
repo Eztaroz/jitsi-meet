@@ -129,4 +129,19 @@ describe('the API for waiting videos', () => {
         assert.equal((await post(`/encounters/${id}/video`)).status, 409);
         assert.equal((await post(`/encounters/${id}/video`, { video: 'b' })).body.video, 'b');
     });
+
+    it('chooses the video of an encounter for a stage, and plays it in place of the default', async () => {
+        const { body: { id } } = await post('/encounters', { hn: 'HN/3' });
+        const choose = (body: unknown) => post(`/encounters/${id}/video-choice`, body);
+
+        assert.equal((await post('/encounters/nope/video-choice', { stage: 'waiting', video: 'b' })).status, 404);
+        assert.equal((await choose({ stage: 'waiting', video: 'nope' })).status, 400);
+        assert.equal((await choose({ stage: 'nonsense', video: 'b' })).status, 400);
+        assert.equal((await choose({ stage: 'waiting' })).status, 400);
+        assert.equal((await choose({ stage: 'waiting', video: 'b' })).status, 200);
+        assert.equal((await post(`/encounters/${id}/video`)).body.video, 'b');
+        await post(`/encounters/${id}/video/stop`);
+        await service.changeStage(id, 'done', 'system');
+        assert.equal((await choose({ stage: 'waiting', video: 'b' })).status, 409);
+    });
 });

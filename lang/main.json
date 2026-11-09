@@ -1482,7 +1482,10 @@
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
         "pickStage": "Change stage to...",
-        "refused": "The stage was not changed."
+        "pickVideo": "Waiting video for this stage...",
+        "playVideo": "Play video",
+        "refused": "The stage was not changed.",
+        "stopVideo": "Stop video"
     },
     "startupoverlay": {
         "genericTitle": "The meeting needs to use your microphone and camera.",

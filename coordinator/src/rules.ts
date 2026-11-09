@@ -44,6 +44,9 @@ export interface IEncounter {
     /** True for an encounter that was closed at the end of the day, not marked done. */
     unfinished?: true;
 
+    /** The waiting video chosen for the encounter at each stage, by stage id; it takes the place of the stage's default. */
+    videos?: Record<string, string>;
+
     /** The hospital system's number for the patient's attendance on the day; several encounters can share one. */
     visitNumber?: string;
 }
@@ -142,6 +145,17 @@ export type RulesEvent = { at: Date; } & (
         pathway?: string;
         type: 'start_encounter';
         visitNumber?: string;
+    }
+    | {
+        encounterId: string;
+
+        /** The stage ids of the encounter's pathway; the default pathway's when unset. */
+        pathwayStages?: readonly string[];
+        stage: Stage;
+        type: 'set_video';
+
+        /** The id of a video of the catalogue, which the caller has checked. */
+        video: string;
     }
     | {
         /** The staff member's verified identity id; null takes the doctor away. */
@@ -513,6 +527,27 @@ export function step(state: IState, event: RulesEvent, newId: () => string = ran
 
         const { doctor: _previous, ...rest } = encounter;
         const changed: IEncounter = event.doctor === null ? rest : { ...rest, doctor: event.doctor };
+
+        return {
+            commands: [],
+            encounter: { ...changed, created: false },
+            state: { ...state, encounters: state.encounters.map(e => e === encounter ? changed : e) }
+        };
+    }
+    case 'set_video': {
+        const encounter = state.encounters.find(e => e.id === event.encounterId);
+
+        if (!encounter) {
+            return { commands: [], refused: 'unknown_encounter', state };
+        }
+        if (encounter.stage === DONE) {
+            return { commands: [], refused: 'encounter_closed', state };
+        }
+        if (!(event.pathwayStages ?? DEFAULT_PATHWAY.stages.map(s => s.id)).includes(event.stage)) {
+            return { commands: [], refused: 'stage_not_in_pathway', state };
+        }
+
+        const changed: IEncounter = { ...encounter, videos: { ...encounter.videos, [event.stage]: event.video } };
 
         return {
             commands: [],

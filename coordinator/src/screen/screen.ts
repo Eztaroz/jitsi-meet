@@ -32,6 +32,9 @@
     /** The encounters a waiting video is playing for now. */
     let PLAYING_VIDEOS = new Set<string>();
 
+    /** The waiting videos a patient's video can be chosen from. */
+    let VIDEO_CATALOGUE: { id: string; title: string; }[] = [];
+
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
         [ 'patient', 'ห้องผู้ป่วย', 'door' ],
@@ -145,6 +148,7 @@
         rooms: IRoom[];
         stages: { id: string; name: string; }[];
         teams: ITeam[];
+        videoCatalogue?: { id: string; title: string; }[];
         videos?: { encounterId: string; }[];
     }
 
@@ -653,6 +657,9 @@
         video.addEventListener('click', () => toggleVideo(entry, playing, video));
         controls.append(pick, go, done, video);
         ticket.append(row, controls);
+        if (VIDEO_CATALOGUE.length) {
+            ticket.appendChild(drawVideoChoice(entry, stage));
+        }
         if (stage === 'examination') {
             ticket.appendChild(drawDoctorControl(entry));
         }
@@ -856,6 +863,39 @@
             }
             refresh();
         });
+    }
+
+    /**
+     * Draws the control that chooses the waiting video a patient gets at their current stage.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string} stage - The stage the encounter is in.
+     * @returns {HTMLElement}
+     */
+    function drawVideoChoice(entry: IQueueEntry, stage: string): HTMLElement {
+        const key = `video|${entry.encounterId}`;
+        const pick = el('select', undefined, 'video-pick') as HTMLSelectElement;
+        const set = button('เลือกวิดีโอ', 'video-choose secondary');
+        const wrap = el('div', undefined, 'controls video-controls');
+        const hn = entry.hn || 'ผู้ป่วย';
+
+        pick.setAttribute('aria-label', `วิดีโอของ ${hn}`);
+        VIDEO_CATALOGUE.forEach(v => pick.appendChild(el('option', v.title)).setAttribute('value', v.id));
+        pick.value = choices[key] ?? VIDEO_CATALOGUE[0].id;
+        pick.addEventListener('change', () => {
+            choices[key] = pick.value;
+        });
+        set.addEventListener('click', () => {
+            delete choices[key];
+            set.disabled = true;
+            act(`/encounters/${encodeURIComponent(entry.encounterId)}/video-choice`, { stage, video: pick.value }).then(result => {
+                say(failed(result) ? 'เลือกวิดีโอไม่สำเร็จ' : `เลือกวิดีโอของ ${hn} แล้ว`, failed(result) ? 'error' : 'ok');
+                refresh();
+            });
+        });
+        wrap.append(pick, set);
+
+        return wrap;
     }
 
     /**
@@ -1209,6 +1249,7 @@
                         sent: {} };
                     drawStats(state);
                     PLAYING_VIDEOS = new Set((state.videos ?? []).map(v => v.encounterId));
+                    VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     // A list being chosen from would close, and a field being typed in would lose its place, if they
                     // were drawn again.
