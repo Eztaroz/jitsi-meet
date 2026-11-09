@@ -1477,7 +1477,10 @@
     "staffActions": {
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
+        "nextPatient": "Next patient",
+        "nextRefused": "Could not call the next patient.",
         "pickStage": "Change stage to...",
+        "queueEmpty": "Nobody is waiting for your station.",
         "refused": "The stage was not changed."
     },
     "startupoverlay": {

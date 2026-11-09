@@ -31,6 +31,7 @@ import ParticipantsPane from '../../../participants-pane/components/web/Particip
 import Prejoin from '../../../prejoin/components/web/Prejoin';
 import { isPrejoinPageVisible } from '../../../prejoin/functions.web';
 import ReactionAnimations from '../../../reactions/components/web/ReactionsAnimations';
+import NextPatientPanel from '../../../staff-actions/components/web/NextPatientPanel';
 import StaffStagePanel from '../../../staff-actions/components/web/StaffStagePanel';
 import { isTimeTimerExpiredUnacknowledged } from '../../../time-timer/functions';
 import { toggleToolboxVisible } from '../../../toolbox/actions.any';
@@ -269,6 +270,7 @@ class Conference extends AbstractConference<IProps, any> {
                         <Notice />
                         <MoveNotice />
                         <StaffStagePanel />
+                        <NextPatientPanel />
                         <div
                             className = { videospaceClassName }
                             id = 'videospace'
@@ -304,6 +306,7 @@ class Conference extends AbstractConference<IProps, any> {
                     <Notice />
                     <MoveNotice />
                     <StaffStagePanel />
+                    <NextPatientPanel />
                     <div
                         className = { videospaceClassName }
                         id = 'videospace'

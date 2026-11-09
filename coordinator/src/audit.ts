@@ -27,7 +27,7 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'doctor' | 'move' | 'stage' | 'survey_export';
+    kind: 'call_next' | 'doctor' | 'move' | 'stage' | 'survey_export';
     outcome: string;
 
     /** The moved participant's verified identity id. */
@@ -123,4 +123,21 @@ export function doctorEntry({ at, doctor, encounterId, issuer, outcome, previous
     reason?: string;
 }): IAuditEntry {
     return { at, doctor, encounterId, issuer, kind: 'doctor', outcome, previousDoctor, reason };
+}
+
+/**
+ * The entry of a staff member's call for the next patient. It names the encounter called, if there was one, not the
+ * patient.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function callNextEntry({ at, encounterId, issuer, outcome, reason }: {
+    at: Date;
+    encounterId?: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    reason?: string;
+}): IAuditEntry {
+    return { at, encounterId, issuer, kind: 'call_next', outcome, reason };
 }
