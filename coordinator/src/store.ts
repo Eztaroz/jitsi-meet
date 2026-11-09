@@ -87,7 +87,7 @@ export class Store {
         const columns = (this._db.prepare('PRAGMA table_info(encounters)').all() as { name: string; }[]).map(c => c.name);
 
         for (const [ name, type ] of [ [ 'stage_started_at', 'TEXT' ], [ 'history', 'TEXT' ], [ 'unfinished', 'INTEGER' ], [ 'pathway', 'TEXT' ],
-            [ 'visit_number', 'TEXT' ], [ 'center', 'TEXT' ], [ 'clinic', 'TEXT' ] ]) {
+            [ 'visit_number', 'TEXT' ], [ 'center', 'TEXT' ], [ 'clinic', 'TEXT' ], [ 'doctor', 'TEXT' ] ]) {
             if (!columns.includes(name)) {
                 this._db.exec(`ALTER TABLE encounters ADD COLUMN ${name} ${type}`);
             }
@@ -101,7 +101,7 @@ export class Store {
      */
     load(): IState {
         const rows = this._db.prepare('SELECT * FROM encounters ORDER BY started_at').all() as {
-            center: string | null; clinic: string | null; history: string | null; hn: string; id: string;
+            center: string | null; clinic: string | null; doctor: string | null; history: string | null; hn: string; id: string;
             pathway: string | null; stage: IEncounter['stage']; stage_started_at: string | null; started_at: string;
             unfinished: number | null; visit_number: string | null;
         }[];
@@ -127,6 +127,7 @@ export class Store {
                     startedAt,
                     ...r.center ? { center: r.center } : {},
                     ...r.clinic ? { clinic: r.clinic } : {},
+                    ...r.doctor ? { doctor: r.doctor } : {},
                     ...r.unfinished ? { unfinished: true as const } : {},
                     ...r.visit_number ? { visitNumber: r.visit_number } : {}
                 };
@@ -211,8 +212,8 @@ export class Store {
      */
     save(state: IState, records: ReadonlyMap<string, IMoveRecord> = new Map(), audit: IAuditEntry[] = []): void {
         const insert = this._db.prepare(`INSERT OR REPLACE INTO encounters
-            (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+            (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic, doctor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
 
         const keptRooms = new Map((this._db.prepare('SELECT * FROM patient_rooms').all() as {
             identity_id: string; room: string; updated_at: string;
@@ -248,7 +249,7 @@ export class Store {
             for (const e of state.encounters) {
                 insert.run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
                     JSON.stringify(e.history), e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null,
-                    e.clinic ?? null);
+                    e.clinic ?? null, e.doctor ?? null);
             }
             for (const entry of audit) {
                 this.addAudit(entry);

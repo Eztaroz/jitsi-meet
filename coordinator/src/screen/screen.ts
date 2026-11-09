@@ -108,6 +108,12 @@
         waitedSeconds: number;
     }
 
+    /** Examination's queue split by doctor, and the patients with no doctor yet. */
+    interface IExamination {
+        doctors: Record<string, IQueueEntry[]>;
+        unassigned: IQueueEntry[];
+    }
+
     interface IResult {
         body: { reason?: string; state?: string; };
         status: number;
@@ -115,6 +121,7 @@
 
     interface IState {
         coordinator: { id: string; name?: string; };
+        examination: IExamination;
         moves: IMove[];
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
@@ -461,9 +468,10 @@
      * Draws the queues.
      *
      * @param {Object} queues - The queues by stage.
+     * @param {Object} examination - Examination's queue split by doctor.
      * @returns {void}
      */
-    function drawQueues(queues: Record<string, IQueueEntry[]>): void {
+    function drawQueues(queues: Record<string, IQueueEntry[]>, examination: IExamination): void {
         const list = $('queue-list');
 
         list.textContent = '';
@@ -482,9 +490,77 @@
             if (!entries.length) {
                 column.appendChild(el('div', 'ไม่มีผู้ป่วยรอ', 'empty'));
             }
-            entries.forEach((entry, position) => column.appendChild(drawTicket(entry, position, index)));
+            if (id === 'examination') {
+                drawExamination(column, examination, index);
+            } else {
+                entries.forEach((entry, position) => column.appendChild(drawTicket(entry, position, index)));
+            }
             list.appendChild(column);
         });
+    }
+
+    /**
+     * Draws examination's queue split by doctor: a group for each doctor, then the patients with no doctor.
+     *
+     * @param {HTMLElement} column - The examination column.
+     * @param {Object} examination - Examination's queue split by doctor.
+     * @param {number} index - The stage's place in the stages.
+     * @returns {void}
+     */
+    function drawExamination(column: HTMLElement, examination: IExamination, index: number): void {
+        const known = Object.keys(examination.doctors);
+        const datalist = el('datalist');
+
+        datalist.id = 'doctor-list';
+        known.forEach(doctor => datalist.appendChild(el('option', doctor)).setAttribute('value', doctor));
+        column.appendChild(datalist);
+
+        const group = (title: string, entries: IQueueEntry[], doctor?: string) => {
+            const section = el('div', undefined, 'doctor-group');
+            const heading = el('h4');
+
+            section.dataset.doctor = doctor ?? '';
+            heading.appendChild(el('span', title));
+            heading.appendChild(el('span', String(entries.length), 'count'));
+            section.appendChild(heading);
+            entries.forEach((entry, position) => section.appendChild(drawTicket(entry, position, index)));
+            column.appendChild(section);
+        };
+
+        known.forEach(doctor => group(`แพทย์ ${doctor}`, examination.doctors[doctor] ?? [], doctor));
+        if (examination.unassigned.length || !known.length) {
+            group('ยังไม่กำหนดแพทย์', examination.unassigned);
+        }
+    }
+
+    /**
+     * Draws the control that changes an encounter's doctor.
+     *
+     * @param {Object} entry - The encounter's entry in the examination queue.
+     * @returns {HTMLElement}
+     */
+    function drawDoctorControl(entry: IQueueEntry): HTMLElement {
+        const key = `doctor|${entry.encounterId}`;
+        const input = el('input', undefined, 'doctor-to');
+        const set = button('กำหนดแพทย์', 'doctor-set secondary');
+        const wrap = el('div', undefined, 'controls doctor-controls');
+
+        input.setAttribute('list', 'doctor-list');
+        input.setAttribute('aria-label', `แพทย์ของ ${entry.hn || 'ผู้ป่วย'}`);
+        input.placeholder = 'รหัสแพทย์';
+        input.value = choices[key] ?? '';
+        input.addEventListener('input', () => {
+            choices[key] = input.value;
+        });
+        set.addEventListener('click', () => {
+            const doctor = input.value.trim();
+
+            delete choices[key];
+            setDoctor(entry, doctor || null, set);
+        });
+        wrap.append(input, set);
+
+        return wrap;
     }
 
     /**
@@ -550,6 +626,9 @@
 
         controls.append(pick, go, done);
         ticket.append(row, controls);
+        if (stage === 'examination') {
+            ticket.appendChild(drawDoctorControl(entry));
+        }
 
         return ticket;
     }
@@ -645,6 +724,30 @@
                 say(`${hn} เสร็จสิ้นแล้ว`, 'ok');
             } else {
                 say(`ส่ง ${hn} ไปขั้น “${STAGES.find(s => s[0] === stage)?.[1] ?? stage}” แล้ว`, 'ok');
+            }
+            refresh();
+        });
+    }
+
+    /**
+     * Sets, changes or takes away an encounter's doctor.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string|null} doctor - The doctor's identity id; null takes the doctor away.
+     * @param {HTMLButtonElement} trigger - The button that asked, held down until the answer.
+     * @returns {void}
+     */
+    function setDoctor(entry: IQueueEntry, doctor: string | null, trigger: HTMLButtonElement): void {
+        const hn = entry.hn || 'ผู้ป่วย';
+
+        trigger.disabled = true;
+        act(`/encounters/${encodeURIComponent(entry.encounterId)}/doctor`, { doctor }).then(result => {
+            if (result.status === 409) {
+                say('encounter นี้เสร็จสิ้นแล้ว', 'warn');
+            } else if (failed(result)) {
+                say('เปลี่ยนแพทย์ไม่สำเร็จ', 'error');
+            } else {
+                say(doctor ? `กำหนดแพทย์ ${doctor} ให้ ${hn} แล้ว` : `ยกเลิกแพทย์ของ ${hn} แล้ว`, 'ok');
             }
             refresh();
         });
@@ -977,9 +1080,9 @@
 
                     // A list being chosen from would close, and a field being typed in would lose its place, if they
                     // were drawn again.
-                    if (!document.activeElement?.matches('select, input.move-hn')) {
+                    if (!document.activeElement?.matches('select, input.move-hn, input.doctor-to')) {
                         drawTeams(state.teams);
-                        drawQueues(state.queues);
+                        drawQueues(state.queues, state.examination);
                         drawRooms(state.rooms, state.moves);
                     }
                     drawOutcomes(state.moves);
