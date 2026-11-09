@@ -276,6 +276,11 @@ h2 { align-items: center; display: flex; font-size: 1.05rem; font-weight: 700; g
 .controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 12px; }
 .controls select { flex: 1 1 100%; min-width: 0; }
 .controls button { flex: 1 1 0; }
+.doctor-controls { padding-top: 0; }
+.doctor-controls input { flex: 2 1 0; min-width: 0; }
+.doctor-group { display: flex; flex-direction: column; gap: 10px; }
+.doctor-group h4 { align-items: center; display: flex; font-size: .85rem; gap: 8px; }
+.doctor-group h4 .count { margin-left: auto; }
 
 /* Rooms */
 .toolbar { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
