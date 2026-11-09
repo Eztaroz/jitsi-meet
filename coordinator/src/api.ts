@@ -11,7 +11,7 @@ import { HttpError, readJson, send } from './http.ts';
 import { errorCode, log } from './log.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
-import { type IEncounter, type IMove, STAGES, type Stage } from './rules.ts';
+import type { IMove } from './rules.ts';
 import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
 import { createSurveyRoutes } from './surveyRoutes.ts';
@@ -61,20 +61,59 @@ function hnFrom(body: unknown): string {
 }
 
 /**
- * Describes an encounter for the API; the HN is only in what is read, never in the id.
+ * Reads the optional parts of a request that starts an encounter: the visit number, center and clinic.
  *
- * @param {IEncounter} e - The encounter.
+ * @param {unknown} body - The request body.
  * @returns {Object}
  */
-function encounterBody(e: IEncounter) {
+function attendanceFrom(body: unknown): { center?: string; clinic?: string; visitNumber?: string; } {
+    const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
+    const result: { center?: string; clinic?: string; visitNumber?: string; } = {};
+
+    for (const key of [ 'center', 'clinic', 'visitNumber' ] as const) {
+        const value = b[key];
+
+        if (value === undefined) {
+            continue;
+        }
+        // eslint-disable-next-line no-control-regex
+        if (typeof value !== 'string' || !value.trim() || value.length > MAX_HN_LENGTH || /[\u0000-\u001f\u007f]/.test(value)) {
+            throw new HttpError(400, `${key} must be a non-empty string of at most ${MAX_HN_LENGTH} characters`);
+        }
+        result[key] = value;
+    }
+
+    return result;
+}
+
+/**
+ * Describes an encounter for the API; the HN is only in what is read, never in the id. A stage of the history is
+ * named by the pathway, or by its id when the configuration no longer has it.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @param {string} id - The encounter's id.
+ * @returns {Object}
+ */
+function encounterBody(service: CoordinatorService, id: string) {
+    const e = service.describeEncounter(id);
+
+    if (!e) {
+        throw new HttpError(404, 'no such encounter');
+    }
+
     return {
+        center: e.center,
+        clinic: e.clinic,
         history: e.history,
         hn: e.hn,
         id: e.id,
+        pathway: e.pathway,
         stage: e.stage,
+        stageName: e.stageName,
         stageStartedAt: e.stageStartedAt,
         startedAt: e.startedAt,
-        unfinished: e.unfinished
+        unfinished: e.unfinished,
+        visitNumber: e.visitNumber
     };
 }
 
@@ -158,11 +197,17 @@ export function createApi({ screen, secret, service, survey }: {
      */
     async function act(req: IncomingMessage, res: ServerResponse, pathname: string, issuer: string): Promise<boolean> {
         if (pathname === '/encounters' && req.method === 'POST') {
-            const hn = hnFrom(await readJson(req));
+            const body = await readJson(req);
+            const hn = hnFrom(body);
+            const attendance = attendanceFrom(body);
 
             try {
-                const { encounter } = await service.startEncounter(hn);
+                const { encounter, refused } = await service.startEncounter(hn, attendance);
 
+                if (refused === 'unknown_center' || refused === 'unknown_clinic') {
+                    throw new HttpError(400, refused === 'unknown_center'
+                        ? 'center is not a configured center' : 'clinic is not a clinic of the center');
+                }
                 send(res, encounter?.created ? 201 : 200,
                     { id: encounter?.id, stage: encounter?.stage, startedAt: encounter?.startedAt });
             } catch (error) {
@@ -198,11 +243,11 @@ export function createApi({ screen, secret, service, survey }: {
         if (stageMatch && req.method === 'POST') {
             const stage = (await readJson(req) as { stage?: unknown; } | null)?.stage;
 
-            if (typeof stage !== 'string' || !(STAGES as readonly string[]).includes(stage)) {
-                throw new HttpError(400, `stage must be one of ${STAGES.join(', ')}`);
+            if (typeof stage !== 'string' || !stage) {
+                throw new HttpError(400, 'stage must be a non-empty string');
             }
 
-            const { encounter, refused } = await service.changeStage(decodeURIComponent(stageMatch[1]), stage as Stage, issuer);
+            const { encounter, refused } = await service.changeStage(decodeURIComponent(stageMatch[1]), stage, issuer);
 
             if (refused === 'unknown_encounter') {
                 throw new HttpError(404, 'no such encounter');
@@ -210,7 +255,10 @@ export function createApi({ screen, secret, service, survey }: {
             if (refused === 'encounter_closed') {
                 throw new HttpError(409, 'the encounter is done');
             }
-            send(res, 200, encounterBody(service.state.encounters.find(e => e.id === encounter?.id) as IEncounter));
+            if (refused === 'stage_not_in_pathway') {
+                throw new HttpError(400, 'the stage is not in the encounter\'s pathway');
+            }
+            send(res, 200, encounterBody(service, encounter?.id as string));
 
             return true;
         }
@@ -309,12 +357,7 @@ export function createApi({ screen, secret, service, survey }: {
         const encounterMatch = /^\/encounters\/([^/]+)$/.exec(pathname);
 
         if (encounterMatch && req.method === 'GET') {
-            const encounter = service.state.encounters.find(e => e.id === decodeURIComponent(encounterMatch[1]));
-
-            if (!encounter) {
-                throw new HttpError(404, 'no such encounter');
-            }
-            send(res, 200, encounterBody(encounter));
+            send(res, 200, encounterBody(service, decodeURIComponent(encounterMatch[1])));
 
             return;
         }

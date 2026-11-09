@@ -8,12 +8,14 @@ import { type IAuditEntry, moveEntry, stageEntry } from './audit.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
+import { allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
 import type { RecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
-import { type ILayout, type IRoleMarkers, type IRoom, describeRooms } from './rooms.ts';
+import { type ILayout, type IRoleMarkers, type IRoom, type IStage, describeRooms } from './rooms.ts';
 import {
     type Command,
+    type IEncounter,
     type IMove,
     type IRoomView,
     type IState,
@@ -118,6 +120,14 @@ export class CoordinatorService {
     constructor(opts: CoordinatorService['_opts']) {
         this._opts = opts;
         this._state = opts.store.load();
+
+        // A stage that still holds open encounters cannot be taken out of the configuration (ADR 0013).
+        const stranded = strandedStages(opts.layout, this._state.encounters);
+
+        if (stranded.length) {
+            throw new Error('the configuration removes a stage that still holds open encounters: '
+                + stranded.map(s => `stage "${s.stage}" holds ${s.count} open encounter${s.count === 1 ? '' : 's'}`).join(', '));
+        }
         this._records = opts.store.loadMoveRecords();
         this._effects = new MoveEffects(opts, {
             failSend: moveId => this._commit(step(this._state, {
@@ -167,14 +177,33 @@ export class CoordinatorService {
     }
 
     /**
-     * Starts an encounter, or returns the open one. Nothing is saved unless the recorder bot accepted the room.
+     * Starts an encounter, or returns the open one. Nothing is saved unless the recorder bot accepted the room. The
+     * encounter follows its clinic's pathway, else its center's, else the default one (ADR 0013).
      *
      * @param {string} hn - The patient's HN.
+     * @param {Object} [where] - What the hospital's system knows of the attendance.
+     * @param {string} [where.center] - The center; refused when it is not configured.
+     * @param {string} [where.clinic] - The clinic; refused when its center does not have it.
+     * @param {string} [where.visitNumber] - The hospital system's number for the visit.
      * @returns {Promise<IStep>}
      */
-    startEncounter(hn: string): Promise<IStep> {
+    startEncounter(hn: string, where: { center?: string; clinic?: string; visitNumber?: string; } = {}): Promise<IStep> {
         return this._serial(async () => {
-            const result = step(this._state, { at: new Date(), hn, type: 'start_encounter' });
+            const resolved = resolvePathway(this._opts.layout, where);
+
+            if ('reason' in resolved) {
+                return { commands: [], refused: resolved.reason, state: this._state };
+            }
+
+            const result = step(this._state, {
+                at: new Date(),
+                center: resolved.center,
+                clinic: resolved.clinic,
+                hn,
+                pathway: resolved.pathway.id,
+                type: 'start_encounter',
+                visitNumber: where.visitNumber
+            });
 
             for (const command of result.commands) {
                 if (command.type === 'record_room') {
@@ -198,8 +227,10 @@ export class CoordinatorService {
     changeStage(encounterId: string, stage: Stage, issuer: string): Promise<IStep> {
         return this._serial(async () => {
             const at = new Date();
-            const from = this._state.encounters.find(e => e.id === encounterId)?.stage;
-            const result = step(this._state, { at, encounterId, stage, type: 'change_stage' });
+            const encounter = this._state.encounters.find(e => e.id === encounterId);
+            const from = encounter?.stage;
+            const pathwayStages = encounter && (findPathway(this._opts.layout, encounter.pathway)?.stages ?? []).map(s => s.id);
+            const result = step(this._state, { at, encounterId, pathwayStages, stage, type: 'change_stage' });
 
             this._commit(result.state);
             this._audit(stageEntry({
@@ -264,7 +295,42 @@ export class CoordinatorService {
      * @returns {Queues}
      */
     queues() {
-        return queues(this._state, new Date());
+        return queues(this._state, new Date(), this.stages().map(s => s.id));
+    }
+
+    /**
+     * The stages of the configured pathways, each once, with their names: what the coordinator's screen draws.
+     *
+     * @returns {IStage[]}
+     */
+    stages(): IStage[] {
+        return allStages(this._opts.layout);
+    }
+
+    /**
+     * Describes an encounter for a reader: each stage of its history with its name, which is its id once the
+     * configuration no longer has the stage.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {Object|undefined} Undefined when there is no such encounter.
+     */
+    describeEncounter(encounterId: string): (Omit<IEncounter, 'history'> & {
+        history: { at: Date; name: string; stage: string; }[];
+        stageName: string;
+    }) | undefined {
+        const encounter = this._state.encounters.find(e => e.id === encounterId);
+
+        if (!encounter) {
+            return undefined;
+        }
+
+        const name = (stage: string) => stageName(this._opts.layout, encounter.pathway, stage);
+
+        return {
+            ...encounter,
+            history: encounter.history.map(h => ({ ...h, name: name(h.stage) })),
+            stageName: name(encounter.stage)
+        };
     }
 
     /**

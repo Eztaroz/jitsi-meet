@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
 
+import { DONE, WAITING, pathwaysOf } from './pathways.ts';
 import {
+    type IClinic,
     type ILayout,
+    type IPathway,
     type IRoleMarker,
     type IRoleMarkers,
     type IStation,
@@ -131,6 +134,77 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
     };
 }
 
+interface IRawCenter {
+    clinics?: IClinic[];
+    id?: unknown;
+    pathway?: string;
+    pathways?: unknown;
+    stations?: unknown;
+}
+
+/**
+ * Checks the pathways of a center: each starts with `waiting` and ends with `done`, and its stages are unique, each
+ * with a name.
+ *
+ * @param {unknown} raw - The center's "pathways"; unset for none.
+ * @param {Function} fail - Makes the error to throw.
+ * @returns {IPathway[]|undefined}
+ */
+function loadPathways(raw: unknown, fail: (why: string) => Error): IPathway[] | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) {
+        throw fail('"pathways" must be a list');
+    }
+
+    const text = (value: unknown) => typeof value === 'string' && value.trim() !== '';
+    const ids: string[] = [];
+
+    return (raw as { id?: unknown; stages?: unknown; }[]).map(p => {
+        if (!text(p.id) || !Array.isArray(p.stages)) {
+            throw fail('every pathway needs an "id" and its "stages"');
+        }
+        if (ids.includes(p.id as string)) {
+            throw fail(`two pathways are "${p.id}"`);
+        }
+        ids.push(p.id as string);
+
+        const stages = (p.stages as { defaultVideo?: unknown; id?: unknown; name?: unknown; }[]).map(s => {
+            if (!text(s.id)) {
+                throw fail(`a stage of pathway "${p.id}" has no "id"`);
+            }
+            if (!text(s.name)) {
+                throw fail(`stage "${s.id}" of pathway "${p.id}" needs a "name"`);
+            }
+
+            return {
+                id: s.id as string,
+                name: s.name as string,
+                ...text(s.defaultVideo) ? { defaultVideo: s.defaultVideo as string } : {}
+            };
+        });
+
+        if (stages[0]?.id !== WAITING) {
+            throw fail(`pathway "${p.id}" must start with the stage "${WAITING}"`);
+        }
+        if (stages.length < 2 || stages.at(-1)?.id !== DONE) {
+            throw fail(`pathway "${p.id}" must end with the stage "${DONE}"`);
+        }
+
+        const seen = new Set<string>();
+
+        for (const s of stages) {
+            if (seen.has(s.id)) {
+                throw fail(`pathway "${p.id}" has the stage "${s.id}" twice`);
+            }
+            seen.add(s.id);
+        }
+
+        return { id: p.id as string, stages };
+    });
+}
+
 /**
  * Reads the centers, their stations and each station's lounge from a JSON file (ADR 0011):
  * `{ "centers": [ { "id", "stations": [ { "id", "stage", "lounge" } ] } ] }`. There is one center for now.
@@ -161,7 +235,7 @@ export function loadLayout(file: string | undefined): ILayout {
     const lounges: string[] = [];
     const ids: string[] = [];
 
-    const centers = (raw.centers as { id?: unknown; stations?: unknown; }[]).map(center => {
+    const centers = (raw.centers as IRawCenter[]).map(center => {
         if (!text(center.id)) {
             throw fail('every center needs an "id"');
         }
@@ -169,12 +243,32 @@ export function loadLayout(file: string | undefined): ILayout {
             throw fail(`center "${center.id}" needs "stations"`);
         }
 
+        const pathways = loadPathways(center.pathways, fail);
+        const offered = pathwaysOf({ id: center.id as string, pathways, stations: [] });
+        const known = new Set(offered.flatMap(p => p.stages.map(s => s.id)));
+
+        if (center.clinics !== undefined && !Array.isArray(center.clinics)) {
+            throw fail(`center "${center.id}": "clinics" must be a list`);
+        }
+        for (const clinic of center.clinics ?? []) {
+            if (!text(clinic.id)) {
+                throw fail('every clinic needs an "id"');
+            }
+        }
+        for (const [ what, id ] of [ [ `center "${center.id}"`, center.pathway ],
+            ...(center.clinics ?? []).map(c => [ `clinic "${c.id}"`, c.pathway ]) ]) {
+            if (id !== undefined && !offered.some(p => p.id === id)) {
+                throw fail(`${what} follows the pathway "${id}", which is not in the center's "pathways"`);
+            }
+        }
+
         const stations = (center.stations as { id?: unknown; lounge?: unknown; stage?: unknown; }[]).map(s => {
             if (!text(s.id) || !text(s.lounge)) {
                 throw fail('every station needs an "id" and a "lounge"');
             }
-            if (s.stage !== 'intake' && s.stage !== 'examination' && s.stage !== 'aftercare') {
-                throw fail(`station "${s.id}" needs a "stage": intake, examination or aftercare`);
+            if (typeof s.stage !== 'string' || s.stage === WAITING || s.stage === DONE || !known.has(s.stage)) {
+                throw fail(`station "${s.id}" needs a "stage": the id of a stage of the center's pathways other than `
+                    + `"${WAITING}" and "${DONE}" (${[ ...known ].filter(k => k !== WAITING && k !== DONE).join(', ')})`);
             }
 
             const station: IStation = { id: s.id as string, lounge: s.lounge as string, stage: s.stage as StationStage };
@@ -191,7 +285,13 @@ export function loadLayout(file: string | undefined): ILayout {
             return station;
         });
 
-        return { id: center.id as string, stations };
+        return {
+            id: center.id as string,
+            stations,
+            ...center.clinics ? { clinics: center.clinics } : {},
+            ...center.pathway === undefined ? {} : { pathway: center.pathway },
+            ...pathways ? { pathways } : {}
+        };
     });
 
     return { centers };

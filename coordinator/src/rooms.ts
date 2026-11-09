@@ -39,8 +39,8 @@ export interface IOccupant {
     supportsMove: boolean;
 }
 
-/** The stages a station can serve. */
-export type StationStage = 'aftercare' | 'examination' | 'intake';
+/** The stage a station serves: the id of a stage of the pathways, other than waiting and done. */
+export type StationStage = string;
 
 /** A center's team of staff for one stage, and the lounge where its free staff wait (ADR 0011). */
 export interface IStation {
@@ -51,9 +51,41 @@ export interface IStation {
     stage: StationStage;
 }
 
+/** One step of a pathway: its id, its Thai name and the waiting video played by default while a patient waits in it. */
+export interface IStage {
+    defaultVideo?: string;
+    id: string;
+    name: string;
+}
+
+/** The stages an encounter goes through, in order, from `waiting` to `done` (ADR 0013). */
+export interface IPathway {
+    id: string;
+    stages: IStage[];
+}
+
+/** A specialty service of a center; it may have a pathway of its own. */
+export interface IClinic {
+    id: string;
+    pathway?: string;
+}
+
+/** A part of the hospital with its stations, clinics and the pathways its encounters can follow. */
+export interface ICenter {
+    clinics?: IClinic[];
+    id: string;
+
+    /** The id of the center's own pathway, one of `pathways`; unset, the default one. */
+    pathway?: string;
+
+    /** The pathways the center offers. One with the id `default` replaces the built-in default pathway. */
+    pathways?: IPathway[];
+    stations: IStation[];
+}
+
 /** The parts of the hospital the deployment serves, each with its stations (`GLOSSARY.md`). */
 export interface ILayout {
-    centers: { id: string; stations: IStation[]; }[];
+    centers: ICenter[];
 }
 
 export interface IRoom {

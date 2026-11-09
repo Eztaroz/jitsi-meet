@@ -6,9 +6,18 @@
  */
 import { randomUUID } from 'node:crypto';
 
-export type Stage = 'waiting' | 'intake' | 'examination' | 'aftercare' | 'done';
+import { DEFAULT_PATHWAY, DEFAULT_PATHWAY_ID, DONE, WAITING } from './pathways.ts';
+
+/** A stage's id, as the encounter's pathway configures it (ADR 0013). */
+export type Stage = string;
 
 export interface IEncounter {
+
+    /** The center the encounter belongs to. */
+    center?: string;
+
+    /** The clinic the encounter is for, if the request that started it named one. */
+    clinic?: string;
 
     /** Every stage the encounter has been in, with when it entered it. */
     history: { at: Date; stage: Stage; }[];
@@ -16,6 +25,9 @@ export interface IEncounter {
 
     /** Opaque; never derived from the HN. */
     id: string;
+
+    /** The id of the pathway the encounter follows, resolved when it started (ADR 0013). */
+    pathway: string;
     stage: Stage;
 
     /** When the encounter entered its current stage: the queue is ordered by it. */
@@ -24,9 +36,10 @@ export interface IEncounter {
 
     /** True for an encounter that was closed at the end of the day, not marked done. */
     unfinished?: true;
-}
 
-export const STAGES: readonly Stage[] = [ 'waiting', 'intake', 'examination', 'aftercare', 'done' ];
+    /** The hospital system's number for the patient's attendance on the day; several encounters can share one. */
+    visitNumber?: string;
+}
 
 /** One patient's place in a stage's queue. */
 export interface IQueueEntry {
@@ -38,7 +51,8 @@ export interface IQueueEntry {
     waitedSeconds: number;
 }
 
-export type Queues = Record<Exclude<Stage, 'done'>, IQueueEntry[]>;
+/** The queues by stage id; `done` has none. */
+export type Queues = Record<string, IQueueEntry[]>;
 
 /** How long the moved participant's notice counts down before their client leaves, in milliseconds. */
 export const COUNTDOWN_MS = 5000;
@@ -103,8 +117,24 @@ export interface IRoomView {
 }
 
 export type RulesEvent = { at: Date; } & (
-    | { hn: string; type: 'start_encounter'; }
-    | { encounterId: string; stage: Stage; type: 'change_stage'; }
+    | {
+        center?: string;
+        clinic?: string;
+        hn: string;
+
+        /** The id of the resolved pathway; the default one when unset. */
+        pathway?: string;
+        type: 'start_encounter';
+        visitNumber?: string;
+    }
+    | {
+        encounterId: string;
+
+        /** The stage ids of the encounter's pathway; the default pathway's when unset. */
+        pathwayStages?: readonly string[];
+        stage: Stage;
+        type: 'change_stage';
+    }
 
     /** The day ends: the encounters still open are closed as unfinished. */
     | { type: 'close_day'; }
@@ -137,7 +167,7 @@ export interface IStep {
     move?: IMove;
 
     /** Why a request to change a stage was refused. */
-    refused?: 'encounter_closed' | 'unknown_encounter';
+    refused?: 'encounter_closed' | 'stage_not_in_pathway' | 'unknown_center' | 'unknown_clinic' | 'unknown_encounter';
     state: IState;
 }
 
@@ -159,20 +189,25 @@ export function initialState(): IState {
  * @param {() => string} newId - Makes an opaque id.
  * @returns {IStep}
  */
-function startEncounter(state: IState, hn: string, at: Date, newId: () => string): IStep {
-    const open = state.encounters.find(e => e.hn === hn && e.stage !== 'done');
+function startEncounter(state: IState, event: RulesEvent & { type: 'start_encounter'; }, newId: () => string): IStep {
+    const { at, hn } = event;
+    const open = state.encounters.find(e => e.hn === hn && e.stage !== DONE);
 
     if (open) {
         return { commands: [], encounter: { ...open, created: false }, state };
     }
 
     const encounter: IEncounter = {
-        history: [ { at, stage: 'waiting' } ],
+        history: [ { at, stage: WAITING } ],
         hn,
         id: newId(),
-        stage: 'waiting',
+        pathway: event.pathway ?? DEFAULT_PATHWAY_ID,
+        stage: WAITING,
         stageStartedAt: at,
-        startedAt: at
+        startedAt: at,
+        ...event.center === undefined ? {} : { center: event.center },
+        ...event.clinic === undefined ? {} : { clinic: event.clinic },
+        ...event.visitNumber === undefined ? {} : { visitNumber: event.visitNumber }
     };
 
     return {
@@ -289,12 +324,18 @@ function enter(encounter: IEncounter, stage: Stage, at: Date): IEncounter {
  *
  * @param {IState} state - The state.
  * @param {Date} now - When.
+ * @param {string[]} stages - The ids of the configured stages; each has a queue, empty or not. The default
+ * pathway's when unset.
  * @returns {Queues}
  */
-export function queues(state: IState, now: Date): Queues {
-    const result: Queues = { aftercare: [], examination: [], intake: [], waiting: [] };
+export function queues(state: IState, now: Date, stages: readonly string[] = DEFAULT_PATHWAY.stages.map(s => s.id)): Queues {
+    const result: Queues = {};
+    const open = state.encounters.filter(e => e.stage !== DONE).map(e => e.stage);
 
-    for (const stage of Object.keys(result) as (keyof Queues)[]) {
+    for (const stage of new Set([ ...stages, ...open ])) {
+        if (stage === DONE) {
+            continue;
+        }
         result[stage] = state.encounters
             .filter(e => e.stage === stage)
             .map((e, index) => ({ e, index }))
@@ -392,7 +433,7 @@ function fail(state: IState, moveId: string, reason: string): IStep {
 export function step(state: IState, event: RulesEvent, newId: () => string = randomUUID): IStep {
     switch (event.type) {
     case 'start_encounter':
-        return startEncounter(state, event.hn, event.at, newId);
+        return startEncounter(state, event, newId);
     case 'request_move':
         return requestMove(state, event, newId);
     case 'change_stage': {
@@ -401,8 +442,11 @@ export function step(state: IState, event: RulesEvent, newId: () => string = ran
         if (!encounter) {
             return { commands: [], refused: 'unknown_encounter', state };
         }
-        if (encounter.stage === 'done') {
+        if (encounter.stage === DONE) {
             return { commands: [], refused: 'encounter_closed', state };
+        }
+        if (!(event.pathwayStages ?? DEFAULT_PATHWAY.stages.map(s => s.id)).includes(event.stage)) {
+            return { commands: [], refused: 'stage_not_in_pathway', state };
         }
 
         const changed = enter(encounter, event.stage, event.at);
@@ -420,9 +464,9 @@ export function step(state: IState, event: RulesEvent, newId: () => string = ran
             commands: [],
             state: {
                 ...state,
-                encounters: state.encounters.map(e => e.stage === 'done'
+                encounters: state.encounters.map(e => e.stage === DONE
                     ? e
-                    : { ...enter(e, 'done', event.at), unfinished: true as const })
+                    : { ...enter(e, DONE, event.at), unfinished: true as const })
             }
         };
     case 'rooms_snapshot': {
