@@ -2,9 +2,10 @@
 # recent enough to run the TypeScript sources directly.
 FROM mcr.microsoft.com/playwright:v1.63.0-noble
 
-# ffmpeg remuxes each recording into its final file.
+# ffmpeg remuxes each recording into its final file. fontconfig and a Thai font are for the labels of a Review file
+# (npm run review), which fc-match looks up.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
+    && apt-get install -y --no-install-recommends ffmpeg fontconfig fonts-tlwg-loma-otf \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
