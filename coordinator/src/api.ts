@@ -104,6 +104,7 @@ function encounterBody(service: CoordinatorService, id: string) {
     return {
         center: e.center,
         clinic: e.clinic,
+        doctor: e.doctor,
         history: e.history,
         hn: e.hn,
         id: e.id,
@@ -263,6 +264,30 @@ export function createApi({ screen, secret, service, survey }: {
             return true;
         }
 
+        const doctorMatch = /^\/encounters\/([^/]+)\/doctor$/.exec(pathname);
+
+        if (doctorMatch && req.method === 'POST') {
+            const doctor = (await readJson(req) as { doctor?: unknown; } | null)?.doctor;
+
+            // eslint-disable-next-line no-control-regex
+            if (doctor !== null && (typeof doctor !== 'string' || !doctor.trim() || doctor.length > MAX_HN_LENGTH
+                    || /[ -]/.test(doctor))) {
+                throw new HttpError(400, `doctor must be a non-empty string of at most ${MAX_HN_LENGTH} characters, or null`);
+            }
+
+            const { encounter, refused } = await service.setDoctor(decodeURIComponent(doctorMatch[1]), doctor, issuer);
+
+            if (refused === 'unknown_encounter') {
+                throw new HttpError(404, 'no such encounter');
+            }
+            if (refused === 'encounter_closed') {
+                throw new HttpError(409, 'the encounter is done');
+            }
+            send(res, 200, encounterBody(service, encounter?.id as string));
+
+            return true;
+        }
+
         return false;
     }
 
@@ -348,8 +373,11 @@ export function createApi({ screen, secret, service, survey }: {
             const queues = service.queues();
             const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
 
-            send(res, 200, { queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
-                [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])) });
+            send(res, 200, {
+                examination: service.examinationQueues(),
+                queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
+                    [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ]))
+            });
 
             return;
         }

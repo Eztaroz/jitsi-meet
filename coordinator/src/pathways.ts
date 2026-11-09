@@ -6,6 +6,9 @@ import type { ICenter, ILayout, IPathway, IStage } from './rooms.ts';
 
 export const WAITING = 'waiting';
 export const DONE = 'done';
+
+/** The one stage besides `waiting` and `done` that means something to the code: it has a queue per doctor. */
+export const EXAMINATION = 'examination';
 export const DEFAULT_PATHWAY_ID = 'default';
 
 /** The pathway of a deployment that configures none: the stages and their Thai names. */
