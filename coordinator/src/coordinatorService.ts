@@ -4,12 +4,20 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { type IAuditEntry, doctorEntry, moveEntry, questionnaireEntry, stageEntry, videoEntry } from './audit.ts';
+import {
+    type IAuditEntry,
+    callNextEntry,
+    doctorEntry,
+    moveEntry,
+    questionnaireEntry,
+    stageEntry,
+    videoEntry
+} from './audit.ts';
 import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
-import { DONE, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
+import { DONE, EXAMINATION, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
 import {
     type IPatientQuestionnaire,
@@ -133,6 +141,10 @@ export interface IStaffContext {
     chosenVideo?: string;
 
     encounter?: { id: string; stage: string; stageName: string; };
+
+    /** In a patient's room: the questionnaires the staff member can send. */
+    questionnaires?: { id: string; title: string; }[];
+
     /** The stages the staff member can put the encounter in: every stage of its pathway but `done`. */
     stages?: { id: string; name: string; }[];
 
@@ -154,6 +166,15 @@ export interface IStaffStageResult {
     moved: boolean;
     refused?: 'done_is_not_for_staff' | 'encounter_closed' | 'not_in_patients_room' | 'stage_not_in_pathway'
         | 'unknown_encounter';
+}
+
+export interface IStaffCallNextResult {
+    encounterId?: string;
+
+    /** The staff member's move to the patient's room, if there was a patient to go to. */
+    move?: IMove;
+    moved: boolean;
+    refused?: 'move_refused' | 'not_in_lounge' | 'queue_empty';
 }
 
 /**
@@ -421,6 +442,74 @@ export class CoordinatorService {
 
             return { sent };
         });
+    }
+
+    /**
+     * Sends a health questionnaire on a staff member's request (ADR 0012): only while the staff member is in that
+     * patient's own room. A refusal is audited with the staff member.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} questionnaireId - The questionnaire's id in the catalogue.
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<Object>} The sending, or why it was refused.
+     */
+    async staffSendQuestionnaire(encounterId: string, questionnaireId: string, staff: { id: string; }): Promise<{
+        refused?: 'encounter_closed' | 'not_in_patients_room' | 'unknown_encounter' | 'unknown_questionnaire';
+        sent?: ISentQuestionnaire;
+    }> {
+        if (this._state.encounters.some(e => e.id === encounterId && e.stage !== DONE)
+            && !await this._staffInPatientsRoom(encounterId, staff.id)) {
+            this._audit(questionnaireEntry({
+                at: new Date(),
+                encounterId,
+                issuer: staff.id,
+                outcome: 'refused',
+                questionnaire: questionnaireId,
+                reason: 'not_in_patients_room'
+            }));
+
+            return { refused: 'not_in_patients_room' };
+        }
+
+        return this.sendQuestionnaire(encounterId, questionnaireId, staff.id);
+    }
+
+    /**
+     * The questionnaires of an encounter with the patient's answers, for a staff member in that patient's own room.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<Object>} The questionnaires of this encounter only, or why it was refused.
+     */
+    async staffQuestionnairesOf(encounterId: string, staff: { id: string; }): Promise<{
+        questionnaires?: ISentQuestionnaire[];
+        refused?: 'not_in_patients_room' | 'unknown_encounter';
+    }> {
+        const questionnaires = this.questionnairesOf(encounterId);
+
+        if (!questionnaires) {
+            return { refused: 'unknown_encounter' };
+        }
+        if (!await this._staffInPatientsRoom(encounterId, staff.id)) {
+            return { refused: 'not_in_patients_room' };
+        }
+
+        return { questionnaires };
+    }
+
+    /**
+     * Whether a staff member is in the own room of the patient of an encounter now.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} staffId - The staff member's verified identity id.
+     * @returns {Promise<boolean>}
+     */
+    private async _staffInPatientsRoom(encounterId: string, staffId: string): Promise<boolean> {
+        const here = findStaff(await this.rooms(), staffId);
+
+        return here?.room.kind === 'patient' && here.room.encounterId === encounterId;
     }
 
     /**
@@ -1066,6 +1155,7 @@ export class CoordinatorService {
             stages: (findPathway(this._opts.layout, encounter.pathway)?.stages ?? [])
                 .filter(s => s.id !== DONE)
                 .map(({ id, name }) => ({ id, name })),
+            questionnaires: this.questionnaireCatalogue().map(({ id, title }) => ({ id, title })),
             station: here.occupant.station,
             where: 'patients_room'
         };
@@ -1136,6 +1226,69 @@ export class CoordinatorService {
             }, staff.id);
 
             return { encounter: result?.encounter, move, moved: move.state === 'counting_down' };
+        });
+    }
+
+    /**
+     * Moves a staff member in a station's lounge to the longest-waiting patient of the station's stage whose room has
+     * no staff (ADR 0012). In examination the staff member takes from their own doctor queue. A patient that another
+     * staff member is being moved to counts as having staff, so two staff never get the same patient. With nobody
+     * waiting there is no move. Every request is audited with the staff member's identity.
+     *
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<IStaffCallNextResult>}
+     */
+    staffCallNext(staff: { id: string; }): Promise<IStaffCallNextResult> {
+        return this._serial(async () => {
+            const at = new Date();
+            const rooms = await this.rooms();
+            const here = findStaff(rooms, staff.id);
+            const station = here?.room.kind === 'lounge'
+                ? stationsOf(this._opts.layout).find(s => s.id === here.room.station)
+                : undefined;
+            let refused: IStaffCallNextResult['refused'];
+            let target: { encounterId: string; room: IRoom; } | undefined;
+
+            if (!here || !station) {
+                refused = 'not_in_lounge';
+            } else {
+                const entries = station.stage === EXAMINATION
+                    ? examinationQueues(this._state, at).doctors[staff.id] ?? []
+                    : queues(this._state, at, allStages(this._opts.layout).map(s => s.id))[station.stage] ?? [];
+                const pending = new Set(this._state.moves.filter(m => ACTIVE_MOVE.has(m.state)).map(m => m.destination));
+
+                for (const entry of entries) {
+                    const room = rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
+
+                    if (room?.open && !pending.has(room.name) && !room.occupants.some(o => o.role === 'staff')) {
+                        target = { encounterId: entry.encounterId, room };
+                        break;
+                    }
+                }
+                refused = target ? undefined : 'queue_empty';
+            }
+
+            if (!here || !target) {
+                this._audit(callNextEntry({ at, issuer: staff.id, outcome: 'refused', reason: refused }));
+
+                return { moved: false, refused };
+            }
+
+            const move = await this._startMove({
+                endpointId: here.occupant.endpointId, fromRoom: here.room.name, toRoom: target.room.name
+            }, staff.id);
+            const moved = move.state === 'counting_down';
+
+            this._audit(callNextEntry({
+                at,
+                encounterId: target.encounterId,
+                issuer: staff.id,
+                outcome: moved ? 'ok' : 'refused',
+                reason: moved ? undefined : move.reason
+            }));
+
+            return { encounterId: target.encounterId, move, moved, refused: moved ? undefined : 'move_refused' };
         });
     }
 

@@ -5,7 +5,12 @@ import type { AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
 
 import { createApi } from '../src/api.ts';
-import type { CoordinatorService, IStaffStageResult, VideoRefusal } from '../src/coordinatorService.ts';
+import type {
+    CoordinatorService,
+    IStaffCallNextResult,
+    IStaffStageResult,
+    VideoRefusal
+} from '../src/coordinatorService.ts';
 import { signToken } from '../src/jwt.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
 import type { ICoordinatorAuth } from '../src/screenAuth.ts';
@@ -50,6 +55,8 @@ describe('the staff API', () => {
     const videoAsked: unknown[][] = [];
     let videoRefusal: VideoRefusal | undefined;
     let result: IStaffStageResult = { moved: true };
+    let nextResult: IStaffCallNextResult = { moved: true };
+    let questionnaireResult: Record<string, unknown> = {};
     let server: Server;
     let base: string;
 
@@ -59,6 +66,11 @@ describe('the staff API', () => {
                 asked.push(args);
 
                 return result;
+            },
+            staffCallNext: async (staff: unknown) => {
+                asked.push([ 'next', staff ]);
+
+                return nextResult;
             },
             staffContext: async (staff: unknown) => ({ staff, where: 'nowhere' }),
             staffPlayVideo: async (...args: unknown[]) => {
@@ -75,6 +87,16 @@ describe('the staff API', () => {
                 videoAsked.push([ 'stopVideo', ...args ]);
 
                 return videoRefusal ? { refused: videoRefusal } : {};
+            },
+            staffQuestionnairesOf: async (...args: unknown[]) => {
+                asked.push(args);
+
+                return questionnaireResult;
+            },
+            staffSendQuestionnaire: async (...args: unknown[]) => {
+                asked.push(args);
+
+                return questionnaireResult;
             }
         } as unknown as CoordinatorService;
 
@@ -164,11 +186,84 @@ describe('the staff API', () => {
         videoRefusal = undefined;
     });
 
+    const questionnaires = (token: string | undefined, method: string, body?: unknown) =>
+        fetch(`${base}/staff/encounters/e-1/questionnaires`, {
+            body: body === undefined ? undefined : JSON.stringify(body),
+            headers: { 'content-type': 'application/json', ...token ? { authorization: `Bearer ${token}` } : {} },
+            method
+        });
+
+    it('sends a questionnaire as the staff member, and answers 201 with the sending id', async () => {
+        questionnaireResult = { sent: { id: 'q-1' } };
+
+        const response = await questionnaires(tokenOf('staff', 's-7'), 'POST', { questionnaire: 'lifestyle' });
+
+        assert.equal(response.status, 201);
+        assert.deepEqual(await response.json(), { id: 'q-1' });
+        assert.deepEqual(asked.at(-1), [ 'e-1', 'lifestyle', { id: 's-7', name: 'Sam' } ]);
+    });
+
+    it('refuses a questionnaire request that is not text, without a token, or from a token that is not staff\'s', async () => {
+        assert.equal((await questionnaires(tokenOf('staff'), 'POST', { questionnaire: 3 })).status, 400);
+        assert.equal((await questionnaires(undefined, 'POST', { questionnaire: 'a' })).status, 401);
+        assert.equal((await questionnaires(tokenOf('patient'), 'GET')).status, 403);
+    });
+
+    it('answers the refusals of sending and reading with the reason', async () => {
+        questionnaireResult = { refused: 'not_in_patients_room' };
+        assert.equal((await questionnaires(tokenOf('staff'), 'POST', { questionnaire: 'a' })).status, 403);
+
+        const read = await questionnaires(tokenOf('staff'), 'GET');
+
+        assert.equal(read.status, 403);
+        assert.deepEqual(await read.json(), { error: 'not_in_patients_room' });
+
+        questionnaireResult = { refused: 'unknown_questionnaire' };
+        assert.equal((await questionnaires(tokenOf('staff'), 'POST', { questionnaire: 'a' })).status, 400);
+        questionnaireResult = { refused: 'encounter_closed' };
+        assert.equal((await questionnaires(tokenOf('staff'), 'POST', { questionnaire: 'a' })).status, 409);
+    });
+
+    it('lets staff read the answers', async () => {
+        questionnaireResult = { questionnaires: [ { id: 'q-1' } ] };
+
+        const read = await questionnaires(tokenOf('staff'), 'GET');
+
+        assert.equal(read.status, 200);
+        assert.deepEqual(await read.json(), { questionnaires: [ { id: 'q-1' } ] });
+    });
+
     it('tells a staff member where they are', async () => {
         const response = await fetch(`${base}/staff/me`, { headers: { authorization: `Bearer ${tokenOf('staff')}` } });
 
         assert.equal(response.status, 200);
         assert.equal(((await response.json()) as { where: string; }).where, 'nowhere');
         assert.equal((await fetch(`${base}/staff/me`)).status, 401);
+    });
+
+    it('calls the next patient for the staff member, and answers an empty queue plainly', async () => {
+        const call = (token?: string) => fetch(`${base}/staff/next`, {
+            headers: token ? { authorization: `Bearer ${token}` } : {},
+            method: 'POST'
+        });
+
+        nextResult = { encounterId: 'e-1', moved: true };
+
+        const ok = await call(tokenOf('staff'));
+
+        assert.equal(ok.status, 200);
+        assert.deepEqual(await ok.json(), { encounterId: 'e-1', moved: true });
+        assert.equal((await call()).status, 401);
+        assert.equal((await call(tokenOf('patient'))).status, 403);
+
+        nextResult = { moved: false, refused: 'queue_empty' };
+
+        const empty = await call(tokenOf('staff'));
+
+        assert.equal(empty.status, 409);
+        assert.deepEqual(await empty.json(), { error: 'queue_empty' });
+
+        nextResult = { moved: false, refused: 'not_in_lounge' };
+        assert.equal((await call(tokenOf('staff'))).status, 403);
     });
 });

@@ -1,6 +1,6 @@
 import { IReduxState } from '../app/types';
 
-import { IStaffContext } from './types';
+import { IStaffContext, IStaffQuestionnaire } from './types';
 
 /** Session storage: the staff member's own hospital-issued JWT, and the destination JWT of the move that left it. */
 const HOSPITAL_JWT_KEY = 'staffHospitalJwt';
@@ -110,6 +110,71 @@ export async function changeStage(state: IReduxState, encounterId: string, stage
         return (await response.json() as { error?: string; }).error ?? 'failed';
     } catch {
         return 'unreachable';
+    }
+}
+
+/**
+ * Asks the service to move the staff member to the next patient of their station. The service moves them after the
+ * usual countdown.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @returns {Promise<string|undefined>} The reason when the service refused (`queue_empty` when nobody is waiting) or
+ * could not be reached; undefined on success.
+ */
+export async function callNextPatient(state: IReduxState): Promise<string | undefined> {
+    try {
+        const response = await callStaffApi(state, '/next', { method: 'POST' });
+
+        if (response.ok) {
+            return undefined;
+        }
+
+        return (await response.json() as { error?: string; }).error ?? 'failed';
+    } catch {
+        return 'unreachable';
+    }
+}
+
+/**
+ * Sends a health questionnaire from the configured list to the patient of the encounter.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @param {string} encounterId - The encounter.
+ * @param {string} questionnaire - The questionnaire's id in the list.
+ * @returns {Promise<string|undefined>} The reason when the service refused or could not be reached; undefined on success.
+ */
+export async function sendQuestionnaire(
+        state: IReduxState, encounterId: string, questionnaire: string): Promise<string | undefined> {
+    try {
+        const response = await callStaffApi(state, `/encounters/${encodeURIComponent(encounterId)}/questionnaires`, {
+            body: JSON.stringify({ questionnaire }),
+            method: 'POST'
+        });
+
+        if (response.ok) {
+            return undefined;
+        }
+
+        return (await response.json() as { error?: string; }).error ?? 'failed';
+    } catch {
+        return 'unreachable';
+    }
+}
+
+/**
+ * Reads the questionnaires sent in this encounter, with the patient's answers.
+ *
+ * @param {IReduxState} state - The Redux state.
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<IStaffQuestionnaire[]|undefined>} Undefined when the service refused or could not be reached.
+ */
+export async function fetchQuestionnaires(state: IReduxState, encounterId: string): Promise<IStaffQuestionnaire[] | undefined> {
+    try {
+        const response = await callStaffApi(state, `/encounters/${encodeURIComponent(encounterId)}/questionnaires`);
+
+        return response.ok ? (await response.json() as { questionnaires: IStaffQuestionnaire[]; }).questionnaires : undefined;
+    } catch {
+        return undefined;
     }
 }
 

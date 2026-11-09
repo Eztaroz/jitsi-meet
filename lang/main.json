@@ -1481,10 +1481,18 @@
     "staffActions": {
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
+        "answer": "{{question}}: {{choice}}",
+        "nextPatient": "Next patient",
+        "nextRefused": "Could not call the next patient.",
+        "noAnswersYet": "No answers yet.",
+        "pickQuestionnaire": "Send a questionnaire...",
         "pickStage": "Change stage to...",
         "pickVideo": "Waiting video for this stage...",
         "playVideo": "Play video",
+        "queueEmpty": "Nobody is waiting for your station.",
+        "questionnaireNotSent": "The questionnaire was not sent.",
         "refused": "The stage was not changed.",
+        "sendQuestionnaire": "Send questionnaire",
         "stopVideo": "Stop video"
     },
     "startupoverlay": {

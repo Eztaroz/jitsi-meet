@@ -317,10 +317,11 @@ export interface IAuditEntry {
     encounterId?: string;
     from?: string;
     issuer: string;
-    kind: 'doctor' | 'move' | 'stage' | 'video';
+    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'video';
     outcome: string;
     participantId?: string;
     previousDoctor?: string;
+    questionnaire?: string;
     reason?: string;
     source?: string;
     to?: string;

@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { CoordinatorService, IStaffStageResult, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
+import { describeSent } from './questionnaires.ts';
 import { type ICoordinator, type ICoordinatorAuth, SignInError, verifyStaff } from './screenAuth.ts';
 
 /** The status of each refusal of a staff member's stage change. */
@@ -30,6 +31,14 @@ const VIDEO_REFUSAL_STATUS: Record<VideoRefusal, number> = {
     unknown_encounter: 404,
     unknown_video: 400,
     video_player_unavailable: 503
+};
+
+/** The status of each refusal of a staff member's questionnaire request. */
+const QUESTIONNAIRE_REFUSAL_STATUS: Record<string, number> = {
+    encounter_closed: 409,
+    not_in_patients_room: 403,
+    unknown_encounter: 404,
+    unknown_questionnaire: 400
 };
 
 /**
@@ -55,6 +64,19 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
     async function route(req: IncomingMessage, res: ServerResponse, path: string, staff: ICoordinator): Promise<void> {
         if (path === '/me' && req.method === 'GET') {
             send(res, 200, await service.staffContext(staff));
+
+            return;
+        }
+
+        if (path === '/next' && req.method === 'POST') {
+            const result = await service.staffCallNext(staff);
+
+            if (result.refused) {
+                send(res, result.refused === 'queue_empty' ? 409 : 403, { error: result.refused });
+
+                return;
+            }
+            send(res, 200, { encounterId: result.encounterId, moved: result.moved });
 
             return;
         }
@@ -107,6 +129,42 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
                 return;
             }
             send(res, 200, { video: result.video });
+
+            return;
+        }
+
+        const questionnairesMatch = /^\/encounters\/([^/]+)\/questionnaires$/u.exec(path);
+
+        if (questionnairesMatch && req.method === 'POST') {
+            const questionnaire = (await readJson(req) as { questionnaire?: unknown; } | null)?.questionnaire;
+
+            if (typeof questionnaire !== 'string' || !questionnaire) {
+                throw new HttpError(400, 'questionnaire must be a non-empty string');
+            }
+
+            const { refused, sent } = await service.staffSendQuestionnaire(
+                decodeURIComponent(questionnairesMatch[1]), questionnaire, staff);
+
+            if (refused) {
+                send(res, QUESTIONNAIRE_REFUSAL_STATUS[refused], { error: refused });
+
+                return;
+            }
+            send(res, 201, { id: sent?.id });
+
+            return;
+        }
+
+        if (questionnairesMatch && req.method === 'GET') {
+            const { questionnaires, refused } = await service.staffQuestionnairesOf(
+                decodeURIComponent(questionnairesMatch[1]), staff);
+
+            if (refused) {
+                send(res, QUESTIONNAIRE_REFUSAL_STATUS[refused], { error: refused });
+
+                return;
+            }
+            send(res, 200, { questionnaires: (questionnaires ?? []).map(describeSent) });
 
             return;
         }
