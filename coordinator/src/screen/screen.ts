@@ -29,6 +29,9 @@
     let STAGES: [string, string, string][] = [];
     let STAGE_NAMES: Record<string, string> = {};
 
+    /** The encounters a waiting video is playing for now. */
+    let PLAYING_VIDEOS = new Set<string>();
+
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
         [ 'patient', 'ห้องผู้ป่วย', 'door' ],
@@ -37,7 +40,8 @@
     const ROLES: Record<string, string> = { hidden: 'ระบบบันทึก',
         patient: 'ผู้ป่วย',
         staff: 'เจ้าหน้าที่',
-        unknown: 'ไม่ทราบตัวตน' };
+        unknown: 'ไม่ทราบตัวตน',
+        'video_player': 'ตัวเล่นวิดีโอ' };
     const ERRORS: Record<string, string> = {
         'bad_signature': 'โทเคนนี้ไม่ได้ออกโดยระบบของโรงพยาบาล',
         expired: 'โทเคนหมดอายุแล้ว',
@@ -116,6 +120,7 @@
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
         stages: { id: string; name: string; }[];
+        videos?: { encounterId: string; }[];
     }
 
     /** What the coordinator has chosen in the lists and typed in the fields, kept across the redraws. */
@@ -486,7 +491,11 @@
 
         const controls = el('div', undefined, 'controls');
 
-        controls.append(pick, go, done);
+        const playing = PLAYING_VIDEOS.has(entry.encounterId);
+        const video = button(playing ? 'หยุดวิดีโอ' : 'เล่นวิดีโอ', 'video-toggle secondary', playing ? 'x' : 'arrow');
+
+        video.addEventListener('click', () => toggleVideo(entry, playing, video));
+        controls.append(pick, go, done, video);
         ticket.append(row, controls);
 
         return ticket;
@@ -583,6 +592,28 @@
                 say(`${hn} เสร็จสิ้นแล้ว`, 'ok');
             } else {
                 say(`ส่ง ${hn} ไปขั้น “${STAGES.find(s => s[0] === stage)?.[1] ?? stage}” แล้ว`, 'ok');
+            }
+            refresh();
+        });
+    }
+
+    /**
+     * Plays the waiting video of a patient's stage in their room, or stops the one that plays.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {boolean} playing - Whether a video plays now, so that the click stops it.
+     * @param {HTMLButtonElement} trigger - The button that asked, held down until the answer.
+     * @returns {void}
+     */
+    function toggleVideo(entry: IQueueEntry, playing: boolean, trigger: HTMLButtonElement): void {
+        const hn = entry.hn || 'ผู้ป่วย';
+
+        trigger.disabled = true;
+        act(`/encounters/${encodeURIComponent(entry.encounterId)}/video${playing ? '/stop' : ''}`, {}).then(result => {
+            if (failed(result)) {
+                say(playing ? 'หยุดวิดีโอไม่สำเร็จ' : 'เล่นวิดีโอไม่ได้ ขั้นนี้อาจไม่มีวิดีโอ หรือระบบเล่นวิดีโอไม่พร้อม', 'error');
+            } else {
+                say(playing ? `หยุดวิดีโอของ ${hn} แล้ว` : `เริ่มเล่นวิดีโอให้ ${hn} แล้ว`, 'ok');
             }
             refresh();
         });
@@ -912,6 +943,7 @@
                     showLive(true);
                     useStages(state.stages);
                     drawStats(state);
+                    PLAYING_VIDEOS = new Set((state.videos ?? []).map(v => v.encounterId));
 
                     // A list being chosen from would close, and a field being typed in would lose its place, if they
                     // were drawn again.

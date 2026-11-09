@@ -106,7 +106,7 @@ export interface IRoomView {
         cancelledMove?: string;
         endpointId: string;
         identity?: { id?: string; };
-        role: 'hidden' | 'patient' | 'staff' | 'unknown';
+        role: 'hidden' | 'patient' | 'staff' | 'unknown' | 'video_player';
     }[];
 
     /** False for a lounge that nobody is in. Defaults to true. */

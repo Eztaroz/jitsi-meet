@@ -816,6 +816,11 @@ export interface IConfig {
     };
     useHostPageLocalStorage?: boolean;
     useTurnUdp?: boolean;
+    /**
+     * Marks the video player, in the form "user.<claim>=<value>" like {@code patientMarker}. A patient's client gives
+     * no menu on the video player's tile, so the patient cannot stop, mute or hide the video.
+     */
+    videoPlayerMarker?: string;
     videoQuality?: {
         codecPreferenceOrder?: Array<string>;
         maxBitratesVideo?: {

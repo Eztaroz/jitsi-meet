@@ -114,6 +114,7 @@ export function createScreenRoutes({ act, screen, service }: {
                     queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
                         [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
                     rooms: await service.rooms(),
+                    videos: service.playingVideos(),
                     stages: service.stages().map(({ id, name }) => ({ id, name }))
                 });
 

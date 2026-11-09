@@ -8,6 +8,7 @@ import {
     type IRoleMarker,
     type IRoleMarkers,
     type IStation,
+    type IVideo,
     type StationStage,
     parseRoleMarker,
     sameRoom
@@ -71,6 +72,12 @@ export interface IConfig {
 
     /** What the destination tokens claim, as Prosody is set to accept them (ADR 0009). */
     token: { audience: string; issuer: string; subject: string; };
+
+    /**
+     * The video player service, which plays the waiting videos (`COORDINATOR_VIDEO_PLAYER_URL`); unset, there are no
+     * videos. `baseUrl` is where the web server hosts the videos' files.
+     */
+    videoPlayer?: { baseUrl: string; secret: string; url: string; };
 }
 
 /**
@@ -120,8 +127,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         recorderBotUrl: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, ''),
         roleMarkers: {
             patient: parseRoleMarker(env.COORDINATOR_PATIENT_MARKER, 'COORDINATOR_PATIENT_MARKER'),
-            staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER')
+            staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER'),
+            videoPlayer: parseRoleMarker(env.COORDINATOR_VIDEO_PLAYER_MARKER, 'COORDINATOR_VIDEO_PLAYER_MARKER')
         },
+        videoPlayer: env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
+            ? {
+                baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
+                secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
+                url: env.COORDINATOR_VIDEO_PLAYER_URL.trim().replace(/\/+$/u, '')
+            }
+            : undefined,
         token: {
             audience: env.COORDINATOR_TOKEN_AUDIENCE?.trim() || 'jitsi',
             issuer: env.COORDINATOR_TOKEN_ISSUER?.trim() || 'coordinator',
@@ -132,6 +147,38 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
             privateKey: readFileSync(required(env, 'COORDINATOR_SIGNING_KEY_FILE'), 'utf8')
         }
     };
+}
+
+/**
+ * Checks the catalogue of waiting videos: each has an id, a title and a file, and the ids are unique.
+ *
+ * @param {unknown} raw - The "videos"; unset for none.
+ * @param {Function} fail - Makes the error to throw.
+ * @returns {IVideo[]|undefined}
+ */
+function loadVideos(raw: unknown, fail: (why: string) => Error): IVideo[] | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) {
+        throw fail('"videos" must be a list');
+    }
+
+    const ids = new Set<string>();
+
+    return (raw as Record<string, unknown>[]).map(v => {
+        for (const key of [ 'id', 'title', 'file' ]) {
+            if (typeof v[key] !== 'string' || !(v[key] as string).trim()) {
+                throw fail(`every video needs an "id", a "title" and a "file" (missing "${key}")`);
+            }
+        }
+        if (ids.has(v.id as string)) {
+            throw fail(`two videos are "${v.id}"`);
+        }
+        ids.add(v.id as string);
+
+        return { file: v.file as string, id: v.id as string, title: v.title as string };
+    });
 }
 
 interface IRawCenter {
@@ -218,7 +265,9 @@ export function loadLayout(file: string | undefined): ILayout {
         return { centers: [] };
     }
 
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as { centers?: unknown; lounges?: unknown; stations?: unknown; };
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as {
+        centers?: unknown; lounges?: unknown; stations?: unknown; videos?: unknown;
+    };
     const fail = (why: string) => new Error(`COORDINATOR_ROOMS_FILE: ${why}`);
 
     if (raw.stations !== undefined || raw.lounges !== undefined) {
@@ -294,7 +343,9 @@ export function loadLayout(file: string | undefined): ILayout {
         };
     });
 
-    return { centers };
+    const videos = loadVideos(raw.videos, fail);
+
+    return { centers, ...videos ? { videos } : {} };
 }
 
 /**

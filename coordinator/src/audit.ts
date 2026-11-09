@@ -10,6 +10,9 @@ import { type ILayout, stationsOf } from './rooms.ts';
 import type { IMove, Stage } from './rules.ts';
 
 export interface IAuditEntry {
+    /** For a video entry, what was asked: `play` or `stop`. */
+    action?: 'play' | 'stop';
+
     at: Date;
 
     /** How many surveys an export held. */
@@ -24,7 +27,7 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'move' | 'stage' | 'survey_export';
+    kind: 'move' | 'stage' | 'survey_export' | 'video';
     outcome: string;
 
     /** The moved participant's verified identity id. */
@@ -34,6 +37,9 @@ export interface IAuditEntry {
     /** A move's origin: a lounge's name, or a keyed reference to a patient's room. */
     source?: string;
     to?: Stage;
+
+    /** For a video entry, the video's id in the catalogue. */
+    video?: string;
 }
 
 /**
@@ -100,4 +106,22 @@ export function stageEntry({ at, encounterId, from, issuer, outcome, reason, to 
     to: Stage;
 }): IAuditEntry {
     return { at, encounterId, from, issuer, kind: 'stage', outcome, reason, to };
+}
+
+/**
+ * The entry of a waiting video being played or stopped.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function videoEntry({ action, at, encounterId, issuer, outcome, reason, video }: {
+    action: 'play' | 'stop';
+    at: Date;
+    encounterId: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    reason?: string;
+    video?: string;
+}): IAuditEntry {
+    return { action, at, encounterId, issuer, kind: 'video', outcome, reason, video };
 }
