@@ -8,6 +8,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import type { CoordinatorService } from './coordinatorService.ts';
 import { HttpError, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
+import { describeSent } from './questionnaires.ts';
 import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
 
 /** The files of the coordinator screen, read once. */
@@ -113,6 +114,12 @@ export function createScreenRoutes({ act, screen, service }: {
                             startedAt: m.startedAt,
                             state: m.state
                         })),
+                    questionnaires: {
+                        catalogue: service.questionnaireCatalogue().map(({ id, title }) => ({ id, title })),
+                        sent: Object.fromEntries(service.state.encounters
+                            .filter(e => e.stage !== 'done' && e.questionnaires?.length)
+                            .map(e => [ e.id, (e.questionnaires ?? []).map(describeSent) ]))
+                    },
                     queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
                         [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
                     rooms,

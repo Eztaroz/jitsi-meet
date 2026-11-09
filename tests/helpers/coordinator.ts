@@ -84,6 +84,41 @@ export async function getEncounter(id: string): Promise<{ body: IEncounter; stat
     return { body: await response.json() as IEncounter, status: response.status };
 }
 
+/** A health questionnaire sent to a patient, as the API reports it. */
+export interface ISentQuestionnaire {
+    answers?: number[];
+    closedAt?: string;
+    id: string;
+    questionnaire: string;
+    title: string;
+}
+
+/**
+ * Sends a health questionnaire of the configured catalogue to the patient of an encounter.
+ *
+ * @param {string} encounterId - The encounter.
+ * @param {string} questionnaire - The questionnaire's id in the catalogue.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postQuestionnaire(encounterId: string, questionnaire: string): Promise<{ body: { id?: string; }; status: number; }> {
+    const response = await callCoordinator(`/encounters/${encounterId}/questionnaires`,
+        { body: JSON.stringify({ questionnaire }), method: 'POST' });
+
+    return { body: await response.json() as { id?: string; }, status: response.status };
+}
+
+/**
+ * Reads the health questionnaires sent during an encounter, with their answers.
+ *
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<ISentQuestionnaire[]>}
+ */
+export async function getQuestionnaires(encounterId: string): Promise<ISentQuestionnaire[]> {
+    const response = await callCoordinator(`/encounters/${encounterId}/questionnaires`);
+
+    return (await response.json() as { questionnaires: ISentQuestionnaire[]; }).questionnaires;
+}
+
 /** A room as the API reports it. */
 export interface IRoom {
     kind: 'lounge' | 'patient';

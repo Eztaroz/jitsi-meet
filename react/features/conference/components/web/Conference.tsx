@@ -16,6 +16,7 @@ import { openChat, setFocusedTab } from '../../../chat/actions.web';
 import Chat from '../../../chat/components/web/Chat';
 import { ChatTabs } from '../../../chat/constants';
 import MoveNotice from '../../../coordinator-move/components/web/MoveNotice';
+import QuestionnaireOverlay from '../../../coordinator-questionnaire/components/web/QuestionnaireOverlay';
 import CustomPanel from '../../../custom-panel/components/web/CustomPanel';
 import { isFileUploadingEnabled, processFiles } from '../../../file-sharing/functions.any';
 import MainFilmstrip from '../../../filmstrip/components/web/MainFilmstrip';
@@ -268,6 +269,7 @@ class Conference extends AbstractConference<IProps, any> {
                         <ConferenceInfo />
                         <Notice />
                         <MoveNotice />
+                        <QuestionnaireOverlay />
                         <StaffStagePanel />
                         <div
                             className = { videospaceClassName }
@@ -303,6 +305,7 @@ class Conference extends AbstractConference<IProps, any> {
                     { _showPrejoin || _showLobby || <ConferenceInfo /> }
                     <Notice />
                     <MoveNotice />
+                    <QuestionnaireOverlay />
                     <StaffStagePanel />
                     <div
                         className = { videospaceClassName }
