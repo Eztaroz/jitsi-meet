@@ -6,7 +6,7 @@ import { backendSafeRoomName } from './roomName.ts';
  * occupant is a patient or staff, by the deployment's role markers.
  */
 
-export type Role = 'hidden' | 'patient' | 'staff' | 'unknown';
+export type Role = 'hidden' | 'patient' | 'staff' | 'unknown' | 'video_player';
 
 /** One claim of the presence identity, and the value that marks a role. */
 export interface IRoleMarker {
@@ -19,6 +19,9 @@ export interface IRoleMarker {
 export interface IRoleMarkers {
     patient?: IRoleMarker;
     staff?: IRoleMarker;
+
+    /** The video player: a visible, non-human participant that plays a waiting video. */
+    videoPlayer?: IRoleMarker;
 }
 
 export interface IOccupant {
@@ -84,12 +87,22 @@ export interface ICenter {
     stations: IStation[];
 }
 
+/** A waiting video the deployment hosts: `file` is a path under the web server's base URL for videos. */
+export interface IVideo {
+    file: string;
+    id: string;
+    title: string;
+}
+
 /** The parts of the hospital the deployment serves, each with its stations (`GLOSSARY.md`). */
 export interface ILayout {
     centers: ICenter[];
 
     /** The health questionnaires the deployment offers. */
     questionnaires?: IQuestionnaire[];
+
+    /** The deployment's waiting videos. */
+    videos?: IVideo[];
 }
 
 export interface IRoom {
@@ -262,6 +275,8 @@ function describeOpenRooms(rooms: { name?: string; occupants?: unknown; }[], mar
                     role = 'patient';
                 } else if (matches(o.identity, markers.staff)) {
                     role = 'staff';
+                } else if (matches(o.identity, markers.videoPlayer)) {
+                    role = 'video_player';
                 }
 
                 return {

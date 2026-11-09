@@ -59,6 +59,23 @@ describe('the rooms file', () => {
         assert.throws(() => loadLayout(roomsFile(center([ { id: 'x', stage: 'intake' } ]))), /"lounge"/u);
     });
 
+    it('reads the waiting videos of the catalogue', () => {
+        const videos = [ { file: 'videos/intro.mp4', id: 'intro', title: 'Intro' } ];
+
+        assert.deepEqual(loadLayout(roomsFile({ ...center([]), videos })).videos, videos);
+    });
+
+    it('refuses a waiting video without an id, a title or a file, or two with one id', () => {
+        const video = { file: 'a.mp4', id: 'a', title: 'A' };
+
+        for (const missing of [ 'id', 'title', 'file' ]) {
+            assert.throws(() => loadLayout(roomsFile({ ...center([]), videos: [ { ...video, [missing]: '' } ] })),
+                new RegExp(`"${missing}"`, 'u'));
+        }
+        assert.throws(() => loadLayout(roomsFile({ ...center([]), videos: [ video, video ] })), /two videos are "a"/u);
+        assert.throws(() => loadLayout(roomsFile({ ...center([]), videos: 'x' })), /"videos" must be a list/u);
+    });
+
     it('refuses two stations with one id, or with one lounge whatever its case', () => {
         assert.throws(() => loadLayout(roomsFile(center([
             { id: 'x', lounge: 'a', stage: 'intake' }, { id: 'x', lounge: 'b', stage: 'aftercare' }
@@ -85,5 +102,22 @@ describe('the settings', () => {
         const file = roomsFile({ centers: [ { id: 'center-1', stations: [] } ] });
 
         assert.deepEqual(loadConfig(env({ COORDINATOR_ROOMS_FILE: file })).layout, { centers: [ { id: 'center-1', stations: [] } ] });
+    });
+
+    it('turn the video player on with its URL, secret, marker and the base URL of the videos', () => {
+        const config = loadConfig(env({
+            COORDINATOR_VIDEO_BASE_URL: 'https://meet.example/',
+            COORDINATOR_VIDEO_PLAYER_MARKER: 'user.hospital_role=video_player',
+            COORDINATOR_VIDEO_PLAYER_SECRET: 'vp-secret',
+            COORDINATOR_VIDEO_PLAYER_URL: 'http://video-player:8091/'
+        }));
+
+        assert.deepEqual(config.videoPlayer, { baseUrl: 'https://meet.example/', secret: 'vp-secret', url: 'http://video-player:8091' });
+        assert.deepEqual(config.roleMarkers.videoPlayer, { path: [ 'user', 'hospital_role' ], value: 'video_player' });
+    });
+
+    it('have no video player without its URL, and refuse a half-set one', () => {
+        assert.equal(loadConfig(env()).videoPlayer, undefined);
+        assert.throws(() => loadConfig(env({ COORDINATOR_VIDEO_PLAYER_URL: 'http://vp:8091' })), /COORDINATOR_VIDEO_BASE_URL must be set/u);
     });
 });

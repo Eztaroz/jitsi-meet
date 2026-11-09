@@ -4,7 +4,16 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { type IAuditEntry, callNextEntry, doctorEntry, moveEntry, questionnaireEntry, stageEntry } from './audit.ts';
+import {
+    type IAuditEntry,
+    callNextEntry,
+    doctorEntry,
+    moveEntry,
+    questionnaireEntry,
+    stageEntry,
+    videoEntry
+} from './audit.ts';
+import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
@@ -47,6 +56,28 @@ import {
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
+import { destinationClaims } from './tokens.ts';
+import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts';
+
+/** How long the token a video player joins a room with lasts: it is used at once. */
+const VIDEO_PLAYER_TOKEN_MS = 5 * 60_000;
+
+/** The identity the video player joins with. */
+const VIDEO_PLAYER_IDENTITY = { id: 'video-player', name: 'Video player' };
+
+/** Why a video could not be played or stopped. */
+export type VideoRefusal = 'already_playing' | 'encounter_closed' | 'no_video' | 'not_playing' | 'unknown_encounter'
+    | 'unknown_video' | 'video_player_unavailable';
+
+/** A video that is playing in a patient's room. */
+interface IPlayingVideo {
+    encounterId: string;
+    room: string;
+
+    /** The staff in the room when it started; only those who join later stop it. */
+    staffAtStart: Set<string>;
+    videoId: string;
+}
 
 /**
  * The states of a move that is under way: it has no audit entry until it ends. `preparing` is a move from when patients
@@ -164,6 +195,10 @@ export class CoordinatorService {
         store: Store;
         timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
+
+        /** Where the web server hosts the videos' files; with the video player, it turns the videos on. */
+        videoBaseUrl?: string;
+        videoPlayer?: IVideoPlayer;
     };
 
     /** What is kept about each move beside the rules state: who asked, whether it is audited, its deadlines. */
@@ -172,6 +207,10 @@ export class CoordinatorService {
     /** The running timers of the moves, by move id and timer. */
     private readonly _timers = new Map<string, NodeJS.Timeout>();
     private _retention?: NodeJS.Timeout;
+
+    /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
+    private readonly _videos = new Map<string, IPlayingVideo>();
+    private _videoWatch?: NodeJS.Timeout;
 
     private readonly _effects: MoveEffects;
     private _midnight?: NodeJS.Timeout;
@@ -509,6 +548,177 @@ export class CoordinatorService {
 
             return result;
         });
+    }
+
+    /**
+     * Plays a waiting video once in an encounter's room: the video asked for, else the default of the encounter's
+     * stage. It stops when told to, when a staff member joins after it started, and at its end.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
+     * @param {string} [videoId] - A video of the catalogue; unset for the stage's default.
+     * @returns {Promise<{ refused?: VideoRefusal; video?: string; }>}
+     */
+    playVideo(encounterId: string, issuer: string, videoId?: string): Promise<{ refused?: VideoRefusal; video?: string; }> {
+        return this._serial(async () => {
+            const { layout, videoBaseUrl, videoPlayer } = this._opts;
+            const encounter = this._state.encounters.find(e => e.id === encounterId);
+            const chosen = videoId ?? findPathway(layout, encounter?.pathway ?? '')?.stages
+                .find(s => s.id === encounter?.stage)?.defaultVideo;
+            const video = chosen === undefined ? undefined : layout.videos?.find(v => v.id === chosen);
+            const refuse = (refused: VideoRefusal) => {
+                this._audit(videoEntry({
+                    action: 'play', at: new Date(), encounterId, issuer, outcome: 'refused', reason: refused, video: chosen
+                }));
+
+                return { refused };
+            };
+
+            if (!encounter) {
+                return { refused: 'unknown_encounter' as const };
+            }
+            if (encounter.stage === 'done') {
+                return refuse('encounter_closed');
+            }
+            if (chosen === undefined) {
+                return refuse('no_video');
+            }
+            if (!video) {
+                return refuse('unknown_video');
+            }
+            if (!videoPlayer || !videoBaseUrl) {
+                return refuse('video_player_unavailable');
+            }
+            if (this._videos.has(encounterId)) {
+                return refuse('already_playing');
+            }
+
+            const room = encounter.hn;
+            const staffAtStart = new Set((await this.rooms()).find(r => r.kind === 'patient' && sameRoom(r.name, room))
+                ?.occupants.filter(o => o.role === 'staff').map(o => o.endpointId));
+
+            try {
+                await videoPlayer.play({
+                    room,
+                    token: signToken({
+                        claims: destinationClaims({
+                            ...this._opts.token,
+                            identity: VIDEO_PLAYER_IDENTITY,
+                            lifetimeMs: VIDEO_PLAYER_TOKEN_MS,
+                            markers: this._opts.roleMarkers,
+                            now: new Date(),
+                            role: 'video_player',
+                            room
+                        }),
+                        ...this._opts.signingKey
+                    }),
+                    videoUrl: new URL(video.file, videoBaseUrl).href
+                });
+            } catch (error) {
+                if (error instanceof VideoPlayerUnavailableError) {
+                    log.warn('could not play a video', { error: error.code });
+
+                    return refuse(error.code === 'already_playing' ? 'already_playing' : 'video_player_unavailable');
+                }
+                throw error;
+            }
+            this._videos.set(encounterId, { encounterId, room, staffAtStart, videoId: video.id });
+            this._watchVideos();
+            this._audit(videoEntry({ action: 'play', at: new Date(), encounterId, issuer, outcome: 'ok', video: video.id }));
+
+            return { video: video.id };
+        });
+    }
+
+    /**
+     * Stops the video playing in an encounter's room.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {string} issuer - Who asked: `system`, or a coordinator's verified identity id.
+     * @returns {Promise<{ refused?: VideoRefusal; }>}
+     */
+    stopVideo(encounterId: string, issuer: string): Promise<{ refused?: VideoRefusal; }> {
+        return this._serial(async () => {
+            const playing = this._videos.get(encounterId);
+
+            if (!playing) {
+                this._audit(videoEntry({
+                    action: 'stop', at: new Date(), encounterId, issuer, outcome: 'refused', reason: 'not_playing'
+                }));
+
+                return { refused: 'not_playing' as const };
+            }
+            await this._endVideo(playing, issuer);
+
+            return {};
+        });
+    }
+
+    /**
+     * The videos playing now.
+     *
+     * @returns {{ encounterId: string; video: string; }[]}
+     */
+    playingVideos(): { encounterId: string; video: string; }[] {
+        return [ ...this._videos.values() ].map(v => ({ encounterId: v.encounterId, video: v.videoId }));
+    }
+
+    /**
+     * Stops a video and audits who did.
+     *
+     * @param {IPlayingVideo} playing - The video.
+     * @param {string} issuer - Who stopped it.
+     * @param {string} [reason] - Why, when it was not asked for.
+     * @returns {Promise<void>}
+     */
+    private async _endVideo(playing: IPlayingVideo, issuer: string, reason?: string): Promise<void> {
+        this._videos.delete(playing.encounterId);
+        try {
+            await this._opts.videoPlayer?.stop(playing.room);
+        } catch (error) {
+            log.warn('could not stop a video', { error: error instanceof VideoPlayerUnavailableError ? error.code : 'unknown' });
+        }
+        this._audit(videoEntry({
+            action: 'stop', at: new Date(), encounterId: playing.encounterId, issuer, outcome: 'ok', reason, video: playing.videoId
+        }));
+    }
+
+    /**
+     * Watches the playing videos while there are any: one that has ended is forgotten, and one is stopped when a staff
+     * member joins its room after it started.
+     *
+     * @returns {void}
+     */
+    private _watchVideos(): void {
+        if (this._videoWatch) {
+            return;
+        }
+        this._videoWatch = setInterval(() => {
+            if (!this._videos.size) {
+                clearInterval(this._videoWatch);
+                this._videoWatch = undefined;
+
+                return;
+            }
+            this._serial(async () => {
+                const [ rooms, live ] = await Promise.all([ this.rooms(), this._opts.videoPlayer?.playingRooms() ]);
+
+                for (const playing of [ ...this._videos.values() ]) {
+                    if (!live?.some(r => sameRoom(r, playing.room))) {
+                        this._videos.delete(playing.encounterId);
+                        continue;
+                    }
+
+                    const joined = rooms.find(r => r.kind === 'patient' && sameRoom(r.name, playing.room))?.occupants
+                        .some(o => o.role === 'staff' && !playing.staffAtStart.has(o.endpointId));
+
+                    if (joined) {
+                        await this._endVideo(playing, 'system', 'staff_joined');
+                    }
+                }
+            }).catch(() => undefined);
+        }, POLL_MS);
+        this._videoWatch.unref();
     }
 
     /**
@@ -926,6 +1136,8 @@ export class CoordinatorService {
         }
         this._timers.clear();
         this._stopPolling();
+        clearInterval(this._videoWatch);
+        this._videoWatch = undefined;
     }
 
     /**

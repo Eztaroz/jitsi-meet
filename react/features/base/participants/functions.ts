@@ -687,11 +687,35 @@ export function isLocalParticipantModerator(stateful: IStateful) {
  * @returns {boolean}
  */
 export function isPatientParticipant(stateful: IStateful, participant?: IParticipant) {
-    const marker = toState(stateful)['features/base/config'].patientMarker;
+    return hasUserMarker(toState(stateful)['features/base/config'].patientMarker, participant);
+}
+
+/**
+ * Whether a participant carries a marker of the form "user.<claim>=<value>": its token has that claim in its
+ * context.user, with that value as text.
+ *
+ * @param {string} [marker] - The marker.
+ * @param {IParticipant} [participant] - The participant to check.
+ * @returns {boolean}
+ */
+function hasUserMarker(marker?: string, participant?: IParticipant) {
     const match = marker?.match(/^user\.([^=]+)=(.+)$/);
     const value = match ? participant?.userContext?.[match[1]] : undefined;
 
     return value !== undefined && value !== null && String(value) === match?.[2];
+}
+
+/**
+ * Whether a participant is the video player, a visible, non-human participant that plays a waiting video, by the
+ * deployment's {@code videoPlayerMarker} config option, of the same form as {@code patientMarker}. Without the option
+ * nobody is the video player.
+ *
+ * @param {Object|Function} stateful - Object or function that can be resolved to the Redux state.
+ * @param {IParticipant} [participant] - The participant to check.
+ * @returns {boolean}
+ */
+export function isVideoPlayerParticipant(stateful: IStateful, participant?: IParticipant) {
+    return hasUserMarker(toState(stateful)['features/base/config'].videoPlayerMarker, participant);
 }
 
 /**
