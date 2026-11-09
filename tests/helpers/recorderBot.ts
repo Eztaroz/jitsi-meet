@@ -15,8 +15,6 @@ import { expectations } from './expectations';
 /** A consultation as the control API reports it. */
 export interface IConsultation {
 
-    /** The room the bot is in: the patient's own room, or the station. */
-    conferenceRoom?: string;
     consultationId: string;
     error?: string;
 
@@ -122,7 +120,7 @@ export async function postConsultation(hn: string, apiUrl?: string): Promise<{ b
 }
 
 /**
- * Asks the service to record one patient's time in a station, and returns its answer whatever it is.
+ * Sends the station fields the service no longer accepts (ADR 0011), and returns its answer whatever it is.
  *
  * @param {string} hn - The patient's HN.
  * @param {string} room - The station.
