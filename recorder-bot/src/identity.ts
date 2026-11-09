@@ -22,6 +22,7 @@ export interface IRoleMarker {
 export interface IRoleMarkers {
     patient?: IRoleMarker;
     staff?: IRoleMarker;
+    videoPlayer?: IRoleMarker;
 }
 
 /** A participant as the service knows it. */
@@ -112,7 +113,7 @@ export function participantIdentity(raw: unknown, markers: IRoleMarkers): IParti
     const user = field(raw, 'user');
     const id = stringAt(user, 'id');
 
-    if (!(markers.staff || markers.patient) || !id) {
+    if (!(markers.staff || markers.patient || markers.videoPlayer) || !id) {
         return { role: 'unknown' };
     }
 
@@ -120,6 +121,8 @@ export function participantIdentity(raw: unknown, markers: IRoleMarkers): IParti
 
     if (hasMarker(raw, markers.staff)) {
         role = 'staff';
+    } else if (hasMarker(raw, markers.videoPlayer)) {
+        role = 'video_player';
     } else if (hasMarker(raw, markers.patient)) {
         role = 'patient';
     }

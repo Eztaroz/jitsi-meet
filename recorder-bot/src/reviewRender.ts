@@ -180,7 +180,7 @@ export function reviewJob(plan: IReviewPlan, { folder, font, output }: {
         if (plan.gaps.length) {
             draw(textFile(NOT_RECORDED), middle, during(plan.gaps));
         }
-        draw(textFile(`${name} (${tile.role})  %{pts:localtime:${epoch.toFixed(3)}:%H\\:%M\\:%S}`), {
+        draw(textFile(`${name} (${tile.role === 'video_player' ? 'video' : tile.role})  %{pts:localtime:${epoch.toFixed(3)}:%H\\:%M\\:%S}`), {
             size: label,
             x: `${x}+${label}`,
             y: `${y}+${height}-th-${label}`
