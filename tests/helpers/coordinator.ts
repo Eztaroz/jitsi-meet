@@ -250,6 +250,7 @@ export interface IAuditEntry {
     at: string;
     destination?: string;
     encounterId?: string;
+    from?: string;
     issuer: string;
     kind: 'move' | 'stage';
     outcome: string;

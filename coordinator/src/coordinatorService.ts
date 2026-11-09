@@ -8,11 +8,19 @@ import { type IAuditEntry, moveEntry, stageEntry } from './audit.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
-import { allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
+import { DONE, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
 import type { RecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
-import { type ILayout, type IRoleMarkers, type IRoom, type IStage, describeRooms } from './rooms.ts';
+import {
+    type ILayout,
+    type IOccupant,
+    type IRoleMarkers,
+    type IRoom,
+    type IStage,
+    describeRooms,
+    stationsOf
+} from './rooms.ts';
 import {
     type Command,
     type IEncounter,
@@ -82,6 +90,45 @@ function seenStaffStations(state: IState, rooms: IRoomView[]): Record<string, st
     }
 
     return seen;
+}
+
+/** Where a staff member is, as `GET /staff/me` tells their client. */
+export interface IStaffContext {
+    encounter?: { id: string; stage: string; stageName: string; };
+
+    /** The stages the staff member can put the encounter in: every stage of its pathway but `done`. */
+    stages?: { id: string; name: string; }[];
+    station?: string;
+    where: 'lounge' | 'nowhere' | 'patients_room';
+}
+
+export interface IStaffStageResult {
+    encounter?: IEncounter;
+
+    /** The staff member's move back to their lounge, if one was asked for. */
+    move?: IMove;
+    moved: boolean;
+    refused?: 'done_is_not_for_staff' | 'encounter_closed' | 'not_in_patients_room' | 'stage_not_in_pathway'
+        | 'unknown_encounter';
+}
+
+/**
+ * Finds a staff member in the rooms, by verified identity id.
+ *
+ * @param {IRoom[]} rooms - The rooms.
+ * @param {string} id - The staff member's verified identity id.
+ * @returns {Object|undefined} The room they are in and their occupant entry.
+ */
+function findStaff(rooms: IRoom[], id: string): { occupant: IOccupant; room: IRoom; } | undefined {
+    for (const room of rooms) {
+        const occupant = room.occupants.find(o => o.role === 'staff' && o.identity?.id === id);
+
+        if (occupant) {
+            return { occupant, room };
+        }
+    }
+
+    return undefined;
 }
 
 export class CoordinatorService {
@@ -361,27 +408,138 @@ export class CoordinatorService {
      * @returns {Promise<IMove>}
      */
     requestMove(request: { endpointId: string; fromRoom: string; toRoom: string; }, issuer: string): Promise<IMove> {
+        return this._serial(() => this._startMove(request, issuer));
+    }
+
+    /**
+     * Where a staff member is now, for their client: in a station's lounge, in a patient's room with the encounter
+     * and the stages they can pick, or nowhere the service knows.
+     *
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<IStaffContext>}
+     */
+    async staffContext(staff: { id: string; }): Promise<IStaffContext> {
+        const here = findStaff(await this.rooms(), staff.id);
+
+        if (!here) {
+            return { where: 'nowhere' };
+        }
+        if (here.room.kind === 'lounge') {
+            return { station: here.room.station, where: 'lounge' };
+        }
+
+        const encounter = this.describeEncounter(here.room.encounterId ?? '');
+
+        if (!encounter) {
+            return { where: 'nowhere' };
+        }
+
+        return {
+            encounter: { id: encounter.id, stage: encounter.stage, stageName: encounter.stageName },
+            stages: (findPathway(this._opts.layout, encounter.pathway)?.stages ?? [])
+                .filter(s => s.id !== DONE)
+                .map(({ id, name }) => ({ id, name })),
+            station: here.occupant.station,
+            where: 'patients_room'
+        };
+    }
+
+    /**
+     * Puts an encounter in a stage on a staff member's request (ADR 0012): any stage of its pathway but `done`, and
+     * only while the staff member is in that patient's own room. Afterwards the staff member is moved to the lounge of
+     * their station. Every request is audited with the staff member's identity.
+     *
+     * @param {string} encounterId - The encounter.
+     * @param {Stage} stage - The stage.
+     * @param {Object} staff - The staff member, by verified identity.
+     * @param {string} staff.id - The verified identity id.
+     * @returns {Promise<IStaffStageResult>}
+     */
+    staffChangeStage(encounterId: string, stage: Stage, staff: { id: string; }): Promise<IStaffStageResult> {
         return this._serial(async () => {
-            const rooms = await this.rooms();
-            const named = (name: string) => rooms.find(r => backendSafeRoomName(r.name) === backendSafeRoomName(name))
-                ?.name ?? name;
-            const moveId = randomUUID();
+            const at = new Date();
+            const encounter = this._state.encounters.find(e => e.id === encounterId);
+            const here = findStaff(await this.rooms(), staff.id);
+            let refused: IStaffStageResult['refused'];
 
-            this._records.set(moveId, newMoveRecord(issuer));
+            if (!encounter) {
+                refused = 'unknown_encounter';
+            } else if (encounter.stage === DONE) {
+                refused = 'encounter_closed';
+            } else if (stage === DONE) {
+                refused = 'done_is_not_for_staff';
+            } else if (here?.room.kind !== 'patient' || here.room.encounterId !== encounter.id) {
+                refused = 'not_in_patients_room';
+            }
 
-            const result = await this._apply({
-                at: new Date(),
-                endpointId: request.endpointId,
-                fromRoom: named(request.fromRoom),
-                rooms,
-                toRoom: named(request.toRoom),
-                type: 'request_move'
-            }, rooms, () => moveId);
+            const result = refused ? undefined : step(this._state, {
+                at,
+                encounterId,
+                pathwayStages: (findPathway(this._opts.layout, encounter?.pathway ?? '')?.stages ?? []).map(s => s.id),
+                stage,
+                type: 'change_stage'
+            });
 
-            this._ensurePolling();
+            refused ??= result?.refused as IStaffStageResult['refused'];
+            if (result) {
+                this._commit(result.state);
+            }
+            this._audit(stageEntry({
+                at,
+                encounterId,
+                from: encounter?.stage,
+                issuer: staff.id,
+                outcome: refused ? 'refused' : 'ok',
+                reason: refused,
+                to: stage
+            }));
+            if (refused || !here) {
+                return { moved: false, refused };
+            }
 
-            return result.move as IMove;
+            // Free for the next patient at once: back to the lounge of their station.
+            const lounge = stationsOf(this._opts.layout).find(s => s.id === here.occupant.station)?.lounge;
+
+            if (!lounge) {
+                return { encounter: result?.encounter, moved: false };
+            }
+
+            const move = await this._startMove({
+                endpointId: here.occupant.endpointId, fromRoom: here.room.name, toRoom: lounge
+            }, staff.id);
+
+            return { encounter: result?.encounter, move, moved: move.state === 'counting_down' };
         });
+    }
+
+    /**
+     * Starts a move. Call it inside the serial queue.
+     *
+     * @param {Object} request - Who to move, from which room to which.
+     * @param {string} issuer - Who asked: `system`, or a verified identity id.
+     * @returns {Promise<IMove>}
+     */
+    private async _startMove(request: { endpointId: string; fromRoom: string; toRoom: string; }, issuer: string): Promise<IMove> {
+        const rooms = await this.rooms();
+        const named = (name: string) => rooms.find(r => backendSafeRoomName(r.name) === backendSafeRoomName(name))
+            ?.name ?? name;
+        const moveId = randomUUID();
+
+        this._records.set(moveId, newMoveRecord(issuer));
+
+        const result = await this._apply({
+            at: new Date(),
+            endpointId: request.endpointId,
+            fromRoom: named(request.fromRoom),
+            rooms,
+            toRoom: named(request.toRoom),
+            type: 'request_move'
+        }, rooms, () => moveId);
+
+        this._ensurePolling();
+
+        return result.move as IMove;
     }
 
     /**

@@ -1,6 +1,7 @@
 import { CONFERENCE_WILL_JOIN, NON_PARTICIPANT_MESSAGE_RECEIVED } from '../base/conference/actionTypes';
 import { getCurrentConference } from '../base/conference/functions';
 import MiddlewareRegistry from '../base/redux/MiddlewareRegistry';
+import { rememberHospitalJwt } from '../staff-actions/functions.web';
 
 import { CANCEL_MOVE, START_MOVE } from './actionTypes';
 import { MOVE_CANCELLED_PROPERTY, MOVE_SUPPORT_PROPERTY } from './constants';
@@ -40,6 +41,9 @@ MiddlewareRegistry.register(store => next => action => {
         clearTimeout(departure);
         departure = setTimeout(() => {
             const { audio, video } = store.getState()['features/base/media'];
+
+            // The staff member's own token is needed after the move too (react/features/staff-actions).
+            rememberHospitalJwt(store.getState()['features/base/jwt'].jwt, move.token);
 
             window.location.assign(buildDestinationUrl(window.location.href, move, {
                 audio: Boolean(audio.muted),

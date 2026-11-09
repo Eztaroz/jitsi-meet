@@ -171,6 +171,17 @@ Encounters are identified by an opaque id. The HN appears only in the body that 
 
 With token authentication (Jicofo authentication), the recorder bot cannot start a room itself: "ready" means it is waiting for the room, and it joins as soon as the patient has opened it. Without it, the bot is in the room before the patient arrives.
 
+## Staff requests
+
+Staff change a patient's stage from inside the call (ADR 0012). Their requests are under `/staff` (`/coordinator/staff/...` behind the proxy) and carry the staff member's own token from the hospital's issuer, the one the participants use, as `Authorization: Bearer <token>`. It is verified the way a coordinator's is (`COORDINATOR_ISSUER_KEYS`), and must carry the staff marker (`COORDINATOR_STAFF_MARKER`) and a verified `id`. Without `COORDINATOR_ISSUER_KEYS` or the staff marker there are no staff requests (`404`). The shared bearer secret, and coordinators' and patients' tokens, are refused (`403` and `{error}`; `401` without a token). Every request is in the audit log with the staff member's identity id as `issuer`.
+
+| Request | Answer |
+|---|---|
+| `GET /staff/me` | Where the staff member is now: `{where: "lounge", station}`, `{where: "patients_room", station, encounter: {id, stage, stageName}, stages: [{id, name}]}` (every stage of the encounter's pathway but `done`, in order), or `{where: "nowhere"}`. `503` if Prosody cannot be asked. |
+| `POST /staff/encounters/<id>/stage` with `{"stage": "billing"}` | Puts the encounter in any stage of its pathway but `done`, forward or back. `200` and `{stage, moved}`; the service then moves the staff member to the lounge of their station (`moved`; the client leaves the room after the usual five-second countdown). Refused with `{error}`: `done_is_not_for_staff` (`403`; `done` stays with the coordinator and the hospital's system), `not_in_patients_room` (`403`; the staff member is not in that patient's own room), `stage_not_in_pathway` (`400`), `unknown_encounter` (`404`), `encounter_closed` (`409`). Refusals are audited too. |
+
+The client calls them from the patient's room with the participant's own JWT. It reaches the service at `/coordinator` on its own origin, or at `config.staffApiUrl` when that is set, in the web server's `config.js`.
+
 ### What is kept over a restart
 
 The service keeps where each patient's own room is, and each staff member's station, in its database by verified identity id (no HN is added to what is stored beyond the room name), so that they survive a restart; moves under way resume for the time left. The midnight close keeps them. Only the 90-day retention sweep forgets them, and a room or a station that is seen again unchanged counts as fresh for the sweep.
