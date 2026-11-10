@@ -113,6 +113,17 @@ describe('Coordinator: move a staff member', () => {
         expect(await staff.execute(() => APP.store.getState()['features/base/media'].audio.muted)).toBe(true);
     });
 
+    it('arrives with the camera on, as it was', async () => {
+        // A destination address that turns the prejoin page off in its hash makes jitsi-meet start without media, so
+        // the staff member would be in the patient's room with no camera, and nothing of them would be recorded.
+        const local = await staff.execute(() => APP.store.getState()['features/base/tracks']
+            .filter(t => t.local)
+            .map(t => `${t.mediaType}:${t.muted ? 'muted' : 'on'}`));
+
+        expect(local).toContain('video:on');
+        expect(local).not.toContain('audio:on');
+    });
+
     it('joined with a token for the destination only', async () => {
         const jwt = await staff.execute(() => APP.store.getState()['features/base/jwt'].jwt as string);
         const claims = JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString());
