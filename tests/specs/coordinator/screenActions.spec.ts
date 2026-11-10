@@ -12,6 +12,7 @@ import {
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
+import { cancelMoveNotice } from '../../helpers/moveNotice';
 import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
@@ -194,8 +195,7 @@ describe('Coordinator: acting from the screen', () => {
             async () => (await roomText(screen, LOUNGE)).includes('กำลังย้าย'),
             { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
 
-        await (await nurseBrowser.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 30_000 });
-        await (await nurseBrowser.driver.$('#coordinator-move-cancel')).click();
+        await cancelMoveNotice(nurseBrowser);
 
         for (const screen of [ a, b ]) {
             await screen.driver.waitUntil(
