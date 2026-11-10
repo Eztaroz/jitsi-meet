@@ -125,8 +125,22 @@ describe('the settings', () => {
             COORDINATOR_VIDEO_PLAYER_URL: 'http://video-player:8091/'
         }));
 
-        assert.deepEqual(config.videoPlayer, { baseUrl: 'https://meet.example/', secret: 'vp-secret', url: 'http://video-player:8091' });
+        assert.deepEqual(config.videoPlayer, {
+            baseUrl: 'https://meet.example/', playTimeoutMs: 45_000, secret: 'vp-secret', url: 'http://video-player:8091'
+        });
         assert.deepEqual(config.roleMarkers.videoPlayer, { path: [ 'user', 'hospital_role' ], value: 'video_player' });
+    });
+
+    it('let the wait for a video to start be set, in seconds', () => {
+        const config = loadConfig(env({
+            COORDINATOR_VIDEO_BASE_URL: 'https://meet.example/',
+            COORDINATOR_VIDEO_PLAYER_MARKER: 'user.hospital_role=video_player',
+            COORDINATOR_VIDEO_PLAYER_SECRET: 'vp-secret',
+            COORDINATOR_VIDEO_PLAYER_URL: 'http://video-player:8091/',
+            COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS: '90'
+        }));
+
+        assert.equal(config.videoPlayer?.playTimeoutMs, 90_000);
     });
 
     it('refuse a video player URL without the video player marker', () => {

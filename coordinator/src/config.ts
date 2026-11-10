@@ -14,6 +14,7 @@ import {
     parseRoleMarker,
     sameRoom
 } from './rooms.ts';
+import { DEFAULT_PLAY_TIMEOUT_MS } from './videoPlayer.ts';
 
 /**
  * The coordinator service's settings, read from environment variables. `coordinator/deploy/README.md` documents each.
@@ -78,7 +79,7 @@ export interface IConfig {
      * The video player service, which plays the waiting videos (`COORDINATOR_VIDEO_PLAYER_URL`); unset, there are no
      * videos. `baseUrl` is where the web server hosts the videos' files.
      */
-    videoPlayer?: { baseUrl: string; secret: string; url: string; };
+    videoPlayer?: { baseUrl: string; playTimeoutMs: number; secret: string; url: string; };
 }
 
 /**
@@ -151,6 +152,7 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
         videoPlayer: env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
             ? {
                 baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
+                playTimeoutMs: Number(env.COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS ?? DEFAULT_PLAY_TIMEOUT_MS / 1000) * 1000,
                 secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
                 url: env.COORDINATOR_VIDEO_PLAYER_URL.trim().replace(/\/+$/u, '')
             }
