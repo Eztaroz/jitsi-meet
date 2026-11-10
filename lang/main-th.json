@@ -58,14 +58,21 @@
         "title": "การรับบริการผ่านวิดีโอคอลครั้งนี้เป็นอย่างไรบ้าง"
     },
     "staffActions": {
+        "answer": "{{question}}: {{choice}}",
         "apply": "เปลี่ยนขั้นตอน",
         "currentStage": "ขั้นตอน: {{stage}}",
-        "answer": "{{question}}: {{choice}}",
+        "nextPatient": "ผู้ป่วยคนถัดไป",
+        "nextRefused": "เรียกผู้ป่วยคนถัดไปไม่สำเร็จ",
         "noAnswersYet": "ยังไม่มีคำตอบ",
         "pickQuestionnaire": "ส่งแบบสอบถาม...",
         "pickStage": "เปลี่ยนขั้นตอนเป็น...",
+        "pickVideo": "วิดีโอระหว่างรอสำหรับขั้นตอนนี้...",
+        "playVideo": "เล่นวิดีโอ",
         "questionnaireNotSent": "ส่งแบบสอบถามไม่สำเร็จ",
+        "queueEmpty": "ไม่มีผู้ป่วยรอที่สถานีของคุณ",
         "refused": "ไม่ได้เปลี่ยนขั้นตอน",
-        "sendQuestionnaire": "ส่งแบบสอบถาม"
+        "sendQuestionnaire": "ส่งแบบสอบถาม",
+        "stopVideo": "หยุดวิดีโอ",
+        "videoRefused": "ส่งคำสั่งวิดีโอไม่สำเร็จ"
     }
 }
