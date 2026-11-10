@@ -22,6 +22,7 @@ services:
             - ../../coordinator/test-deployment/custom-config.js:/config/custom-config.js:ro
             # The waiting videos, at /videos/ (run videos/generate.sh first).
             - ../../coordinator/test-deployment/videos:/usr/share/jitsi-meet/videos:ro
+            - ../../coordinator/test-deployment/videos.conf:/config/nginx-custom/videos.conf:ro
 
     prosody:
         # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
