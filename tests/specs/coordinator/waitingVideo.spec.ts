@@ -43,7 +43,8 @@ describe('Coordinator: a waiting video from the screen', () => {
         }, { roomName: patientLinkRoom(hn) });
         encounterId = (await postEncounter(hn)).body.id;
 
-        screen = await joinMuc({ name: 'p2' }, { skipInMeetingChecks: true });
+        // The deployment needs a token to join any room, even a scratch one for the browser the screen runs in.
+        screen = await joinMuc({ name: 'p2', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
         await screen.driver.url(screenUrl());
         await (await screen.driver.$('#signin-token')).setValue(generateToken({
             displayName: coordinator.name,

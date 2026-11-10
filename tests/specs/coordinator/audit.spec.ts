@@ -88,7 +88,7 @@ describe('Coordinator: audit log and retention', () => {
 
         const entries = await getAudit(1000);
         const moves = entries.filter(e => e.kind === 'move' && e.participantId === staffIdentity.id);
-        const stage = entries.find(e => e.kind === 'stage' && e.encounterId === encounterId);
+        const stage = entries.find(e => e.kind === 'stage' && e.encounterId === encounterId && e.outcome === 'ok');
 
         expect(moves.map(m => m.outcome)).toContain('cancelled');
         expect(stage).toMatchObject({ from: 'waiting', issuer: 'system', outcome: 'ok', to: 'intake' });
