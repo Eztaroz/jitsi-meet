@@ -127,6 +127,10 @@
                 emit('failed', { error: 'conference_left' });
             }
         });
+
+        // The player joins through the main domain, where the server refuses a client that does not announce that it
+        // obeys moves (ADR 0010). It is never moved: the coordinator service stops it through the control API.
+        conference.setLocalParticipantProperty('coordinatorMoveSupport', 'true');
         conference.join();
     }
 
