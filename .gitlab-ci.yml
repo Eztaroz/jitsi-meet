@@ -28,7 +28,7 @@ test-coordinator:
   tags:
     - HOSAPP02
 
-.kaniko:
+.kaniko: &kaniko
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:v1.9.0-debug
@@ -59,35 +59,35 @@ test-coordinator:
     - main
 
 image-coordinator:
-  extends: .kaniko
+  <<: *kaniko
   variables:
     IMAGE_NAME: coordinator
     CONTEXT: coordinator
     DOCKERFILE: coordinator/Dockerfile
 
 image-recorder-bot:
-  extends: .kaniko
+  <<: *kaniko
   variables:
     IMAGE_NAME: recorder-bot
     CONTEXT: recorder-bot
     DOCKERFILE: recorder-bot/Dockerfile
 
 image-video-player:
-  extends: .kaniko
+  <<: *kaniko
   variables:
     IMAGE_NAME: video-player
     CONTEXT: video-player
     DOCKERFILE: video-player/Dockerfile
 
 image-prosody:
-  extends: .kaniko
+  <<: *kaniko
   variables:
     IMAGE_NAME: prosody
     CONTEXT: "."
     DOCKERFILE: deploy/production/prosody/Dockerfile
 
 image-web:
-  extends: .kaniko
+  <<: *kaniko
   variables:
     IMAGE_NAME: web
     CONTEXT: "."
