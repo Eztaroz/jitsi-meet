@@ -280,7 +280,7 @@ react/features/sample/
 
 Issues and merge requests live on the hospital's GitLab, the primary home of the code; its host and project come from the environment, never from the repo. GitHub `Eztaroz/jitsi-meet` (this fork, never upstream `jitsi/jitsi-meet`) is a private mirror and keeps the issues opened before the move, cited as `GitHub #n`. See `docs/agents/issue-tracker.md`.
 
-The repo holds no internal host names, addresses or other hospital-internal details, on either remote: they belong in the CI/CD variables and in each stack's environment.
+The repo holds no internal host names, addresses or other hospital-internal details, on either remote: they belong in the CI/CD variables and in each stack's environment. The one exception is the runner tags in `.gitlab-ci.yml`, which this GitLab cannot read from variables.
 
 ### Triage labels
 
