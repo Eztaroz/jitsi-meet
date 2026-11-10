@@ -3,9 +3,61 @@
         {
             "id": "center-1",
             "stations": [
-                { "id": "intake", "stage": "intake", "lounge": "lounge-intake" },
-                { "id": "examination", "stage": "examination", "lounge": "lounge-examination" },
-                { "id": "aftercare", "stage": "aftercare", "lounge": "lounge-aftercare" }
+                {
+                    "id": "intake",
+                    "stage": "intake",
+                    "lounge": "lounge-intake"
+                },
+                {
+                    "id": "examination",
+                    "stage": "examination",
+                    "lounge": "lounge-examination"
+                },
+                {
+                    "id": "aftercare",
+                    "stage": "aftercare",
+                    "lounge": "lounge-aftercare"
+                }
+            ],
+            "pathways": [
+                {
+                    "id": "default",
+                    "stages": [
+                        {
+                            "id": "waiting",
+                            "name": "รอคิว",
+                            "defaultVideo": "intro"
+                        },
+                        {
+                            "id": "registration",
+                            "name": "ลงทะเบียน"
+                        },
+                        {
+                            "id": "intake",
+                            "name": "ให้ข้อมูลก่อนพบแพทย์"
+                        },
+                        {
+                            "id": "examination",
+                            "name": "พบแพทย์"
+                        },
+                        {
+                            "id": "aftercare",
+                            "name": "หลังพบแพทย์"
+                        },
+                        {
+                            "id": "billing",
+                            "name": "ชำระเงิน"
+                        },
+                        {
+                            "id": "pharmacy",
+                            "name": "รับยา"
+                        },
+                        {
+                            "id": "done",
+                            "name": "เสร็จสิ้น"
+                        }
+                    ]
+                }
             ]
         }
     ],
@@ -14,16 +66,46 @@
             "id": "lifestyle",
             "title": "Lifestyle",
             "questions": [
-                { "text": "Do you smoke?", "choices": [ "Yes", "No" ] },
-                { "text": "Do you drink alcohol?", "choices": [ "Yes", "No" ] }
+                {
+                    "text": "Do you smoke?",
+                    "choices": [
+                        "Yes",
+                        "No"
+                    ]
+                },
+                {
+                    "text": "Do you drink alcohol?",
+                    "choices": [
+                        "Yes",
+                        "No"
+                    ]
+                }
             ]
         },
         {
             "id": "pain",
             "title": "Pain",
             "questions": [
-                { "text": "Does it hurt today?", "choices": [ "Yes", "No" ] }
+                {
+                    "text": "Does it hurt today?",
+                    "choices": [
+                        "Yes",
+                        "No"
+                    ]
+                }
             ]
+        }
+    ],
+    "videos": [
+        {
+            "id": "intro",
+            "title": "Introduction",
+            "file": "videos/intro.webm"
+        },
+        {
+            "id": "second",
+            "title": "Second",
+            "file": "videos/second.webm"
         }
     ]
 }

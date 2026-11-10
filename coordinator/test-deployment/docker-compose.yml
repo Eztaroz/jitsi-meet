@@ -20,6 +20,8 @@ services:
             - ../../coordinator/deploy/nginx/coordinator.conf:/config/nginx-custom/coordinator.conf:ro
             # Marks patients for the client, which hides the buttons that end a patient's room or remove the patient.
             - ../../coordinator/test-deployment/custom-config.js:/config/custom-config.js:ro
+            # The waiting videos, at /videos/ (run videos/generate.sh first).
+            - ../../coordinator/test-deployment/videos:/usr/share/jitsi-meet/videos:ro
 
     prosody:
         # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
@@ -60,6 +62,24 @@ services:
         environment:
             # Room for the specs that record at the same time.
             RECORDER_BOT_MAX_CONSULTATIONS: 12
+            # Records the video player under its own role.
+            RECORDER_BOT_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
+
+    video-player:
+        image: video-player:local
+        build: ../../video-player
+        restart: unless-stopped
+        init: true
+        ipc: host
+        # On the host network, like the recorder bot: its Chromium reaches the web server on localhost and the
+        # videobridge on its advertised 127.0.0.1. Port 8094, as 8090 to 8093 are the recorder bot services'.
+        network_mode: host
+        environment:
+            VIDEO_PLAYER_API_PORT: 8094
+            VIDEO_PLAYER_API_SECRET: video-player-test-secret
+            VIDEO_PLAYER_JITSI_URL: https://localhost:8443
+            VIDEO_PLAYER_IGNORE_CERTIFICATE_ERRORS: 'true'
+            VIDEO_PLAYER_MAX_ROOMS: 3
 
     coordinator:
         image: coordinator:local
@@ -92,8 +112,13 @@ services:
             COORDINATOR_SIGNING_KID: coordinator-test/key
             COORDINATOR_STAFF_MARKER: user.hospital_role=staff
             COORDINATOR_TOKEN_SUBJECT: coordinator-test
+            COORDINATOR_VIDEO_PLAYER_URL: http://host.docker.internal:8094
+            COORDINATOR_VIDEO_PLAYER_SECRET: video-player-test-secret
+            COORDINATOR_VIDEO_BASE_URL: https://localhost:8443/
+            COORDINATOR_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
         depends_on:
             - recorder-bot
+            - video-player
             - prosody
 
 volumes:
