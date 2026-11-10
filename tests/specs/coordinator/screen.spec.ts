@@ -13,9 +13,9 @@ setTestProperties(__filename, {
     description: 'A coordinator signs in to the screen with a token from the hospital\'s issuer that carries the \
 coordinator role marker; a token without it is refused, the shared bearer secret does not open the screen, and the \
 screen shows nothing before sign-in. Signed in, the coordinator sees in Thai the queue of each stage with the time \
-waited and the suggested patient, and the open rooms with who is in them, labelled as stations, lounges and patients\' \
-rooms, with a patient\'s room that has no encounter marked. The screen refreshes by itself. Skipped unless the \
-deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service on top of it.',
+waited and the suggested patient, and the open rooms with who is in them, labelled as patients\' rooms and as \
+lounges with their station\'s stage, with a patient\'s room that has no encounter marked. The screen refreshes by \
+itself. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3' ]
 });
 
@@ -127,8 +127,11 @@ describe('Coordinator: the screen', () => {
         expect(withEncounter).not.toContain('ยังไม่มี encounter');
         expect(withEncounter).toContain('ห้องผู้ป่วย');
         expect(withEncounter).toContain('ผู้ป่วย');
-        expect(text.some(t => t.includes('intake-1') && t.includes('จุดบริการ') && t.includes('ปิดอยู่'))).toBe(true);
-        expect(text.some(t => t.includes('lounge-1') && t.includes('ห้องพักเจ้าหน้าที่'))).toBe(true);
+        // No spec sends anyone into the examination lounge: it is listed, closed.
+        expect(text.some(t => t.includes('lounge-examination') && t.includes('ห้องพักเจ้าหน้าที่: พบแพทย์')
+            && t.includes('ปิดอยู่'))).toBe(true);
+        expect(text.some(t => t.includes('lounge-intake') && t.includes('ห้องพักเจ้าหน้าที่: ให้ข้อมูลก่อนพบแพทย์'))).toBe(true);
+        expect(text.some(t => t.includes('จุดบริการ'))).toBe(false);
     });
 
     it('goes back to the sign-in form when the coordinator signs out', async () => {

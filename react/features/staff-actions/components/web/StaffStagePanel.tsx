@@ -1,0 +1,289 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSelector, useStore } from 'react-redux';
+import { makeStyles } from 'tss-react/mui';
+
+import { IReduxState } from '../../../app/types';
+import { getLocalParticipant, isPatientParticipant, isPatientsRoom } from '../../../base/participants/functions';
+import Button from '../../../base/ui/components/web/Button';
+import {
+    changeStage,
+    chooseVideo,
+    fetchQuestionnaires,
+    fetchStaffContext,
+    playVideo,
+    sendQuestionnaire,
+    stopVideo
+} from '../../functions.web';
+import { IStaffContext, IStaffQuestionnaire } from '../../types';
+
+/** How often the staff member's place is asked again, in milliseconds. */
+const REFRESH_MS = 3000;
+
+const useStyles = makeStyles()(theme => {
+    return {
+        panel: {
+            alignItems: 'center',
+            backgroundColor: theme.palette.ui01,
+            border: `1px solid ${theme.palette.ui03}`,
+            borderRadius: '12px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+            color: theme.palette.text01,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: theme.spacing(2),
+            left: theme.spacing(3),
+            padding: theme.spacing(2),
+            position: 'fixed',
+            top: theme.spacing(10),
+            zIndex: 300
+        },
+        row: {
+            alignItems: 'center',
+            display: 'flex',
+            flexBasis: '100%',
+            flexWrap: 'wrap',
+            gap: theme.spacing(2)
+        },
+        select: {
+            backgroundColor: theme.palette.ui03,
+            border: `1px solid ${theme.palette.ui04}`,
+            borderRadius: '6px',
+            color: theme.palette.text01,
+            padding: theme.spacing(1)
+        },
+        answers: {
+            flexBasis: '100%',
+            maxHeight: '30vh',
+            overflowY: 'auto'
+        },
+        error: {
+            color: theme.palette.warning01,
+            flexBasis: '100%'
+        }
+    };
+});
+
+/**
+ * Shows a staff member, in a patient's own room, the patient's current stage and a picker of every other stage of the
+ * pathway but done (ADR 0012). Changing the stage makes the service move the staff member back to their lounge. It
+ * shows nothing to anyone the service does not take for staff.
+ *
+ * @returns {ReactElement|null}
+ */
+const StaffStagePanel = () => {
+    const store = useStore<IReduxState>();
+    const inPatientsRoom = useSelector((state: IReduxState) => isPatientsRoom(state)
+        && !isPatientParticipant(state, getLocalParticipant(state)));
+    const hasJwt = useSelector((state: IReduxState) => Boolean(state['features/base/jwt'].jwt));
+    const [ context, setContext ] = useState<IStaffContext | undefined>();
+    const [ chosen, setChosen ] = useState('');
+    const [ error, setError ] = useState<string | undefined>();
+    const [ videoError, setVideoError ] = useState<string | undefined>();
+    const encounterIdRef = useRef<string | undefined>();
+    const [ chosenQuestionnaire, setChosenQuestionnaire ] = useState('');
+    const [ questionnaireError, setQuestionnaireError ] = useState(false);
+    const [ sentQuestionnaires, setSentQuestionnaires ] = useState<IStaffQuestionnaire[]>([]);
+    const { t } = useTranslation();
+    const { classes } = useStyles();
+
+    useEffect(() => {
+        if (!inPatientsRoom || !hasJwt) {
+            setContext(undefined);
+
+            return;
+        }
+
+        let cancelled = false;
+        const refresh = async () => {
+            // Both are asked at once, so a refresh costs one round trip: the questionnaires are of the encounter the
+            // last refresh found, and are dropped when this one finds another.
+            const known = encounterIdRef.current;
+            const [ fresh, answers ] = await Promise.all([
+                fetchStaffContext(store.getState()),
+                known ? fetchQuestionnaires(store.getState(), known) : undefined
+            ]);
+            const current = fresh?.encounter?.id;
+
+            if (!cancelled) {
+                encounterIdRef.current = current;
+                setContext(fresh);
+                setSentQuestionnaires(current && current === known ? answers ?? [] : []);
+            }
+        };
+
+        refresh();
+
+        const timer = setInterval(refresh, REFRESH_MS);
+
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+        };
+    }, [ inPatientsRoom, hasJwt, store ]);
+
+    const onChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => setChosen(event.target.value), []);
+    const onApply = useCallback(async () => {
+        if (!context?.encounter || !chosen) {
+            return;
+        }
+        setError(await changeStage(store.getState(), context.encounter.id, chosen));
+    }, [ chosen, context, store ]);
+
+    /**
+     * Sends a video request, shows that it failed, and asks where the staff member is again at once.
+     *
+     * @param {Function} request - The request.
+     * @returns {Promise<void>}
+     */
+    const runVideo = useCallback(async (request: (encounterId: string) => Promise<string | undefined>) => {
+        if (!context?.encounter) {
+            return;
+        }
+        setVideoError(await request(context.encounter.id));
+        setContext(await fetchStaffContext(store.getState()));
+    }, [ context, store ]);
+    const onChooseVideo = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
+        const video = event.target.value;
+
+        runVideo(id => chooseVideo(store.getState(), id, context?.encounter?.stage ?? '', video));
+    }, [ context, runVideo, store ]);
+    const onPlayVideo = useCallback(() => {
+        runVideo(id => playVideo(store.getState(), id));
+    }, [ runVideo, store ]);
+    const onStopVideo = useCallback(() => {
+        runVideo(id => stopVideo(store.getState(), id));
+    }, [ runVideo, store ]);
+    const onPickQuestionnaire = useCallback((event: React.ChangeEvent<HTMLSelectElement>) =>
+        setChosenQuestionnaire(event.target.value), []);
+    const onSendQuestionnaire = useCallback(async () => {
+        if (!context?.encounter || !chosenQuestionnaire) {
+            return;
+        }
+        setQuestionnaireError(Boolean(await sendQuestionnaire(store.getState(), context.encounter.id, chosenQuestionnaire)));
+    }, [ chosenQuestionnaire, context, store ]);
+
+    if (context?.where !== 'patients_room' || !context.encounter) {
+        return null;
+    }
+
+    return (
+        <div
+            className = { classes.panel }
+            id = 'staff-stage-panel'>
+            <span id = 'staff-current-stage'>
+                { t('staffActions.currentStage', { stage: context.encounter.stageName }) }
+            </span>
+            <select
+                aria-label = { t('staffActions.pickStage') }
+                className = { classes.select }
+                id = 'staff-stage-picker'
+                onChange = { onChange }
+                value = { chosen }>
+                <option value = ''>{ t('staffActions.pickStage') }</option>
+                { context.stages?.map(stage => (
+                    <option
+                        key = { stage.id }
+                        value = { stage.id }>
+                        { stage.name }
+                    </option>
+                )) }
+            </select>
+            <Button
+                accessibilityLabel = { t('staffActions.apply') }
+                disabled = { !chosen }
+                id = 'staff-stage-apply'
+                labelKey = 'staffActions.apply'
+                onClick = { onApply } />
+            { Boolean(context.videos?.length) && (
+                <div
+                    className = { classes.row }
+                    id = 'staff-video-controls'>
+                    <select
+                        aria-label = { t('staffActions.pickVideo') }
+                        className = { classes.select }
+                        id = 'staff-video-picker'
+                        onChange = { onChooseVideo }
+                        value = { context.chosenVideo ?? '' }>
+                        <option
+                            disabled = { true }
+                            value = ''>
+                            { t('staffActions.pickVideo') }
+                        </option>
+                        { context.videos?.map(video => (
+                            <option
+                                key = { video.id }
+                                value = { video.id }>
+                                { video.title }
+                            </option>
+                        )) }
+                    </select>
+                    <Button
+                        accessibilityLabel = { t('staffActions.playVideo') }
+                        disabled = { context.videoPlaying || !context.chosenVideo }
+                        id = 'staff-video-play'
+                        labelKey = 'staffActions.playVideo'
+                        onClick = { onPlayVideo } />
+                    <Button
+                        accessibilityLabel = { t('staffActions.stopVideo') }
+                        disabled = { !context.videoPlaying }
+                        id = 'staff-video-stop'
+                        labelKey = 'staffActions.stopVideo'
+                        onClick = { onStopVideo } />
+                </div>
+            ) }
+            { error && <span className = { classes.error }>{ t('staffActions.refused') }</span> }
+            { videoError && <span className = { classes.error }>{ t('staffActions.videoRefused') }</span> }
+            { Boolean(context.questionnaires?.length) && (
+                <>
+                    <select
+                        aria-label = { t('staffActions.pickQuestionnaire') }
+                        className = { classes.select }
+                        id = 'staff-questionnaire-picker'
+                        onChange = { onPickQuestionnaire }
+                        value = { chosenQuestionnaire }>
+                        <option value = ''>{ t('staffActions.pickQuestionnaire') }</option>
+                        { context.questionnaires?.map(questionnaire => (
+                            <option
+                                key = { questionnaire.id }
+                                value = { questionnaire.id }>
+                                { questionnaire.title }
+                            </option>
+                        )) }
+                    </select>
+                    <Button
+                        accessibilityLabel = { t('staffActions.sendQuestionnaire') }
+                        disabled = { !chosenQuestionnaire }
+                        id = 'staff-questionnaire-send'
+                        labelKey = 'staffActions.sendQuestionnaire'
+                        onClick = { onSendQuestionnaire } />
+                </>
+            ) }
+            { questionnaireError
+                && <span className = { classes.error }>{ t('staffActions.questionnaireNotSent') }</span> }
+            { sentQuestionnaires.length > 0 && (
+                <div
+                    className = { classes.answers }
+                    id = 'staff-questionnaire-answers'>
+                    { sentQuestionnaires.map(sent => (
+                        <div
+                            className = 'staff-questionnaire'
+                            key = { sent.id }>
+                            <strong>{ sent.title }</strong>
+                            { sent.answers
+                                ? sent.questions.map((question, index) => (
+                                    <div key = { index }>
+                                        { t('staffActions.answer', {
+                                            choice: question.choices[sent.answers?.[index] ?? 0],
+                                            question: question.text
+                                        }) }
+                                    </div>))
+                                : <div>{ t('staffActions.noAnswersYet') }</div> }
+                        </div>)) }
+                </div>
+            ) }
+        </div>
+    );
+};
+
+export default StaffStagePanel;

@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
-import { coordinatorUnavailableReason, waitForStationFree } from '../../helpers/coordinator';
+import { coordinatorUnavailableReason } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
 import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
@@ -11,14 +11,12 @@ import { generateToken } from '../../helpers/token';
 setTestProperties(__filename, {
     description: 'A patient is never a moderator, wherever they are, while staff are, so that they can end a \
 consultation for everyone. Jicofo makes everyone with a token an owner, and the first participant of a room too, so \
-the patient joins first: in their own room and in a station. A staff member then joins, becomes a moderator, and \
+the patient joins their own room first. A staff member then joins, becomes a moderator, and \
 grants moderator to the patient from the filmstrip, which Prosody\'s muc_patient_never_moderator module refuses. \
 Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service \
 on top of it.',
     usesBrowsers: [ 'p1', 'p2' ]
 });
-
-const STATION = 'intake-1';
 
 // How long a refused grant is given to show up, had it not been refused: Prosody answers it at once.
 const GRANT_SETTLE_MS = 3000;
@@ -77,10 +75,5 @@ describe('Coordinator: a patient is never a moderator', () => {
 
     it('keeps a patient who joins their own room first out of the moderator role', async () => {
         await checkRoles(patientLinkRoom(uniqueHn('NOMOD')));
-    });
-
-    it('keeps a patient who joins a station first out of the moderator role', async () => {
-        await waitForStationFree(STATION);
-        await checkRoles(STATION);
     });
 });

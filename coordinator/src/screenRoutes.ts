@@ -8,6 +8,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import type { CoordinatorService } from './coordinatorService.ts';
 import { HttpError, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
+import { describeSent } from './questionnaires.ts';
 import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
 
 /** The files of the coordinator screen, read once. */
@@ -94,14 +95,16 @@ export function createScreenRoutes({ act, screen, service }: {
             const route = pathname.slice('/screen/api'.length);
 
             if (route === '/state' && req.method === 'GET') {
-                const queues = service.queues();
+                const rooms = await service.rooms();
+                const queues = service.queues(rooms);
                 const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
                 const recent = Date.now() - 2 * 60_000;
 
                 send(res, 200, {
                     coordinator,
+                    examination: service.examinationQueues(rooms),
                     moves: service.state.moves
-                        .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down' || m.state === 'preparing')
+                        .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down')
                         .map(m => ({
                             destination: m.destination,
                             endpointId: m.endpointId,
@@ -111,9 +114,19 @@ export function createScreenRoutes({ act, screen, service }: {
                             startedAt: m.startedAt,
                             state: m.state
                         })),
+                    questionnaires: {
+                        catalogue: service.questionnaireCatalogue().map(({ id, title }) => ({ id, title })),
+                        sent: Object.fromEntries(service.state.encounters
+                            .filter(e => e.stage !== 'done' && e.questionnaires?.length)
+                            .map(e => [ e.id, (e.questionnaires ?? []).map(describeSent) ]))
+                    },
                     queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
                         [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
-                    rooms: await service.rooms()
+                    rooms,
+                    videoCatalogue: service.videoCatalogue().map(({ id, title }) => ({ id, title })),
+                    videos: service.playingVideos(),
+                    stages: service.stages().map(({ id, name }) => ({ id, name })),
+                    teams: service.teams(rooms)
                 });
 
                 return;

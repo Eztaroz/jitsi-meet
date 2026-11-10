@@ -16,6 +16,7 @@ import { openChat, setFocusedTab } from '../../../chat/actions.web';
 import Chat from '../../../chat/components/web/Chat';
 import { ChatTabs } from '../../../chat/constants';
 import MoveNotice from '../../../coordinator-move/components/web/MoveNotice';
+import QuestionnaireOverlay from '../../../coordinator-questionnaire/components/web/QuestionnaireOverlay';
 import CustomPanel from '../../../custom-panel/components/web/CustomPanel';
 import { isFileUploadingEnabled, processFiles } from '../../../file-sharing/functions.any';
 import MainFilmstrip from '../../../filmstrip/components/web/MainFilmstrip';
@@ -31,6 +32,8 @@ import ParticipantsPane from '../../../participants-pane/components/web/Particip
 import Prejoin from '../../../prejoin/components/web/Prejoin';
 import { isPrejoinPageVisible } from '../../../prejoin/functions.web';
 import ReactionAnimations from '../../../reactions/components/web/ReactionsAnimations';
+import NextPatientPanel from '../../../staff-actions/components/web/NextPatientPanel';
+import StaffStagePanel from '../../../staff-actions/components/web/StaffStagePanel';
 import { isTimeTimerExpiredUnacknowledged } from '../../../time-timer/functions';
 import { toggleToolboxVisible } from '../../../toolbox/actions.any';
 import { fullScreenChanged, showToolbox } from '../../../toolbox/actions.web';
@@ -267,6 +270,9 @@ class Conference extends AbstractConference<IProps, any> {
                         <ConferenceInfo />
                         <Notice />
                         <MoveNotice />
+                        <QuestionnaireOverlay />
+                        <StaffStagePanel />
+                        <NextPatientPanel />
                         <div
                             className = { videospaceClassName }
                             id = 'videospace'
@@ -301,6 +307,9 @@ class Conference extends AbstractConference<IProps, any> {
                     { _showPrejoin || _showLobby || <ConferenceInfo /> }
                     <Notice />
                     <MoveNotice />
+                    <QuestionnaireOverlay />
+                    <StaffStagePanel />
+                    <NextPatientPanel />
                     <div
                         className = { videospaceClassName }
                         id = 'videospace'

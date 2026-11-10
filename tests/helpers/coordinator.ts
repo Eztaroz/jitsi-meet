@@ -84,18 +84,59 @@ export async function getEncounter(id: string): Promise<{ body: IEncounter; stat
     return { body: await response.json() as IEncounter, status: response.status };
 }
 
+/** A health questionnaire sent to a patient, as the API reports it. */
+export interface ISentQuestionnaire {
+    answers?: number[];
+    closedAt?: string;
+    id: string;
+    questionnaire: string;
+    title: string;
+}
+
+/**
+ * Sends a health questionnaire of the configured catalogue to the patient of an encounter.
+ *
+ * @param {string} encounterId - The encounter.
+ * @param {string} questionnaire - The questionnaire's id in the catalogue.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postQuestionnaire(encounterId: string, questionnaire: string): Promise<{ body: { id?: string; }; status: number; }> {
+    const response = await callCoordinator(`/encounters/${encounterId}/questionnaires`,
+        { body: JSON.stringify({ questionnaire }), method: 'POST' });
+
+    return { body: await response.json() as { id?: string; }, status: response.status };
+}
+
+/**
+ * Reads the health questionnaires sent during an encounter, with their answers.
+ *
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<ISentQuestionnaire[]>}
+ */
+export async function getQuestionnaires(encounterId: string): Promise<ISentQuestionnaire[]> {
+    const response = await callCoordinator(`/encounters/${encounterId}/questionnaires`);
+
+    return (await response.json() as { questionnaires: ISentQuestionnaire[]; }).questionnaires;
+}
+
 /** A room as the API reports it. */
 export interface IRoom {
-    kind: 'lounge' | 'patient' | 'station';
+    kind: 'lounge' | 'patient';
     name: string;
     occupants: {
         displayName?: string;
         endpointId: string;
         identity?: { id?: string; name?: string; };
-        role: 'hidden' | 'patient' | 'staff' | 'unknown';
+        role: 'hidden' | 'patient' | 'staff' | 'unknown' | 'video_player';
+
+        /** For staff, their station (ADR 0011). */
+        station?: string;
     }[];
     open: boolean;
     stage?: string;
+
+    /** For a lounge, its station. */
+    station?: string;
 }
 
 /**
@@ -137,31 +178,6 @@ export async function waitForRoom(
         }
         if (Date.now() > deadline) {
             throw new Error(`timed out waiting for ${description}; the rooms were ${JSON.stringify(seen)}`);
-        }
-        await new Promise(resolve => setTimeout(resolve, 500));
-    }
-}
-
-/**
- * Waits until no patient is in a station. A patient that an earlier spec left there, or whose browser an earlier spec
- * has just closed, makes the service refuse every move into the station (`destination_holds_a_patient`) until they go.
- *
- * @param {string} station - The station's name.
- * @param {number} timeout - How long to wait, in milliseconds.
- * @returns {Promise<void>}
- */
-export async function waitForStationFree(station: string, timeout = 60_000): Promise<void> {
-    const deadline = Date.now() + timeout;
-
-    for (;;) {
-        const room = (await getRooms()).find(r => r.name === station);
-        const patients = room?.occupants.filter(o => o.role === 'patient') ?? [];
-
-        if (patients.length === 0) {
-            return;
-        }
-        if (Date.now() > deadline) {
-            throw new Error(`${station} still holds a patient after ${timeout} ms: ${JSON.stringify(patients)}`);
         }
         await new Promise(resolve => setTimeout(resolve, 500));
     }
@@ -245,6 +261,34 @@ export async function postStage(id: string, stage: string): Promise<{ body: IEnc
     return { body: await response.json(), status: response.status };
 }
 
+/** Examination's queue split by doctor, as the API reports it. */
+export interface IExaminationQueues {
+    doctors: Record<string, IQueueEntry[]>;
+    unassigned: IQueueEntry[];
+}
+
+/**
+ * Reads examination's queue split by doctor.
+ *
+ * @returns {Promise<IExaminationQueues>}
+ */
+export async function getExamination(): Promise<IExaminationQueues> {
+    return (await (await callCoordinator('/queues')).json() as { examination: IExaminationQueues; }).examination;
+}
+
+/**
+ * Sets, changes or takes away an encounter's doctor, as the hospital's system does.
+ *
+ * @param {string} id - The encounter's id.
+ * @param {string|null} doctor - A staff member's verified identity id; null takes the doctor away.
+ * @returns {Promise<Object>} The HTTP status and the body.
+ */
+export async function postDoctor(id: string, doctor: string | null): Promise<{ body: IEncounter & { doctor?: string; }; status: number; }> {
+    const response = await callCoordinator(`/encounters/${id}/doctor`, { body: JSON.stringify({ doctor }), method: 'POST' });
+
+    return { body: await response.json(), status: response.status };
+}
+
 /**
  * Restarts the coordinator service's container and waits until its API answers.
  *
@@ -266,16 +310,22 @@ export function screenUrl(): string {
 
 /** An audit entry as the API reports it. */
 export interface IAuditEntry {
+    action?: 'choose' | 'play' | 'stop';
     at: string;
     destination?: string;
+    doctor?: string;
     encounterId?: string;
+    from?: string;
     issuer: string;
-    kind: 'move' | 'stage';
+    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'video';
     outcome: string;
     participantId?: string;
+    previousDoctor?: string;
+    questionnaire?: string;
     reason?: string;
     source?: string;
     to?: string;
+    video?: string;
 }
 
 /**

@@ -9,23 +9,35 @@ import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
 import { keyLookup } from './screenAuth.ts';
 import { Store } from './store.ts';
+import { VideoPlayer } from './videoPlayer.ts';
 
 const config = loadConfig();
 const store = new Store(config.dataDir);
-const service = new CoordinatorService({
-    auditKey: config.auditKey,
-    layout: config.layout,
-    prepareWaitMs: config.prepareWaitMs,
-    prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
-    recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
-    retentionMs: config.retentionMs,
-    retentionSweepMs: config.retentionSweepMs,
-    roleMarkers: config.roleMarkers,
-    signingKey: config.signingKey,
-    store,
-    timeZone: config.timeZone,
-    token: config.token
-});
+let service: CoordinatorService;
+
+try {
+    service = new CoordinatorService({
+        auditKey: config.auditKey,
+        layout: config.layout,
+        prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
+        recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
+        retentionMs: config.retentionMs,
+        retentionSweepMs: config.retentionSweepMs,
+        roleMarkers: config.roleMarkers,
+        signingKey: config.signingKey,
+        store,
+        timeZone: config.timeZone,
+        token: config.token,
+        videoBaseUrl: config.videoPlayer?.baseUrl,
+        videoPlayer: config.videoPlayer && new VideoPlayer(config.videoPlayer.url, config.videoPlayer.secret,
+            { playTimeoutMs: config.videoPlayer.playTimeoutMs })
+    });
+} catch (error) {
+    // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).
+    log.error('refusing to start', { reason: (error as Error).message });
+    store.close();
+    process.exit(1);
+}
 
 service.resume().catch(error => log.error('could not resume the moves', { error: (error as Error).name }));
 service.startDayEnds();
@@ -41,7 +53,10 @@ const api = createApi({
     // A patient's page sends the survey with the patient's token, from the same issuer as the coordinators'.
     survey: issuer && config.roleMarkers.patient && { ...issuer, marker: config.roleMarkers.patient },
     secret: config.apiSecret,
-    service
+    service,
+
+    // Staff act with their own token from the same issuer, which carries the staff marker.
+    staff: issuer && config.roleMarkers.staff && { ...issuer, marker: config.roleMarkers.staff }
 });
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));

@@ -7,7 +7,7 @@ import { initialState, step } from '../src/rules.ts';
 import { type ISurvey, parseSurvey, placeSurvey, surveysCsv } from '../src/surveys.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
-const LAYOUT: ILayout = { lounges: [ { room: 'lounge-1' } ], stations: [ { room: 'intake-1', stage: 'intake' } ] };
+const LAYOUT: ILayout = { centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-1', stage: 'intake' } ] } ] };
 
 /**
  * Says the HTTP status a function fails with.
@@ -83,11 +83,11 @@ describe('placing a survey', () => {
     it('ties it to the HN of the patient\'s own room, as the service knows it, and to its encounter', () => {
         const state = { ...started.state, patientRooms: { 'patient-1': '6512345' } };
 
-        assert.deepEqual(placeSurvey({ identityId: 'patient-1', room: 'intake-1', state, layout: LAYOUT }), {
+        assert.deepEqual(placeSurvey({ identityId: 'patient-1', room: 'lounge-1', state, layout: LAYOUT }), {
             encounterId,
             hn: '6512345',
             hnSource: 'known',
-            room: 'intake-1',
+            room: 'lounge-1',
             stage: 'waiting'
         });
     });
@@ -108,9 +108,9 @@ describe('placing a survey', () => {
         assert.equal(placeSurvey({ identityId: 'p', room: 'hn%2f7', state, layout: LAYOUT }).hn, 'HN/7');
     });
 
-    it('ties it to no HN when the patient left a station and the service does not know their room', () => {
-        assert.deepEqual(placeSurvey({ identityId: 'patient-3', room: 'Intake-1', state: started.state, layout: LAYOUT }),
-            { room: 'intake-1' });
+    it('ties it to no HN when the patient left a lounge and the service does not know their room', () => {
+        assert.deepEqual(placeSurvey({ identityId: 'patient-3', room: 'Lounge-1', state: started.state, layout: LAYOUT }),
+            { room: 'lounge-1' });
     });
 
     it('keeps the HN when no encounter has it', () => {

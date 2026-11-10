@@ -5,7 +5,7 @@
  */
 import { HttpError } from './http.ts';
 import { backendSafeRoomName } from './roomName.ts';
-import type { ILayout } from './rooms.ts';
+import { type ILayout, stationsOf } from './rooms.ts';
 import type { IState, Stage } from './rules.ts';
 
 export const SURVEY_TAGS = [ 'picture', 'sound', 'wait', 'disconnected', 'explained', 'kind' ] as const;
@@ -19,7 +19,7 @@ export type SurveyTag = typeof SURVEY_TAGS[number];
 /** A part of the service rated on its own, from 5 (very much) to 1 (very little). */
 export type SurveyAspect = typeof SURVEY_ASPECTS[number];
 
-/** The room a survey was answered after leaving: a station's name, or `own_room` for the patient's own room. */
+/** The room a survey was answered after leaving: a lounge's name, or `own_room` for the patient's own room. */
 export type SurveyRoom = string;
 
 /** What the patient answered, and the room they left as the page reports it. */
@@ -118,12 +118,12 @@ function sameRoom(reported: string, name: string): boolean {
 
 /**
  * Ties a survey to the patient's HN and encounter. The HN comes from the patient's own room as the service learned
- * it; failing that, from the room left, when that is not a station or a lounge, as every other room is a patient's
- * room named after their HN.
+ * it; failing that, from the room left, when that is not a lounge, as every other room is a patient's room named after
+ * their HN.
  *
  * @param {Object} options - Options.
  * @param {string} options.identityId - The patient's verified identity id.
- * @param {ILayout} options.layout - The stations and lounges.
+ * @param {ILayout} options.layout - The stations, with their lounges.
  * @param {string} options.room - The room left, as the page reports it.
  * @param {IState} options.state - The service's state.
  * @returns {ISurveyPlace}
@@ -134,10 +134,10 @@ export function placeSurvey({ identityId, layout, room, state }: {
     room: string;
     state: IState;
 }): ISurveyPlace {
-    const fixed = [ ...layout.stations, ...layout.lounges ].find(r => sameRoom(room, r.room));
+    const lounge = stationsOf(layout).find(s => sameRoom(room, s.lounge))?.lounge;
     const known = state.patientRooms[identityId];
-    const hnRoom = known ?? (fixed ? undefined : room);
-    const where = { room: fixed?.room ?? 'own_room' };
+    const hnRoom = known ?? (lounge ? undefined : room);
+    const where = { room: lounge ?? 'own_room' };
 
     if (!hnRoom) {
         return where;

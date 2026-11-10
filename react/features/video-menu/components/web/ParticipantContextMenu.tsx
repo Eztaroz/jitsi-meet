@@ -11,7 +11,12 @@ import Avatar from '../../../base/avatar/components/Avatar';
 import { isIosMobileBrowser, isMobileBrowser } from '../../../base/environment/utils';
 import { MEDIA_TYPE } from '../../../base/media/constants';
 import { PARTICIPANT_ROLE } from '../../../base/participants/constants';
-import { getLocalParticipant, hasRaisedHand, isPrivateChatEnabled } from '../../../base/participants/functions';
+import {
+    getLocalParticipant,
+    hasRaisedHand,
+    isPatientParticipant,
+    isPrivateChatEnabled
+} from '../../../base/participants/functions';
 import { IParticipant } from '../../../base/participants/types';
 import { isParticipantAudioMuted } from '../../../base/tracks/functions.any';
 import ContextMenu from '../../../base/ui/components/web/ContextMenu';
@@ -140,6 +145,9 @@ const ParticipantContextMenu = ({
 
     const localParticipant = useSelector(getLocalParticipant);
     const _isModerator = Boolean(localParticipant?.role === PARTICIPANT_ROLE.MODERATOR);
+
+    // Kicking or demoting a patient would take them out of their own room (ADR 0011, 0012).
+    const _isPatient = useSelector((state: IReduxState) => isPatientParticipant(state, participant));
     const _isVideoForceMuted = useSelector<IReduxState>(state =>
         isForceMuted(participant, AVM_MEDIA_TYPE.VIDEO, state));
     const _isDesktopForceMuted = useSelector<IReduxState>(state =>
@@ -281,11 +289,11 @@ const ParticipantContextMenu = ({
             buttons2.push(<GrantModeratorButton { ...getButtonProps(BUTTONS.GRANT_MODERATOR) } />);
         }
 
-        if (!disableDemote && visitorsSupported && _isModerator) {
+        if (!disableDemote && visitorsSupported && _isModerator && !_isPatient) {
             buttons2.push(<DemoteToVisitorButton { ...getButtonProps(BUTTONS.DEMOTE) } />);
         }
 
-        if (!disableKick) {
+        if (!disableKick && !_isPatient) {
             buttons2.push(<KickButton { ...getButtonProps(BUTTONS.KICK) } />);
         }
 

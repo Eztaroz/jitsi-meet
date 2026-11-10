@@ -612,6 +612,13 @@ export interface IConfig {
         hideMoreActionsButton?: boolean;
         hideMuteAllButton?: boolean;
     };
+    /**
+     * Marks the participants who are patients, in the form "user.<claim>=<value>" for a claim in the participant's
+     * token context.user, e.g. "user.hospital_role=patient". Staff in a patient's own room get no "end meeting for
+     * all", and no kick or demote-to-visitor for the patient. Prosody refuses the same actions, so this only hides
+     * the buttons.
+     */
+    patientMarker?: string;
     pcStatsInterval?: number;
     peopleSearchQueryTypes?: string[];
     peopleSearchTokenLocation?: string;
@@ -727,6 +734,11 @@ export interface IConfig {
      * @deprecated Use `speakerStats.order` instead.
      */
     speakerStatsOrder?: Array<'role' | 'name' | 'hasLeft'>;
+    /**
+     * Where the coordinator service's API is, for the staff's own requests (see react/features/staff-actions): the
+     * web server's proxy of it. Defaults to "/coordinator" on the page's own origin.
+     */
+    staffApiUrl?: string;
     startAudioMuted?: number;
     startLastN?: number;
     startLowBandwidthMode?: boolean;
@@ -809,6 +821,11 @@ export interface IConfig {
     };
     useHostPageLocalStorage?: boolean;
     useTurnUdp?: boolean;
+    /**
+     * Marks the video player, in the form "user.<claim>=<value>" like {@code patientMarker}. A patient's client gives
+     * no menu on the video player's tile, so the patient cannot stop, mute or hide the video.
+     */
+    videoPlayerMarker?: string;
     videoQuality?: {
         codecPreferenceOrder?: Array<string>;
         maxBitratesVideo?: {

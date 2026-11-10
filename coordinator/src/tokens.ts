@@ -33,7 +33,7 @@ export function destinationClaims({ audience, identity, issuer, lifetimeMs, mark
 }): Record<string, unknown> {
     const user: Record<string, string> = {};
     const context: { group?: string; user: Record<string, string>; } = { user };
-    const marker = role === 'patient' ? markers.patient : role === 'staff' ? markers.staff : undefined;
+    const marker = { patient: markers.patient, staff: markers.staff, video_player: markers.videoPlayer }[role as string];
 
     if (identity.id) {
         user.id = identity.id;

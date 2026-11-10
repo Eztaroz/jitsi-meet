@@ -84,8 +84,12 @@ describe('Coordinator: open rooms and their occupants', () => {
         expect(ids).toContain(await staff.getEndpointId());
     });
 
-    it('drops the room once the meeting has ended', async () => {
-        await patient.getToolbar().clickEndMeetingForAllButton();
+    it('drops the room once everyone has left', async () => {
+        // Nobody can end a patient's own room for everyone (ADR 0012).
+        // Staff leave first: once the patient has gone, the staff member is a moderator of a room without a patient and
+        // their hangup button opens a menu instead of leaving.
+        await staff.getToolbar().clickHangupButton();
+        await patient.getToolbar().clickHangupButton();
         await waitForRoom(r => r === undefined, hn, 'the room to close', 60_000);
     });
 });

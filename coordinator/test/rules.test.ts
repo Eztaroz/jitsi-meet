@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, PREPARE_WAIT_MS, initialState, step } from '../src/rules.ts';
+import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, type IState, initialState, step } from '../src/rules.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
 
@@ -175,266 +175,165 @@ describe('moving a staff member', () => {
 
 });
 
-describe('moving a patient', () => {
-    // pat-1 was seen in their own room, home-room, which is closed now; they are in a station.
-    const knowingHome = { ...initialState(), patientRooms: { 'pat-1': 'home-room' } };
-    const away = { kind: 'station' as const, name: 'patient-a', occupants: [ { endpointId: 'e-pat', identity: { id: 'pat-1' }, role: 'patient' as const } ] };
+describe('a patient', () => {
     const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
-    const here = { name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
-    const station = { kind: 'station' as const, name: 'intake-1', occupants: [ occupant('e-nurse', 'n-1', 'staff') ] };
-    const lounge = { kind: 'lounge' as const, name: 'lounge-1', occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
-    const other = { name: 'patient-b', occupants: [ occupant('e-pat2', 'pat-2', 'patient') ] };
-    const request = (rooms: unknown[], toRoom: string) => ({
+    const here = { kind: 'patient' as const, name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
+    const lounge = {
+        kind: 'lounge' as const, name: 'lounge-intake', occupants: [ occupant('e-nurse', 'n-1', 'staff') ], station: 'intake'
+    };
+    const other = { kind: 'patient' as const, name: 'patient-b', occupants: [ occupant('e-pat2', 'pat-2', 'patient') ] };
+    const request = (toRoom: string) => ({
         at: T0,
         endpointId: 'e-pat',
         fromRoom: 'patient-a',
-        rooms: rooms as never,
+        rooms: [ here, lounge, other ],
         toRoom,
         type: 'request_move' as const
     });
 
-    it('is refused another patient\'s open room, whoever is in it', () => {
-        const { commands, move } = step(initialState(), request([ here, other ], 'patient-b'));
+    it('is never moved, wherever to: the move is refused with its reason and nothing is sent', () => {
+        for (const toRoom of [ 'lounge-intake', 'patient-b', 'patient-c' ]) {
+            const { commands, move, state } = step(initialState(), request(toRoom));
 
-        assert.equal(move?.state, 'refused');
-        assert.equal(move?.reason, 'not_the_patients_room');
-        assert.deepEqual(commands, []);
+            assert.equal(move?.state, 'refused', toRoom);
+            assert.equal(move?.reason, 'patients_never_move', toRoom);
+            assert.deepEqual(commands, [], toRoom);
+            assert.equal(state.moves[0].reason, 'patients_never_move', toRoom);
+        }
     });
 
-    it('is refused another HN\'s open room that holds only staff', () => {
-        const staffOnly = { name: 'patient-b', occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
-        const { commands, move } = step(initialState(), request([ here, staffOnly ], 'patient-b'));
+    it('still has their own room learned, for the surveys', () => {
+        const { state } = step(initialState(), request('lounge-intake'));
 
-        assert.equal(move?.reason, 'not_the_patients_room');
-        assert.deepEqual(commands, []);
+        assert.deepEqual(state.patientRooms, { 'pat-1': 'patient-a', 'pat-2': 'patient-b' });
     });
+});
 
-    it('is refused another HN\'s closed room, and the recorder bot is not asked to open it', () => {
-        const { commands, move } = step(initialState(), request([ here ], 'patient-c'));
+describe('a staff member\'s station', () => {
+    const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
+    const lounge = (name: string, station: string, ...occupants: ReturnType<typeof occupant>[]) => {
+        return { kind: 'lounge' as const, name, occupants, station };
+    };
+    const patientRoom = { kind: 'patient' as const, name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
 
-        assert.equal(move?.state, 'refused');
-        assert.equal(move?.reason, 'not_the_patients_room');
-        assert.deepEqual(commands, []);
-    });
-
-    it('is refused another HN\'s room even when it is configured as closed and empty', () => {
-        const closed = { name: 'patient-c', occupants: [], open: false };
-        const { move } = step(initialState(), request([ here, closed ], 'patient-c'));
-
-        assert.equal(move?.reason, 'not_the_patients_room');
-    });
-
-    it('is refused any patient\'s own room while their own room is not known', () => {
-        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat', 'pat-9', 'patient') ] };
-        const { commands, move } = step(initialState(), {
-            ...request([ inStation, other ], 'patient-b'), fromRoom: 'intake-1'
+    it('is learned from the lounge they are seen in', () => {
+        const { state } = step(initialState(), {
+            at: T0, rooms: [ lounge('lounge-intake', 'intake', occupant('e-nurse', 'n-1', 'staff')) ], type: 'rooms_snapshot'
         });
 
-        assert.equal(move?.reason, 'not_the_patients_room');
+        assert.deepEqual(state.staffStations, { 'n-1': 'intake' });
+    });
+
+    it('stays while they are in a patient\'s room, and changes when they are seen in another lounge', () => {
+        const seen = step(initialState(), {
+            at: T0, rooms: [ lounge('lounge-intake', 'intake', occupant('e-nurse', 'n-1', 'staff')) ], type: 'rooms_snapshot'
+        });
+        const visiting = step(seen.state, {
+            at: T0,
+            rooms: [ { ...patientRoom, occupants: [ ...patientRoom.occupants, occupant('e-nurse2', 'n-1', 'staff') ] } ],
+            type: 'rooms_snapshot'
+        });
+        const changed = step(visiting.state, {
+            at: T0, rooms: [ lounge('lounge-aftercare', 'aftercare', occupant('e-nurse3', 'n-1', 'staff')) ], type: 'rooms_snapshot'
+        });
+
+        assert.equal(visiting.state.staffStations['n-1'], 'intake');
+        assert.equal(changed.state.staffStations['n-1'], 'aftercare');
+    });
+
+    it('is not learned for a patient, nor from a patient\'s room', () => {
+        const { state } = step(initialState(), {
+            at: T0,
+            rooms: [
+                lounge('lounge-intake', 'intake', occupant('e-pat', 'pat-1', 'patient')),
+                { ...patientRoom, occupants: [ occupant('e-doc', 'd-1', 'staff') ] }
+            ],
+            type: 'rooms_snapshot'
+        });
+
+        assert.deepEqual(state.staffStations, {});
+    });
+
+    it('leaves the state as it was when nothing is new', () => {
+        const rooms = [ lounge('lounge-intake', 'intake', occupant('e-nurse', 'n-1', 'staff')) ];
+        const seen = step(initialState(), { at: T0, rooms, type: 'rooms_snapshot' });
+        const again = step(seen.state, { at: T0, rooms, type: 'rooms_snapshot' });
+
+        assert.equal(again.state, seen.state);
+    });
+});
+
+describe('moving a staff member between lounges and patients\' rooms', () => {
+    const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
+    const nurse = occupant('e-nurse', 'n-1', 'staff');
+    const patientRoom = { kind: 'patient' as const, name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient'), nurse ] };
+    const closedLounge = { kind: 'lounge' as const, name: 'lounge-intake', occupants: [], open: false, station: 'intake' };
+    const move = (rooms: unknown[], toRoom: string) => step(initialState(), {
+        at: T0, endpointId: 'e-nurse', fromRoom: 'patient-a', rooms: rooms as never, toRoom, type: 'request_move'
+    });
+
+    it('may go back to a lounge nobody is in', () => {
+        const { commands, move: moved } = move([ patientRoom, closedLounge ], 'lounge-intake');
+
+        assert.equal(moved?.state, 'counting_down');
+        assert.deepEqual(commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
+    });
+
+    it('is refused a patient\'s room that is closed', () => {
+        const closed = { kind: 'patient' as const, name: 'patient-b', occupants: [], open: false };
+        const { commands, move: refused } = move([ patientRoom, closed ], 'patient-b');
+
+        assert.equal(refused?.reason, 'destination_not_open');
         assert.deepEqual(commands, []);
     });
 
-    it('may go back to their own room while it is open', () => {
-        const seen = step(initialState(), { at: T0, rooms: [ here ] as never, type: 'rooms_snapshot' });
-        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat', 'pat-1', 'patient') ] };
-        const back = step(seen.state, {
-            ...request([ inStation, { ...here, occupants: [ occupant('e-doc2', 'd-2', 'staff') ] } ], 'patient-a'),
-            fromRoom: 'intake-1'
+    it('may go into another patient\'s open room', () => {
+        const other = { kind: 'patient' as const, name: 'patient-b', occupants: [ occupant('e-pat2', 'pat-2', 'patient') ] };
+
+        assert.equal(move([ patientRoom, other ], 'patient-b').move?.state, 'counting_down');
+    });
+});
+
+describe('a move that cannot go on', () => {
+    const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
+    const lounge = { kind: 'lounge' as const, name: 'lounge-intake', occupants: [ occupant('e-nurse', 'n-1', 'staff') ], station: 'intake' };
+    const patientRoom = { kind: 'patient' as const, name: 'patient-a', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
+
+    it('fails with its reason when its command could not be sent', () => {
+        const started = step(initialState(), {
+            at: T0, endpointId: 'e-nurse', fromRoom: 'lounge-intake', rooms: [ lounge, patientRoom ], toRoom: 'patient-a',
+            type: 'request_move'
         });
-
-        assert.equal(back.move?.state, 'counting_down');
-    });
-
-    it('is refused a lounge, open or closed', () => {
-        const open = step(initialState(), request([ here, lounge ], 'lounge-1'));
-        const closed = step(initialState(), request([ here, { ...lounge, occupants: [], open: false } ], 'lounge-1'));
-
-        assert.equal(open.move?.reason, 'patient_into_lounge');
-        assert.equal(closed.move?.reason, 'patient_into_lounge');
-    });
-
-    it('may go back to their own room while it is closed: the recorder bot is asked first, and nothing is sent yet', () => {
-        const { commands, move } = step(knowingHome, request([ away ], 'home-room'));
-
-        assert.equal(move?.state, 'preparing');
-        assert.deepEqual(commands, [
-            { hn: 'home-room', moveId: move?.id, type: 'prepare_destination' },
-            { afterMs: PREPARE_WAIT_MS, moveId: move?.id, timer: 'move_prepare', type: 'start_timer' }
-        ]);
-    });
-
-    it('is sent, and waits for the arrival, once the recorder bot is in the destination', () => {
-        const preparing = step(knowingHome, request([ away ], 'home-room'));
-        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
-
-        assert.equal(ready.state.moves[0].state, 'counting_down');
-        assert.deepEqual(ready.commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
-    });
-
-    it('fails, with its reason, when the recorder bot is at capacity, and nothing is sent', () => {
-        const preparing = step(knowingHome, request([ away ], 'home-room'));
-        const failed = step(preparing.state, {
-            at: T0, moveId: preparing.move?.id as string, reason: 'recorder_bot_at_capacity', type: 'destination_failed'
+        const failed = step(started.state, {
+            at: T0, moveId: started.move?.id as string, reason: 'could_not_send_move', type: 'move_failed'
         });
 
         assert.equal(failed.state.moves[0].state, 'failed');
-        assert.equal(failed.state.moves[0].reason, 'recorder_bot_at_capacity');
+        assert.equal(failed.state.moves[0].reason, 'could_not_send_move');
         assert.deepEqual(failed.commands, []);
     });
 
-    it('fails when the recorder bot is not ready in time', () => {
-        const preparing = step(knowingHome, request([ away ], 'home-room'));
-        const failed = step(preparing.state, {
-            at: new Date(T0.getTime() + PREPARE_WAIT_MS), moveId: preparing.move?.id as string,
-            timer: 'move_prepare', type: 'timer_fired'
-        });
+    it('fails a move left preparing from when patients were moved', () => {
+        const legacy: IState = {
+            ...initialState(),
+            moves: [ {
+                destination: 'intake-1', endpointId: 'e-pat', id: 'm-1', identityId: 'pat-1', origin: 'patient-a',
+                startedAt: T0, state: 'preparing'
+            } ]
+        };
+        const failed = step(legacy, { at: T0, moveId: 'm-1', reason: 'patient_moves_retired', type: 'move_failed' });
 
         assert.equal(failed.state.moves[0].state, 'failed');
-        assert.equal(failed.state.moves[0].reason, 'recorder_bot_not_ready');
+        assert.equal(failed.state.moves[0].reason, 'patient_moves_retired');
     });
 
-    it('ignores the preparation timer once the move is sent', () => {
-        const preparing = step(knowingHome, request([ away ], 'home-room'));
-        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
-        const late = step(ready.state, { at: T0, moveId: preparing.move?.id as string, timer: 'move_prepare', type: 'timer_fired' });
+    it('leaves a move that has ended as it was', () => {
+        const legacy: IState = {
+            ...initialState(),
+            moves: [ { destination: 'x', endpointId: 'e', id: 'm-1', origin: 'y', startedAt: T0, state: 'done' } ]
+        };
+        const same = step(legacy, { at: T0, moveId: 'm-1', reason: 'could_not_send_move', type: 'move_failed' });
 
-        assert.equal(late.state.moves[0].state, 'counting_down');
-    });
-
-    it('is refused a closed station, for now', () => {
-        const closed = { ...station, occupants: [], open: false };
-        const { move } = step(initialState(), request([ here, closed ], 'intake-1'));
-
-        assert.equal(move?.reason, 'destination_not_open');
-    });
-
-    it('does not make a second move while one is being prepared', () => {
-        const preparing = step(knowingHome, request([ away ], 'home-room'));
-        const second = step(preparing.state, request([ away ], 'home-room'));
-
-        assert.equal(second.move?.reason, 'already_being_moved');
-    });
-
-    it('a staff member is still refused a closed room', () => {
-        const staffInLounge = { kind: 'lounge' as const, name: 'lounge-1', occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
-        const { move } = step(initialState(), {
-            at: T0, endpointId: 'e-doc', fromRoom: 'lounge-1', rooms: [ staffInLounge ] as never, toRoom: 'closed', type: 'request_move'
-        });
-
-        assert.equal(move?.reason, 'destination_not_open');
-    });
-
-    it('fails a move that could not be sent, whichever way it was waiting', () => {
-        const preparing = step(knowingHome, request([ away ], 'home-room'));
-        const sentFail = step(preparing.state, {
-            at: T0, moveId: preparing.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
-        });
-
-        assert.equal(sentFail.state.moves[0].reason, 'could_not_send_move');
-        assert.equal(sentFail.state.moves[0].state, 'failed');
-
-        const counting = step(initialState(), request([ here, station ], 'intake-1'));
-        const failed = step(counting.state, {
-            at: T0, moveId: counting.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
-        });
-
-        assert.equal(failed.state.moves[0].state, 'failed');
-    });
-
-});
-
-describe('moving a patient into a station', () => {
-    const occupant = (endpointId: string, id: string, role: 'patient' | 'staff') => ({ endpointId, identity: { id }, role });
-    const home = { kind: 'patient' as const, name: 'home-1', occupants: [ occupant('e-pat', 'pat-1', 'patient') ] };
-    const station = { kind: 'station' as const, name: 'intake-1', occupants: [ occupant('e-nurse', 'n-1', 'staff') ] };
-    const station2 = { kind: 'station' as const, name: 'aftercare-1', occupants: [ occupant('e-nurse2', 'n-2', 'staff') ] };
-    const request = (rooms: unknown[], over = {}) => ({
-        at: T0,
-        endpointId: 'e-pat',
-        fromRoom: 'home-1',
-        rooms: rooms as never,
-        toRoom: 'intake-1',
-        type: 'request_move' as const,
-        ...over
-    });
-
-    it('asks the recorder bot to record the patient in the station first, under their HN, and sends nothing yet', () => {
-        const { commands, move } = step(initialState(), request([ home, station ]));
-
-        assert.equal(move?.state, 'preparing');
-        assert.deepEqual(commands, [
-            {
-                hn: 'home-1', moveId: move?.id, station: { patientId: 'pat-1', room: 'intake-1' }, type: 'prepare_destination'
-            },
-            { afterMs: PREPARE_WAIT_MS, moveId: move?.id, timer: 'move_prepare', type: 'start_timer' }
-        ]);
-    });
-
-    it('is sent once the recorder bot is in the station', () => {
-        const preparing = step(initialState(), request([ home, station ]));
-        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
-
-        assert.deepEqual(ready.commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
-    });
-
-    it('knows the HN of a patient who is in a station, from where it saw them before', () => {
-        const seen = step(initialState(), { at: T0, rooms: [ home, station ] as never, type: 'rooms_snapshot' });
-        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat3', 'pat-1', 'patient') ] };
-        const { commands, move } = step(seen.state, request(
-            [ { ...home, occupants: [] }, inStation, station2 ],
-            { endpointId: 'e-pat3', fromRoom: 'intake-1', toRoom: 'aftercare-1' }));
-
-        assert.equal(move?.state, 'preparing');
-        assert.deepEqual(commands[0], {
-            hn: 'home-1', moveId: move?.id, station: { patientId: 'pat-1', room: 'aftercare-1' }, type: 'prepare_destination'
-        });
-    });
-
-    it('refuses a patient whose room is not known', () => {
-        const inStation = { ...station, occupants: [ ...station.occupants, occupant('e-pat3', 'pat-1', 'patient') ] };
-        const { commands, move } = step(initialState(), request(
-            [ inStation, station2 ], { endpointId: 'e-pat3', fromRoom: 'intake-1', toRoom: 'aftercare-1' }));
-
-        assert.equal(move?.reason, 'patient_room_unknown');
-        assert.deepEqual(commands, []);
-    });
-
-    it('stops the station consultation when the patient cancels', () => {
-        const preparing = step(initialState(), request([ home, station ]));
-        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
-        const cancelling = { ...home, occupants: [ { ...home.occupants[0], cancelledMove: preparing.move?.id } ] };
-        const cancelled = step(ready.state, { at: T0, rooms: [ cancelling, station ] as never, type: 'rooms_snapshot' });
-
-        assert.equal(cancelled.state.moves[0].state, 'cancelled');
-        assert.deepEqual(cancelled.commands, [ { moveId: preparing.move?.id, type: 'stop_station_consultation' } ]);
-    });
-
-    it('stops it when the patient does not arrive, and when the move could not be sent', () => {
-        const preparing = step(initialState(), request([ home, station ]));
-        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
-        const late = step(ready.state, { at: T0, moveId: preparing.move?.id as string, timer: 'move_arrival', type: 'timer_fired' });
-        const unsent = step(ready.state, {
-            at: T0, moveId: preparing.move?.id as string, reason: 'could_not_send_move', type: 'destination_failed'
-        });
-
-        assert.deepEqual(late.commands, [ { moveId: preparing.move?.id, type: 'stop_station_consultation' } ]);
-        assert.deepEqual(unsent.commands, [ { moveId: preparing.move?.id, type: 'stop_station_consultation' } ]);
-    });
-
-    it('lets the consultation run when the patient arrives', () => {
-        const preparing = step(initialState(), request([ home, station ]));
-        const ready = step(preparing.state, { at: T0, moveId: preparing.move?.id as string, type: 'destination_ready' });
-        const arrived = { ...station, occupants: [ ...station.occupants, occupant('e-new', 'pat-1', 'patient') ] };
-        const done = step(ready.state, { at: T0, rooms: [ arrived ] as never, type: 'rooms_snapshot' });
-
-        assert.equal(done.state.moves[0].state, 'done');
-        assert.deepEqual(done.commands, []);
-    });
-
-    it('does not prepare anything for a staff member', () => {
-        const staffInHome = { ...home, occupants: [ occupant('e-doc', 'd-1', 'staff') ] };
-        const { commands } = step(initialState(), request([ staffInHome, station ], { endpointId: 'e-doc' }));
-
-        assert.deepEqual(commands.map(c => c.type), [ 'send_move', 'start_timer' ]);
+        assert.equal(same.state, legacy);
     });
 });

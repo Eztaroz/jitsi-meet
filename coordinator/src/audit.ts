@@ -6,17 +6,23 @@
 import { createHmac } from 'node:crypto';
 
 import { backendSafeRoomName } from './roomName.ts';
-import type { ILayout } from './rooms.ts';
+import { type ILayout, stationsOf } from './rooms.ts';
 import type { IMove, Stage } from './rules.ts';
 
 export interface IAuditEntry {
+
+    /** For a video entry, what was asked: `play`, `stop` or `choose` (the video of a stage). */
+    action?: 'choose' | 'play' | 'stop';
     at: Date;
 
     /** How many surveys an export held. */
     count?: number;
 
-    /** A move's destination: a station's or a lounge's name, or a keyed reference. */
+    /** A move's destination: a lounge's name, or a keyed reference to a patient's room. */
     destination?: string;
+
+    /** The doctor a doctor change set; absent when it took the doctor away. */
+    doctor?: string;
 
     /** An encounter's id. */
     encounterId?: string;
@@ -24,31 +30,43 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'move' | 'stage' | 'survey_export';
+    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'survey_export' | 'video';
     outcome: string;
 
     /** The moved participant's verified identity id. */
     participantId?: string;
+
+    /** The doctor a doctor change replaced. */
+    previousDoctor?: string;
+
+    /** The id of the questionnaire of the catalogue that was sent. */
+    questionnaire?: string;
     reason?: string;
 
-    /** A move's origin: a station's or a lounge's name, or a keyed reference. */
+    /** A move's origin: a lounge's name, or a keyed reference to a patient's room. */
     source?: string;
+
+    /** For a video choice, the stage it is for. */
+    stage?: string;
     to?: Stage;
+
+    /** For a video entry, the video's id in the catalogue. */
+    video?: string;
 }
 
 /**
- * Refers to a room. A station or a lounge is named as it is; any other room is a patient's, named by their HN, and is
+ * Refers to a room. A station's lounge is named as it is; any other room is a patient's, named by their HN, and is
  * referred to by a keyed reference.
  *
  * @param {string} key - The key of the references.
  * @param {string} room - The room.
- * @param {ILayout} layout - The configured rooms.
+ * @param {ILayout} layout - The stations, with their lounges.
  * @returns {string}
  */
 export function auditRef(key: string, room: string, layout: ILayout): string {
     const safe = backendSafeRoomName(room);
 
-    if ([ ...layout.stations, ...layout.lounges ].some(r => backendSafeRoomName(r.room) === safe)) {
+    if (stationsOf(layout).some(s => backendSafeRoomName(s.lounge) === safe)) {
         return room;
     }
 
@@ -63,7 +81,7 @@ export function auditRef(key: string, room: string, layout: ILayout): string {
  * @param {Date} options.at - When it ended.
  * @param {string} options.issuer - Who asked.
  * @param {string} options.key - The key of the references.
- * @param {ILayout} options.layout - The configured rooms.
+ * @param {ILayout} options.layout - The stations, with their lounges.
  * @returns {IAuditEntry}
  */
 export function moveEntry(move: IMove, { at, issuer, key, layout }: {
@@ -100,4 +118,75 @@ export function stageEntry({ at, encounterId, from, issuer, outcome, reason, to 
     to: Stage;
 }): IAuditEntry {
     return { at, encounterId, from, issuer, kind: 'stage', outcome, reason, to };
+}
+
+/**
+ * The entry of a change of an encounter's doctor.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function doctorEntry({ at, doctor, encounterId, issuer, outcome, previousDoctor, reason }: {
+    at: Date;
+    doctor?: string;
+    encounterId: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    previousDoctor?: string;
+    reason?: string;
+}): IAuditEntry {
+    return { at, doctor, encounterId, issuer, kind: 'doctor', outcome, previousDoctor, reason };
+}
+
+/**
+ * The entry of a waiting video being played or stopped.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function videoEntry({ action, at, encounterId, issuer, outcome, reason, stage, video }: {
+    action: 'choose' | 'play' | 'stop';
+    at: Date;
+    encounterId: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    reason?: string;
+    stage?: string;
+    video?: string;
+}): IAuditEntry {
+    return { action, at, encounterId, issuer, kind: 'video', outcome, reason, stage, video };
+}
+
+/**
+ * The entry of a health questionnaire sent to a patient, or refused. It names the encounter, never the patient.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function questionnaireEntry({ at, encounterId, issuer, outcome, questionnaire, reason }: {
+    at: Date;
+    encounterId: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    questionnaire: string;
+    reason?: string;
+}): IAuditEntry {
+    return { at, encounterId, issuer, kind: 'questionnaire_sent', outcome, questionnaire, reason };
+}
+
+/**
+ * The entry of a staff member's call for the next patient. It names the encounter called, if there was one, not the
+ * patient.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function callNextEntry({ at, encounterId, issuer, outcome, reason }: {
+    at: Date;
+    encounterId?: string;
+    issuer: string;
+    outcome: 'ok' | 'refused';
+    reason?: string;
+}): IAuditEntry {
+    return { at, encounterId, issuer, kind: 'call_next', outcome, reason };
 }

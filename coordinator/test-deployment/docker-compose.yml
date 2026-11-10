@@ -18,6 +18,11 @@ services:
             - ../../coordinator/test-deployment/keys/asap:/usr/share/jitsi-meet/.well-known/coordinator:ro
             # Proxies /coordinator/ to the coordinator service over this server's TLS (ADR 0008).
             - ../../coordinator/deploy/nginx/coordinator.conf:/config/nginx-custom/coordinator.conf:ro
+            # Marks patients for the client, which hides the buttons that end a patient's room or remove the patient.
+            - ../../coordinator/test-deployment/custom-config.js:/config/custom-config.js:ro
+            # The waiting videos, at /videos/ (run videos/generate.sh first).
+            - ../../coordinator/test-deployment/videos:/usr/share/jitsi-meet/videos:ro
+            - ../../coordinator/test-deployment/videos.conf:/config/nginx-custom/videos.conf:ro
 
     prosody:
         # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
@@ -25,6 +30,9 @@ services:
             - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
             - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
             - ../../resources/prosody-plugins/mod_muc_patient_never_moderator.lua:/prosody-plugins-custom/mod_muc_patient_never_moderator.lua:ro
+            - ../../resources/prosody-plugins/patient_marker.lib.lua:/prosody-plugins-custom/patient_marker.lib.lua:ro
+            # Refuses the end of a patient's room for everyone; reads the MUC component's muc_patient_marker.
+            - ../../resources/prosody-plugins/mod_end_conference.lua:/prosody-plugins-custom/mod_end_conference.lua:ro
         environment:
             ENABLE_BREAKOUT_ROOMS: 'false'
             # Refuses a client that does not announce that it obeys moves, apart from the hosts listed in
@@ -53,8 +61,26 @@ services:
 
     recorder-bot:
         environment:
-            # Room for the specs that record at the same time; moveCapacity.spec.ts fills it, and runs alone.
+            # Room for the specs that record at the same time.
             RECORDER_BOT_MAX_CONSULTATIONS: 12
+            # Records the video player under its own role.
+            RECORDER_BOT_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
+
+    video-player:
+        image: video-player:local
+        build: ../../video-player
+        restart: unless-stopped
+        init: true
+        ipc: host
+        # On the host network, like the recorder bot: its Chromium reaches the web server on localhost and the
+        # videobridge on its advertised 127.0.0.1. Port 8094, as 8090 to 8093 are the recorder bot services'.
+        network_mode: host
+        environment:
+            VIDEO_PLAYER_API_PORT: 8094
+            VIDEO_PLAYER_API_SECRET: video-player-test-secret
+            VIDEO_PLAYER_JITSI_URL: https://localhost:8443
+            VIDEO_PLAYER_IGNORE_CERTIFICATE_ERRORS: 'true'
+            VIDEO_PLAYER_MAX_ROOMS: 3
 
     coordinator:
         image: coordinator:local
@@ -78,9 +104,6 @@ services:
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
             # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
             COORDINATOR_RETENTION_SWEEP_SECONDS: 2
-            # Short, so that the spec of a destination the recorder bot cannot open in time does not take half a minute;
-            # long enough for the recorder bot to open a room in the other specs. Production waits 30 seconds.
-            COORDINATOR_PREPARE_WAIT_SECONDS: 15
             COORDINATOR_PROSODY_URL: http://prosody:5280
             COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
             COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
@@ -90,8 +113,13 @@ services:
             COORDINATOR_SIGNING_KID: coordinator-test/key
             COORDINATOR_STAFF_MARKER: user.hospital_role=staff
             COORDINATOR_TOKEN_SUBJECT: coordinator-test
+            COORDINATOR_VIDEO_PLAYER_URL: http://host.docker.internal:8094
+            COORDINATOR_VIDEO_PLAYER_SECRET: video-player-test-secret
+            COORDINATOR_VIDEO_BASE_URL: https://localhost:8443/
+            COORDINATOR_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
         depends_on:
             - recorder-bot
+            - video-player
             - prosody
 
 volumes:

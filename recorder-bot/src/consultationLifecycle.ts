@@ -6,19 +6,14 @@
  * timers of its own: the caller runs the timers it asks for and reports back with a `timer_fired` event.
  */
 
-export type Role = 'staff' | 'patient' | 'unknown';
-export type Timer = 'first_join' | 'empty_room' | 'patient_arrival';
+/** The video player is neither staff nor the patient: a visible, non-human participant that plays a video. */
+export type Role = 'staff' | 'patient' | 'video_player' | 'unknown';
+export type Timer = 'first_join' | 'empty_room';
 export type StopReason =
     | 'room_destroyed'
     | 'no_humans_for_grace'
     | 'no_one_joined'
     | 'kicked'
-
-    /** In a station: the patient left, though staff stay (ADR 0006). */
-    | 'patient_left'
-
-    /** In a station: the patient did not arrive in time. */
-    | 'patient_did_not_arrive'
 
     /** The service was asked to stop it before its time. */
     | 'stop_requested'
@@ -161,15 +156,6 @@ export interface ILifecycleOptions {
 
     /** How long to wait for the first human after the bot joined. Defaults to 10 minutes. */
     firstJoinMs?: number;
-
-    /**
-     * Makes this the consultation of one patient in a station (ADR 0006): the verified identity id of the patient.
-     * It stops as soon as that patient leaves, though staff stay, and when the patient does not arrive in time.
-     */
-    patientId?: string;
-
-    /** In a station: how long to wait for the patient after the bot joined. Defaults to 60 seconds. */
-    patientWaitMs?: number;
 }
 
 export interface ILifecycleResult {
@@ -203,13 +189,6 @@ export interface IConsultationLifecycle {
     participants: () => IParticipant[];
 
     /**
-     * Tells whether the station's patient was ever in the room. Always false outside a station.
-     *
-     * @returns {boolean}
-     */
-    patientArrived: () => boolean;
-
-    /**
      * Returns the staff visits so far, in the order they started. A visit still open when the consultation stopped
      * ends at the stop time.
      *
@@ -227,7 +206,6 @@ export interface IConsultationLifecycle {
 
 export const DEFAULT_FIRST_JOIN_MS = 10 * 60 * 1000;
 export const DEFAULT_EMPTY_ROOM_MS = 60 * 1000;
-export const DEFAULT_PATIENT_WAIT_MS = 60 * 1000;
 
 /**
  * Returns a result with no entries and no commands.
@@ -240,8 +218,7 @@ function nothing(): ILifecycleResult {
 
 const TIMER_STOP_REASONS: Record<Timer, StopReason> = {
     'empty_room': 'no_humans_for_grace',
-    'first_join': 'no_one_joined',
-    'patient_arrival': 'patient_did_not_arrive'
+    'first_join': 'no_one_joined'
 };
 
 /**
@@ -253,13 +230,11 @@ const TIMER_STOP_REASONS: Record<Timer, StopReason> = {
 export function createConsultationLifecycle(options: ILifecycleOptions = {}): IConsultationLifecycle {
     const firstJoinMs = options.firstJoinMs ?? DEFAULT_FIRST_JOIN_MS;
     const emptyRoomMs = options.emptyRoomMs ?? DEFAULT_EMPTY_ROOM_MS;
-    const patientWaitMs = options.patientWaitMs ?? DEFAULT_PATIENT_WAIT_MS;
 
-    /** The endpoints of the station's patient, once they have arrived. */
-    const patientEndpoints = new Set<string>();
-    let patientArrived = false;
     const humans = new Set<string>();
     const hidden = new Set<string>();
+    // Present but not a person: the video player. Recorded like anyone, but it never counts as someone in the room.
+    const nonHumans = new Set<string>();
     const visits: IStaffVisit[] = [];
     const openVisits = new Map<string, IStaffVisit>();
     const activeTimers = new Set<Timer>();
@@ -320,7 +295,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
     function leave(at: Date, endpointId: string): ILifecycleResult {
         participants.get(endpointId)?.leaves.push(at);
 
-        if (hidden.delete(endpointId)) {
+        if (hidden.delete(endpointId) || nonHumans.delete(endpointId)) {
             return { entries: [ { at, endpointId, type: 'participant_left' } ], commands: [] };
         }
 
@@ -340,28 +315,6 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
     }
 
     /**
-     * Records that a participant left, and, if it was the station's patient, stops the consultation.
-     *
-     * @param {Date} at - When.
-     * @param {string} endpointId - The participant.
-     * @returns {ILifecycleResult}
-     */
-    function leaveAndCheckPatient(at: Date, endpointId: string): ILifecycleResult {
-        const left = leave(at, endpointId);
-
-        if (!patientEndpoints.has(endpointId)) {
-            return left;
-        }
-
-        const stopping = stop(at, 'patient_left');
-
-        return {
-            commands: [ ...left.commands, ...stopping.commands ],
-            entries: [ ...left.entries, ...stopping.entries ]
-        };
-    }
-
-    /**
      * Ends the current interruption: closes its gap, and records that every participant the relaunched bot did not
      * find in the room left during it. The bot learns that only now, so that is when they are recorded as leaving.
      *
@@ -375,9 +328,9 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
 
         const result: ILifecycleResult = { entries: [ { at, type: 'bot_resumed' }, ...closeGap(at) ], commands: [] };
 
-        for (const endpointId of [ ...humans, ...hidden ]) {
+        for (const endpointId of [ ...humans, ...hidden, ...nonHumans ]) {
             if (!seenSinceInterruption.has(endpointId) && !stopped) {
-                const left = leaveAndCheckPatient(at, endpointId);
+                const left = leave(at, endpointId);
 
                 result.entries.push(...left.entries);
                 result.commands.push(...left.commands);
@@ -447,8 +400,6 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             case 'waiting_for_host':
             case 'bot_joined': {
                 const waitForFirstJoin = !humans.size && !activeTimers.has('first_join');
-                const waitForPatient = options.patientId !== undefined && !patientArrived
-                    && !activeTimers.has('patient_arrival');
 
                 return {
                     entries: [
@@ -456,10 +407,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                             ? { at: event.at, meetingId: event.meetingId, type: 'bot_joined' }
                             : { at: event.at, type: 'waiting_for_host' }
                     ],
-                    commands: [
-                        ...waitForFirstJoin ? [ startTimer('first_join', firstJoinMs) ] : [],
-                        ...waitForPatient ? [ startTimer('patient_arrival', patientWaitMs) ] : []
-                    ]
+                    commands: waitForFirstJoin ? [ startTimer('first_join', firstJoinMs) ] : []
                 };
             }
             case 'participant_joined': {
@@ -469,7 +417,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                     seenSinceInterruption.add(endpointId);
 
                     // Still in the room from before the interruption: not a new join.
-                    if (humans.has(endpointId) || hidden.has(endpointId)) {
+                    if (humans.has(endpointId) || hidden.has(endpointId) || nonHumans.has(endpointId)) {
                         return nothing();
                     }
                 }
@@ -501,14 +449,16 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                     };
                 }
 
-                humans.add(endpointId);
+                if (role === 'video_player') {
+                    nonHumans.add(endpointId);
 
-                const isStationPatient = options.patientId !== undefined && identity?.id === options.patientId;
-
-                if (isStationPatient) {
-                    patientArrived = true;
-                    patientEndpoints.add(endpointId);
+                    return {
+                        entries: [ { at, displayName, endpointId, identity, role, type: 'participant_joined' } ],
+                        commands: []
+                    };
                 }
+
+                humans.add(endpointId);
 
                 if (role === 'staff') {
                     const visit = { displayName, end: undefined, endpointId, identity, start: at };
@@ -521,13 +471,12 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                     entries: [ { at, displayName, endpointId, identity, role, type: 'participant_joined' } ],
                     commands: [
                         ...cancelTimer('first_join'),
-                        ...cancelTimer('empty_room'),
-                        ...isStationPatient ? cancelTimer('patient_arrival') : []
+                        ...cancelTimer('empty_room')
                     ]
                 };
             }
             case 'participant_left':
-                return leaveAndCheckPatient(event.at, event.endpointId);
+                return leave(event.at, event.endpointId);
             case 'track_started': {
                 const { at, endpointId, file, kind } = event;
                 const track = { endpointId, file, kind, start: at, stop: undefined };
@@ -609,9 +558,6 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
             return [ ...summaries.values() ];
         },
 
-        patientArrived() {
-            return patientArrived;
-        },
 
         participants() {
             return [ ...participants.values() ].map(p => ({ ...p, joins: [ ...p.joins ], leaves: [ ...p.leaves ] }));

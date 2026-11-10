@@ -127,6 +127,20 @@ export function verifyPatient(token: string, auth: ICoordinatorAuth, now = new D
 }
 
 /**
+ * Checks a token and says who a staff member is, for the staff's own requests (ADR 0012). The marker of `auth` is the
+ * staff marker.
+ *
+ * @param {string} token - The token.
+ * @param {ICoordinatorAuth} auth - What it has to be.
+ * @param {Date} now - When.
+ * @returns {Promise<ICoordinator>}
+ * @throws {SignInError} When the token is not a staff member's.
+ */
+export function verifyStaff(token: string, auth: ICoordinatorAuth, now = new Date()): Promise<ICoordinator> {
+    return verifyMarked(token, auth, 'not_a_staff_member', now);
+}
+
+/**
  * Checks a token from the hospital's issuer that carries a role marker, and says whose it is.
  *
  * @param {string} token - The token.

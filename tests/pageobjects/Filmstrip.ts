@@ -131,6 +131,25 @@ export default class Filmstrip extends BasePageObject {
     }
 
     /**
+     * Opens the remote participant actions menu, and tells whether it has a link.
+     * @param participantId
+     * @param linkClassname the link's class, such as 'kicklink'
+     */
+    async remoteMenuHasLink(participantId: string, linkClassname: string): Promise<boolean> {
+        await this.participant.driver.$(`//span[@id='participant_${participantId}']`).moveTo();
+        await this.participant.driver.$(
+            `//span[@id='participant_${participantId
+            }']//span[@id='remotevideomenu']//div[@id='remote-video-menu-trigger']`).moveTo();
+
+        // The menu is open once it has the mute link, which every moderator has for a participant who can be muted.
+        await this.participant.driver.$(
+            '//div[contains(@class, \'popover\')]//div[contains(@class, \'mutelink\')]').waitForDisplayed({ timeout: 5_000 });
+
+        return this.participant.driver.$(
+            `//div[contains(@class, 'popover')]//div[contains(@class, '${linkClassname}')]`).isExisting();
+    }
+
+    /**
      * Clicks on the link in the remote participant actions menu.
      * @param participantId
      * @param linkClassname

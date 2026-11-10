@@ -1,7 +1,20 @@
 import { readFileSync } from 'node:fs';
 
-import { type ILayout, type IRoleMarker, type IRoleMarkers, parseRoleMarker } from './rooms.ts';
-import { PREPARE_WAIT_MS } from './rules.ts';
+import { DONE, WAITING, pathwaysOf } from './pathways.ts';
+import { loadQuestionnaires } from './questionnaires.ts';
+import {
+    type IClinic,
+    type ILayout,
+    type IPathway,
+    type IRoleMarker,
+    type IRoleMarkers,
+    type IStation,
+    type IVideo,
+    type StationStage,
+    parseRoleMarker,
+    sameRoom
+} from './rooms.ts';
+import { DEFAULT_PLAY_TIMEOUT_MS } from './videoPlayer.ts';
 
 /**
  * The coordinator service's settings, read from environment variables. `coordinator/deploy/README.md` documents each.
@@ -21,11 +34,8 @@ export interface IConfig {
     /** The directory holding the database; mount a volume here. */
     dataDir: string;
 
-    /** The stations and lounges (`COORDINATOR_ROOMS_FILE`). */
+    /** The center, its stations and each station's lounge (`COORDINATOR_ROOMS_FILE`). */
     layout: ILayout;
-
-    /** How long the recorder bot has to open a closed destination before the move fails, in ms (`COORDINATOR_PREPARE_WAIT_SECONDS`). */
-    prepareWaitMs: number;
 
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
@@ -64,6 +74,12 @@ export interface IConfig {
 
     /** What the destination tokens claim, as Prosody is set to accept them (ADR 0009). */
     token: { audience: string; issuer: string; subject: string; };
+
+    /**
+     * The video player service, which plays the waiting videos (`COORDINATOR_VIDEO_PLAYER_URL`); unset, there are no
+     * videos. `baseUrl` is where the web server hosts the videos' files.
+     */
+    videoPlayer?: { baseUrl: string; playTimeoutMs: number; secret: string; url: string; };
 }
 
 /**
@@ -90,6 +106,23 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
  * @returns {IConfig}
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
+    const config = buildConfig(env);
+
+    // Without the marker the video player's own participant would be taken for a patient or for staff.
+    if (config.videoPlayer && !config.roleMarkers.videoPlayer) {
+        throw new Error('COORDINATOR_VIDEO_PLAYER_MARKER must be set when COORDINATOR_VIDEO_PLAYER_URL is');
+    }
+
+    return config;
+}
+
+/**
+ * Reads the settings from the environment.
+ *
+ * @param {NodeJS.ProcessEnv} env - The environment.
+ * @returns {IConfig}
+ */
+function buildConfig(env: NodeJS.ProcessEnv): IConfig {
     return {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
@@ -108,14 +141,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
             : undefined,
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
-        prepareWaitMs: loadPrepareWait(env.COORDINATOR_PREPARE_WAIT_SECONDS),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
         recorderBotSecret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
         recorderBotUrl: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, ''),
         roleMarkers: {
             patient: parseRoleMarker(env.COORDINATOR_PATIENT_MARKER, 'COORDINATOR_PATIENT_MARKER'),
-            staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER')
+            staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER'),
+            videoPlayer: parseRoleMarker(env.COORDINATOR_VIDEO_PLAYER_MARKER, 'COORDINATOR_VIDEO_PLAYER_MARKER')
         },
+        videoPlayer: env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
+            ? {
+                baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
+                playTimeoutMs: Number(env.COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS ?? DEFAULT_PLAY_TIMEOUT_MS / 1000) * 1000,
+                secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
+                url: env.COORDINATOR_VIDEO_PLAYER_URL.trim().replace(/\/+$/u, '')
+            }
+            : undefined,
         token: {
             audience: env.COORDINATOR_TOKEN_AUDIENCE?.trim() || 'jitsi',
             issuer: env.COORDINATOR_TOKEN_ISSUER?.trim() || 'coordinator',
@@ -129,36 +170,215 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
 }
 
 /**
- * Reads the stations and lounges from a JSON file: `{ "stations": [ { "room", "stage" } ], "lounges": [ { "room" } ] }`.
+ * Checks the catalogue of waiting videos: each has an id, a title and a file, and the ids are unique.
+ *
+ * @param {unknown} raw - The "videos"; unset for none.
+ * @param {Function} fail - Makes the error to throw.
+ * @returns {IVideo[]|undefined}
+ */
+function loadVideos(raw: unknown, fail: (why: string) => Error): IVideo[] | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) {
+        throw fail('"videos" must be a list');
+    }
+
+    const ids = new Set<string>();
+
+    return (raw as Record<string, unknown>[]).map(v => {
+        for (const key of [ 'id', 'title', 'file' ]) {
+            if (typeof v[key] !== 'string' || !(v[key] as string).trim()) {
+                throw fail(`every video needs an "id", a "title" and a "file" (missing "${key}")`);
+            }
+        }
+        if (ids.has(v.id as string)) {
+            throw fail(`two videos are "${v.id}"`);
+        }
+        ids.add(v.id as string);
+
+        return { file: v.file as string, id: v.id as string, title: v.title as string };
+    });
+}
+
+interface IRawCenter {
+    clinics?: IClinic[];
+    id?: unknown;
+    pathway?: string;
+    pathways?: unknown;
+    stations?: unknown;
+}
+
+/**
+ * Checks the pathways of a center: each starts with `waiting` and ends with `done`, and its stages are unique, each
+ * with a name.
+ *
+ * @param {unknown} raw - The center's "pathways"; unset for none.
+ * @param {Function} fail - Makes the error to throw.
+ * @returns {IPathway[]|undefined}
+ */
+function loadPathways(raw: unknown, fail: (why: string) => Error): IPathway[] | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(raw)) {
+        throw fail('"pathways" must be a list');
+    }
+
+    const text = (value: unknown) => typeof value === 'string' && value.trim() !== '';
+    const ids: string[] = [];
+
+    return (raw as { id?: unknown; stages?: unknown; }[]).map(p => {
+        if (!text(p.id) || !Array.isArray(p.stages)) {
+            throw fail('every pathway needs an "id" and its "stages"');
+        }
+        if (ids.includes(p.id as string)) {
+            throw fail(`two pathways are "${p.id}"`);
+        }
+        ids.push(p.id as string);
+
+        const stages = (p.stages as { defaultVideo?: unknown; id?: unknown; name?: unknown; }[]).map(s => {
+            if (!text(s.id)) {
+                throw fail(`a stage of pathway "${p.id}" has no "id"`);
+            }
+            if (!text(s.name)) {
+                throw fail(`stage "${s.id}" of pathway "${p.id}" needs a "name"`);
+            }
+
+            return {
+                id: s.id as string,
+                name: s.name as string,
+                ...text(s.defaultVideo) ? { defaultVideo: s.defaultVideo as string } : {}
+            };
+        });
+
+        if (stages[0]?.id !== WAITING) {
+            throw fail(`pathway "${p.id}" must start with the stage "${WAITING}"`);
+        }
+        if (stages.length < 2 || stages.at(-1)?.id !== DONE) {
+            throw fail(`pathway "${p.id}" must end with the stage "${DONE}"`);
+        }
+
+        const seen = new Set<string>();
+
+        for (const s of stages) {
+            if (seen.has(s.id)) {
+                throw fail(`pathway "${p.id}" has the stage "${s.id}" twice`);
+            }
+            seen.add(s.id);
+        }
+
+        return { id: p.id as string, stages };
+    });
+}
+
+/**
+ * Reads the centers, their stations and each station's lounge from a JSON file (ADR 0011):
+ * `{ "centers": [ { "id", "stations": [ { "id", "stage", "lounge" } ] } ] }`. There is one center for now.
  *
  * @param {string|undefined} file - The file; unset for none.
  * @returns {ILayout}
- * @throws {Error} When the file is malformed.
+ * @throws {Error} When the file is malformed, or in the format of station rooms.
  */
 export function loadLayout(file: string | undefined): ILayout {
     if (!file) {
-        return { lounges: [], stations: [] };
+        return { centers: [] };
     }
 
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as Partial<Record<keyof ILayout, { room?: unknown; stage?: unknown; }[]>>;
-    const named = (entries: { room?: unknown; stage?: unknown; }[] | undefined, what: string) => (entries ?? []).map(e => {
-        if (typeof e.room !== 'string' || !e.room.trim()) {
-            throw new Error(`COORDINATOR_ROOMS_FILE: every ${what} needs a "room"`);
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as {
+        centers?: unknown; lounges?: unknown; stations?: unknown; videos?: unknown;
+    };
+    const fail = (why: string) => new Error(`COORDINATOR_ROOMS_FILE: ${why}`);
+
+    if (raw.stations !== undefined || raw.lounges !== undefined) {
+        throw fail('top-level "stations" and "lounges" are station rooms, which are gone: patients stay in their own '
+            + 'room and a station is a team with its own lounge (ADR 0011). Write { "centers": [ { "id", "stations": '
+            + '[ { "id", "stage", "lounge" } ] } ] }');
+    }
+
+    if (!Array.isArray(raw.centers) || raw.centers.length !== 1) {
+        throw fail('needs "centers" with exactly one center');
+    }
+
+    const text = (value: unknown) => typeof value === 'string' && value.trim() !== '';
+    const lounges: string[] = [];
+    const ids: string[] = [];
+
+    const centers = (raw.centers as IRawCenter[]).map(center => {
+        if (!text(center.id)) {
+            throw fail('every center needs an "id"');
+        }
+        if (!Array.isArray(center.stations)) {
+            throw fail(`center "${center.id}" needs "stations"`);
         }
 
-        return e as { room: string; stage?: unknown; };
-    });
+        const pathways = loadPathways(center.pathways, fail);
+        const offered = pathwaysOf({ id: center.id as string, pathways, stations: [] });
+        const known = new Set(offered.flatMap(p => p.stages.map(s => s.id)));
 
-    return {
-        lounges: named(raw.lounges, 'lounge').map(l => ({ room: l.room })),
-        stations: named(raw.stations, 'station').map(s => {
-            if (s.stage !== 'intake' && s.stage !== 'aftercare') {
-                throw new Error('COORDINATOR_ROOMS_FILE: every station needs a "stage", intake or aftercare');
+        if (center.clinics !== undefined && !Array.isArray(center.clinics)) {
+            throw fail(`center "${center.id}": "clinics" must be a list`);
+        }
+        for (const clinic of center.clinics ?? []) {
+            if (!text(clinic.id)) {
+                throw fail('every clinic needs an "id"');
+            }
+        }
+        for (const [ what, id ] of [ [ `center "${center.id}"`, center.pathway ],
+            ...(center.clinics ?? []).map(c => [ `clinic "${c.id}"`, c.pathway ]) ]) {
+            if (id !== undefined && !offered.some(p => p.id === id)) {
+                throw fail(`${what} follows the pathway "${id}", which is not in the center's "pathways"`);
+            }
+        }
+
+        const stations = (center.stations as { id?: unknown; lounge?: unknown; stage?: unknown; }[]).map(s => {
+            if (!text(s.id) || !text(s.lounge)) {
+                throw fail('every station needs an "id" and a "lounge"');
+            }
+            if (typeof s.stage !== 'string' || s.stage === WAITING || s.stage === DONE || !known.has(s.stage)) {
+                throw fail(`station "${s.id}" needs a "stage": the id of a stage of the center's pathways other than `
+                    + `"${WAITING}" and "${DONE}" (${[ ...known ].filter(k => k !== WAITING && k !== DONE).join(', ')})`);
             }
 
-            return { room: s.room, stage: s.stage };
-        })
-    };
+            const station: IStation = { id: s.id as string, lounge: s.lounge as string, stage: s.stage as StationStage };
+
+            if (ids.includes(station.id)) {
+                throw fail(`two stations are "${station.id}"`);
+            }
+            if (lounges.some(l => sameRoom(l, station.lounge))) {
+                throw fail(`two stations have the lounge "${station.lounge}"`);
+            }
+            ids.push(station.id);
+            lounges.push(station.lounge);
+
+            return station;
+        });
+
+        return {
+            id: center.id as string,
+            stations,
+            ...center.clinics ? { clinics: center.clinics } : {},
+            ...center.pathway === undefined ? {} : { pathway: center.pathway },
+            ...pathways ? { pathways } : {}
+        };
+    });
+
+    const videos = loadVideos(raw.videos, fail);
+    const videoIds = new Set((videos ?? []).map(v => v.id));
+
+    for (const center of centers) {
+        for (const pathway of center.pathways ?? []) {
+            for (const stage of pathway.stages) {
+                if (stage.defaultVideo !== undefined && !videoIds.has(stage.defaultVideo)) {
+                    throw fail(`stage "${stage.id}" of pathway "${pathway.id}" has the default video `
+                        + `"${stage.defaultVideo}", which is not in the "videos" catalogue`);
+                }
+            }
+        }
+    }
+    const questionnaires = loadQuestionnaires((raw as { questionnaires?: unknown; }).questionnaires, fail);
+
+    return { centers, ...questionnaires ? { questionnaires } : {}, ...videos ? { videos } : {} };
 }
 
 /**
@@ -178,25 +398,4 @@ export function loadTimeZone(zone: string | undefined): string {
     }
 
     return timeZone;
-}
-
-/**
- * Reads how long the recorder bot has to open a destination.
- *
- * @param {string|undefined} seconds - `COORDINATOR_PREPARE_WAIT_SECONDS`; unset for the default.
- * @returns {number} Milliseconds.
- * @throws {Error} When it is not a positive number.
- */
-export function loadPrepareWait(seconds: string | undefined): number {
-    if (!seconds?.trim()) {
-        return PREPARE_WAIT_MS;
-    }
-
-    const value = Number(seconds);
-
-    if (!Number.isFinite(value) || value <= 0) {
-        throw new Error(`COORDINATOR_PREPARE_WAIT_SECONDS must be a positive number, got "${seconds}"`);
-    }
-
-    return value * 1000;
 }

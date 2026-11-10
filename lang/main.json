@@ -273,6 +273,10 @@
         "seconds": "seconds",
         "title": "You are being moved to another room"
     },
+    "coordinatorQuestionnaire": {
+        "failed": "Your answers could not be sent. Please try again.",
+        "submit": "Send answers"
+    },
     "customPanel": {
         "close": "Close",
         "title": "AI Assist"
@@ -1473,6 +1477,24 @@
         "surprised": "Surprised",
         "timelineEnd": "End",
         "timelineStart": "Start"
+    },
+    "staffActions": {
+        "answer": "{{question}}: {{choice}}",
+        "apply": "Change stage",
+        "currentStage": "Stage: {{stage}}",
+        "nextPatient": "Next patient",
+        "nextRefused": "Could not call the next patient.",
+        "noAnswersYet": "No answers yet.",
+        "pickQuestionnaire": "Send a questionnaire...",
+        "pickStage": "Change stage to...",
+        "pickVideo": "Waiting video for this stage...",
+        "playVideo": "Play video",
+        "questionnaireNotSent": "The questionnaire was not sent.",
+        "queueEmpty": "Nobody is waiting for your station.",
+        "refused": "The stage was not changed.",
+        "sendQuestionnaire": "Send questionnaire",
+        "stopVideo": "Stop video",
+        "videoRefused": "The video request failed."
     },
     "startupoverlay": {
         "genericTitle": "The meeting needs to use your microphone and camera.",
