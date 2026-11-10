@@ -11,7 +11,11 @@ export const DONE = 'done';
 export const EXAMINATION = 'examination';
 export const DEFAULT_PATHWAY_ID = 'default';
 
-/** The pathway of a deployment that configures none: the stages and their Thai names. */
+/**
+ * The pathway of a deployment that configures none: the stages and their Thai names. The names are Thai on purpose: the
+ * coordinator's screen and the deployment are Thai only and the service runs from source (see CLAUDE.md, story 9 of
+ * #14); a deployment that wants other names configures its own `default` pathway (ADR 0013).
+ */
 export const DEFAULT_PATHWAY: IPathway = {
     id: DEFAULT_PATHWAY_ID,
     stages: [

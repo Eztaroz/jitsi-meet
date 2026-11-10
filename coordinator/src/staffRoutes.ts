@@ -5,41 +5,19 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import type { CoordinatorService, IStaffStageResult, VideoRefusal } from './coordinatorService.ts';
-import { HttpError, readJson, send } from './http.ts';
+import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
+import { HttpError, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { describeSent } from './questionnaires.ts';
+import {
+    QUESTIONNAIRE_REFUSALS,
+    STAGE_REFUSALS,
+    VIDEO_REFUSALS,
+    readQuestionnaire,
+    readStage,
+    readVideoChoice
+} from './refusals.ts';
 import { type ICoordinator, type ICoordinatorAuth, SignInError, verifyStaff } from './screenAuth.ts';
-
-/** The status of each refusal of a staff member's stage change. */
-const REFUSAL_STATUS: Record<NonNullable<IStaffStageResult['refused']>, number> = {
-    done_is_not_for_staff: 403,
-    encounter_closed: 409,
-    not_in_patients_room: 403,
-    stage_not_in_pathway: 400,
-    unknown_encounter: 404
-};
-
-/** The status of each refusal of a staff member's video request. */
-const VIDEO_REFUSAL_STATUS: Record<VideoRefusal, number> = {
-    already_playing: 409,
-    encounter_closed: 409,
-    no_video: 409,
-    not_in_patients_room: 403,
-    not_playing: 409,
-    stage_not_in_pathway: 400,
-    unknown_encounter: 404,
-    unknown_video: 400,
-    video_player_unavailable: 503
-};
-
-/** The status of each refusal of a staff member's questionnaire request. */
-const QUESTIONNAIRE_REFUSAL_STATUS: Record<string, number> = {
-    encounter_closed: 409,
-    not_in_patients_room: 403,
-    unknown_encounter: 404,
-    unknown_questionnaire: 400
-};
 
 /**
  * Creates the handler of the requests under `/staff`. Further staff actions go in its `route` function, which has the
@@ -84,16 +62,11 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
         const stageMatch = /^\/encounters\/([^/]+)\/stage$/u.exec(path);
 
         if (stageMatch && req.method === 'POST') {
-            const stage = (await readJson(req) as { stage?: unknown; } | null)?.stage;
-
-            if (typeof stage !== 'string' || !stage) {
-                throw new HttpError(400, 'stage must be a non-empty string');
-            }
-
+            const stage = await readStage(req);
             const result = await service.staffChangeStage(decodeURIComponent(stageMatch[1]), stage, staff);
 
             if (result.refused) {
-                send(res, REFUSAL_STATUS[result.refused], { error: result.refused });
+                send(res, STAGE_REFUSALS[result.refused][0], { error: result.refused });
 
                 return;
             }
@@ -112,11 +85,8 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
             let result: { refused?: VideoRefusal; video?: string; };
 
             if (videoMatch[2] === 'video-choice') {
-                const asked = await readJson(req) as { stage?: unknown; video?: unknown; } | null;
+                const asked = await readVideoChoice(req);
 
-                if (typeof asked?.stage !== 'string' || !asked.stage || typeof asked.video !== 'string' || !asked.video) {
-                    throw new HttpError(400, 'stage and video must be non-empty strings');
-                }
                 result = await service.staffSetVideo(encounterId, asked.stage, asked.video, staff);
             } else if (videoMatch[2] === 'video') {
                 result = await service.staffPlayVideo(encounterId, staff);
@@ -124,7 +94,7 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
                 result = await service.staffStopVideo(encounterId, staff);
             }
             if (result.refused) {
-                send(res, VIDEO_REFUSAL_STATUS[result.refused], { error: result.refused });
+                send(res, VIDEO_REFUSALS[result.refused][0], { error: result.refused });
 
                 return;
             }
@@ -136,17 +106,12 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
         const questionnairesMatch = /^\/encounters\/([^/]+)\/questionnaires$/u.exec(path);
 
         if (questionnairesMatch && req.method === 'POST') {
-            const questionnaire = (await readJson(req) as { questionnaire?: unknown; } | null)?.questionnaire;
-
-            if (typeof questionnaire !== 'string' || !questionnaire) {
-                throw new HttpError(400, 'questionnaire must be a non-empty string');
-            }
-
+            const questionnaire = await readQuestionnaire(req);
             const { refused, sent } = await service.staffSendQuestionnaire(
                 decodeURIComponent(questionnairesMatch[1]), questionnaire, staff);
 
             if (refused) {
-                send(res, QUESTIONNAIRE_REFUSAL_STATUS[refused], { error: refused });
+                send(res, QUESTIONNAIRE_REFUSALS[refused][0], { error: refused });
 
                 return;
             }
@@ -160,7 +125,7 @@ export function createStaffRoutes({ auth, service }: { auth?: ICoordinatorAuth; 
                 decodeURIComponent(questionnairesMatch[1]), staff);
 
             if (refused) {
-                send(res, QUESTIONNAIRE_REFUSAL_STATUS[refused], { error: refused });
+                send(res, QUESTIONNAIRE_REFUSALS[refused][0], { error: refused });
 
                 return;
             }

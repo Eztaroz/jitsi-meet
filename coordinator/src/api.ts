@@ -13,6 +13,14 @@ import { ProsodyUnavailableError } from './prosody.ts';
 import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
 import { describeSent } from './questionnaires.ts';
 import { RecorderBotUnavailableError } from './recorderBot.ts';
+import {
+    QUESTIONNAIRE_REFUSALS,
+    STAGE_REFUSALS,
+    VIDEO_REFUSALS,
+    readQuestionnaire,
+    readStage,
+    readVideoChoice
+} from './refusals.ts';
 import type { IMove } from './rules.ts';
 import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
@@ -131,19 +139,6 @@ function moveBody(move: IMove) {
     return { id: move.id, reason: move.reason, state: move.state };
 }
 
-/** What each reason a video could not be played or stopped means to the caller. */
-const VIDEO_REFUSALS: Record<VideoRefusal, [ number, string ]> = {
-    'already_playing': [ 409, 'a video is already playing in the room' ],
-    'encounter_closed': [ 409, 'the encounter is done' ],
-    'no_video': [ 409, 'no video was asked for and the stage has no default video' ],
-    'not_in_patients_room': [ 403, 'staff can only do this from the patient\'s own room' ],
-    'not_playing': [ 409, 'no video is playing in the room' ],
-    'stage_not_in_pathway': [ 400, 'the stage is not in the encounter\'s pathway' ],
-    'unknown_encounter': [ 404, 'no such encounter' ],
-    'unknown_video': [ 400, 'the video is not in the catalogue' ],
-    'video_player_unavailable': [ 503, 'the video player cannot play now' ]
-};
-
 /**
  * Reads a move request: who to move, and to which room.
  *
@@ -259,24 +254,14 @@ export function createApi({ screen, secret, service, staff, survey }: {
         const questionnaireMatch = /^\/encounters\/([^/]+)\/questionnaires$/.exec(pathname);
 
         if (questionnaireMatch && req.method === 'POST') {
-            const questionnaire = (await readJson(req) as { questionnaire?: unknown; } | null)?.questionnaire;
-
-            if (typeof questionnaire !== 'string' || !questionnaire) {
-                throw new HttpError(400, 'questionnaire must be a non-empty string');
-            }
+            const questionnaire = await readQuestionnaire(req);
 
             try {
                 const { refused, sent } = await service.sendQuestionnaire(
                     decodeURIComponent(questionnaireMatch[1]), questionnaire, issuer);
 
-                if (refused === 'unknown_encounter') {
-                    throw new HttpError(404, 'no such encounter');
-                }
-                if (refused === 'encounter_closed') {
-                    throw new HttpError(409, 'the encounter is done');
-                }
-                if (refused === 'unknown_questionnaire') {
-                    throw new HttpError(400, 'questionnaire is not in the configured catalogue');
+                if (refused) {
+                    throw new HttpError(...QUESTIONNAIRE_REFUSALS[refused]);
                 }
                 send(res, 201, { id: sent?.id });
             } catch (error) {
@@ -293,22 +278,11 @@ export function createApi({ screen, secret, service, staff, survey }: {
         const stageMatch = /^\/encounters\/([^/]+)\/stage$/.exec(pathname);
 
         if (stageMatch && req.method === 'POST') {
-            const stage = (await readJson(req) as { stage?: unknown; } | null)?.stage;
-
-            if (typeof stage !== 'string' || !stage) {
-                throw new HttpError(400, 'stage must be a non-empty string');
-            }
-
+            const stage = await readStage(req);
             const { encounter, refused } = await service.changeStage(decodeURIComponent(stageMatch[1]), stage, issuer);
 
-            if (refused === 'unknown_encounter') {
-                throw new HttpError(404, 'no such encounter');
-            }
-            if (refused === 'encounter_closed') {
-                throw new HttpError(409, 'the encounter is done');
-            }
-            if (refused === 'stage_not_in_pathway') {
-                throw new HttpError(400, 'the stage is not in the encounter\'s pathway');
+            if (refused) {
+                throw new HttpError(...STAGE_REFUSALS[refused]);
             }
             send(res, 200, encounterBody(service, encounter?.id as string));
 
@@ -321,8 +295,10 @@ export function createApi({ screen, secret, service, staff, survey }: {
             const doctor = (await readJson(req) as { doctor?: unknown; } | null)?.doctor;
 
             // eslint-disable-next-line no-control-regex
+            const hasControl = typeof doctor === 'string' && /[\x00-\x1f\x7f]/.test(doctor);
+
             if (doctor !== null && (typeof doctor !== 'string' || !doctor.trim() || doctor.length > MAX_HN_LENGTH
-                    || /[ -]/.test(doctor))) {
+                    || hasControl)) {
                 throw new HttpError(400, `doctor must be a non-empty string of at most ${MAX_HN_LENGTH} characters, or null`);
             }
 
@@ -342,12 +318,7 @@ export function createApi({ screen, secret, service, staff, survey }: {
         const choiceMatch = /^\/encounters\/([^/]+)\/video-choice$/.exec(pathname);
 
         if (choiceMatch && req.method === 'POST') {
-            const asked = await readJson(req) as { stage?: unknown; video?: unknown; } | null;
-
-            if (typeof asked?.stage !== 'string' || !asked.stage || typeof asked.video !== 'string' || !asked.video) {
-                throw new HttpError(400, 'stage and video must be non-empty strings');
-            }
-
+            const asked = await readVideoChoice(req);
             const { refused } = await service.setVideo(decodeURIComponent(choiceMatch[1]), asked.stage, asked.video, issuer);
 
             if (refused) {
