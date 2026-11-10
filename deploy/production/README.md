@@ -116,16 +116,25 @@ host, under `DATA_DIR`: `keys/` (`asap`, `coordinator-public`, `coordinator-priv
 push to the default branch (GitLab)
   → test-coordinator
   → image-coordinator, image-recorder-bot, image-video-player, image-prosody   (kaniko; :latest and :<commit>)
-  → image-web (manual: webpack needs about 4 GB)
+  → image-web                         (on its own runner: webpack needs about 4 GB)
+22:00, a cron job calls the pipeline trigger with DEPLOY_CENTRAL=1
   → deploy-stack: POST to the stack's webhook → Portainer pulls the new images and redeploys
+deploy-stack-now (by hand): the same, at once
 ```
 
 Set up once:
 
-1. GitLab project CI/CD variables: `REGISTRY_AUTH` (base64 of `user:password` for the registry), `PORTAINER_WEBHOOK`.
-2. Run the pipeline and play `image-web`, so that every image exists in the registry.
+1. GitLab project CI/CD variables: `REGISTRY`, `IMAGE_PREFIX`, `REGISTRY_AUTH` (base64 of `user:password` for the
+   registry) and `PORTAINER_WEBHOOK`. Internal names go there, not in the repo.
+2. Run the pipeline, so that every image exists in the registry.
 3. In Portainer, add a stack from this repository (`deploy/production/docker-compose.portainer.yml`), with the variables of
-   `.env.example` as its environment, plus `REGISTRY_PREFIX` (`reg.medicine.psu.ac.th/ppapop/jitsi-meet`), `IMAGE_TAG` (`latest`)
+   `.env.example` as its environment, plus `REGISTRY_PREFIX` (the same as `IMAGE_PREFIX`), `IMAGE_TAG` (`latest`)
    and `DATA_DIR`. Turn on the stack's webhook, with "re-pull images", and put its URL in `PORTAINER_WEBHOOK`.
+4. Add a pipeline trigger (Settings > CI/CD > Pipeline triggers), and on a host of the deployment a cron job that calls it
+   every day at 22:00:
+
+   ```sh
+   0 22 * * * curl -sS -X POST -F token="$(cat ~/.gitlab-trigger-token)" -F ref=master        -F "variables[DEPLOY_CENTRAL]=1" "$GITLAB_URL/api/v4/projects/<project id>/trigger/pipeline"
+   ```
 
 Roll back by setting `IMAGE_TAG` to a commit hash and updating the stack.

@@ -1,23 +1,25 @@
-# GitLab CI for the internal copy of this fork (git.medicine.psu.ac.th): test the coordinator service, build the images of
-# deploy/production with kaniko (the runner has no Docker daemon), push them to the registry as :latest and as the commit,
-# then ask Portainer to redeploy the stack. Same pattern as the other projects on this runner (tag HOSAPP02).
+# GitLab CI for the hospital's copy of this fork: test the coordinator service, build the images of deploy/production
+# with kaniko (the runners have no Docker daemon), push them to the registry as :latest and as the commit, and redeploy
+# the test stack in the night window (ADR 0017). This GitLab is older than 11.0: no `extends`, `rules`, `only: changes`,
+# `resource_group`, pipeline schedules or CI_COMMIT_SHORT_SHA, so this file uses YAML anchors and plain shell.
 #
-# CI/CD variables (Settings > CI/CD > Variables, Protected + Masked):
-#   REGISTRY_AUTH     base64 of "user:password" for reg.medicine.psu.ac.th (required to push)
-#   DOCKERHUB_AUTH    base64 of "user:password" for Docker Hub (optional, against pull limits)
-#   PORTAINER_WEBHOOK the full webhook URL of the stack (optional: without it the deploy job is skipped)
+# CI/CD variables (Settings > CI/CD > Variables). No internal name is written in this file:
+#   REGISTRY          the registry host                                          (required to build)
+#   IMAGE_PREFIX      the registry host and path the images go under             (required to build)
+#   REGISTRY_AUTH     base64 of "user:password" for REGISTRY, Protected + Masked  (required to build)
+#   DOCKERHUB_AUTH    base64 of "user:password" for Docker Hub, against pull limits (optional)
+#   PORTAINER_WEBHOOK the full webhook URL of the test stack (optional: without it the deploy jobs are skipped)
 #
-# The web image is built by hand (the "play" button of image-web): webpack needs about 4 GB of memory, and the runner
-# shares its host with other services. Build it when the web client, the nginx settings or the Prosody plugins change;
-# Portainer then pulls the new :latest of every image.
+# A push to master builds and pushes every image; it does not redeploy. The test stack runs every service, the central
+# ones too, so it is redeployed only in the night window: a cron job calls this project's pipeline trigger at 22:00 with
+# DEPLOY_CENTRAL=1, and that pipeline runs deploy-stack alone. deploy-stack-now redeploys at once, by hand.
+#
+# image-web runs on its own runner: webpack needs about 4 GB of memory. That runner takes one job at a time
+# (limit = 1 in its config.toml), because this GitLab has no resource_group.
 stages:
   - test
   - build
   - deploy
-
-variables:
-  REGISTRY: reg.medicine.psu.ac.th
-  IMAGE_PREFIX: reg.medicine.psu.ac.th/ppapop/jitsi-meet
 
 test-coordinator:
   stage: test
@@ -27,6 +29,8 @@ test-coordinator:
     - node --disable-warning=ExperimentalWarning --test test/*.test.ts
   tags:
     - HOSAPP02
+  except:
+    - triggers
 
 .kaniko: &kaniko
   stage: build
@@ -35,10 +39,13 @@ test-coordinator:
     entrypoint: [""]
   before_script:
     - |
-      if [ -z "$REGISTRY_AUTH" ]; then
-        echo "ERROR: REGISTRY_AUTH is empty: set the CI/CD variable (tick Protected only if the branch is protected)"
-        exit 1
-      fi
+      for v in REGISTRY IMAGE_PREFIX REGISTRY_AUTH; do
+        eval "value=\$$v"
+        if [ -z "$value" ]; then
+          echo "ERROR: $v is empty: set the CI/CD variable (tick Protected only if the branch is protected)"
+          exit 1
+        fi
+      done
     - mkdir -p /kaniko/.docker
     - |
       AUTHS="\"$REGISTRY\":{\"auth\":\"$REGISTRY_AUTH\"}"
@@ -47,16 +54,19 @@ test-coordinator:
       fi
       echo "{\"auths\":{$AUTHS}}" > /kaniko/.docker/config.json
   script:
+    - SHORT_SHA=$(echo "$CI_COMMIT_SHA" | cut -c1-8)
     - /kaniko/executor
       --context "${CI_PROJECT_DIR}/${CONTEXT}"
       --dockerfile "${CI_PROJECT_DIR}/${DOCKERFILE}"
       --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
-      --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
+      --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:${SHORT_SHA}"
   tags:
     - HOSAPP02
   only:
     - master
     - main
+  except:
+    - triggers
 
 image-coordinator:
   <<: *kaniko
@@ -92,10 +102,10 @@ image-web:
     IMAGE_NAME: web
     CONTEXT: "."
     DOCKERFILE: deploy/production/web/Dockerfile
-  when: manual
-  allow_failure: true
+  tags:
+    - HIS2BE
 
-deploy-stack:
+.deploy: &deploy
   stage: deploy
   image:
     name: curlimages/curl:latest
@@ -115,9 +125,28 @@ deploy-stack:
         echo "ERROR: the Portainer webhook failed (HTTP $HTTP_CODE)"
         exit 1
       fi
-  allow_failure: true
   tags:
     - HOSAPP02
+
+# The night window: only a triggered pipeline with DEPLOY_CENTRAL=1 redeploys.
+deploy-stack:
+  <<: *deploy
+  before_script:
+    - |
+      if [ "$DEPLOY_CENTRAL" != "1" ]; then
+        echo "DEPLOY_CENTRAL is not 1: nothing to deploy"
+        exit 0
+      fi
+  only:
+    - triggers
+
+# By hand, at once: the test stack's consultations are cut.
+deploy-stack-now:
+  <<: *deploy
+  when: manual
+  allow_failure: true
   only:
     - master
     - main
+  except:
+    - triggers
