@@ -28,8 +28,12 @@ export function parseMove(message: unknown): IMove | undefined {
 }
 
 /**
- * Builds the address of the destination: the room beside the current one, entered with the destination token and
- * without the prejoin page, with the microphone and camera as they are now.
+ * Builds the address of the destination: the room beside the current one, entered with the destination token, with
+ * the microphone and camera as they are now.
+ *
+ * The address does not turn the prejoin page off: jitsi-meet starts without media when the hash does, and the staff
+ * member would then be in the patient's room with no camera and no microphone. The deployment turns the prejoin page
+ * off in its config.js instead.
  *
  * @param {string} currentHref - The address of the current room.
  * @param {IMove} move - The move.
@@ -47,7 +51,6 @@ export function buildDestinationUrl(currentHref: string, move: IMove, muted: { a
     url.pathname = segments.join('/');
     url.search = `?jwt=${move.token}`;
     url.hash = [
-        'config.prejoinConfig.enabled=false',
         `config.startWithAudioMuted=${muted.audio}`,
         `config.startWithVideoMuted=${muted.video}`
     ].join('&');
