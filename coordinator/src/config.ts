@@ -105,6 +105,23 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
  * @returns {IConfig}
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
+    const config = buildConfig(env);
+
+    // Without the marker the video player's own participant would be taken for a patient or for staff.
+    if (config.videoPlayer && !config.roleMarkers.videoPlayer) {
+        throw new Error('COORDINATOR_VIDEO_PLAYER_MARKER must be set when COORDINATOR_VIDEO_PLAYER_URL is');
+    }
+
+    return config;
+}
+
+/**
+ * Reads the settings from the environment.
+ *
+ * @param {NodeJS.ProcessEnv} env - The environment.
+ * @returns {IConfig}
+ */
+function buildConfig(env: NodeJS.ProcessEnv): IConfig {
     return {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
@@ -345,6 +362,18 @@ export function loadLayout(file: string | undefined): ILayout {
     });
 
     const videos = loadVideos(raw.videos, fail);
+    const videoIds = new Set((videos ?? []).map(v => v.id));
+
+    for (const center of centers) {
+        for (const pathway of center.pathways ?? []) {
+            for (const stage of pathway.stages) {
+                if (stage.defaultVideo !== undefined && !videoIds.has(stage.defaultVideo)) {
+                    throw fail(`stage "${stage.id}" of pathway "${pathway.id}" has the default video `
+                        + `"${stage.defaultVideo}", which is not in the "videos" catalogue`);
+                }
+            }
+        }
+    }
     const questionnaires = loadQuestionnaires((raw as { questionnaires?: unknown; }).questionnaires, fail);
 
     return { centers, ...questionnaires ? { questionnaires } : {}, ...videos ? { videos } : {} };
