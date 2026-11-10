@@ -56,6 +56,7 @@ describe('staff change a stage, through the coordinator service', () => {
                 staff: parseRoleMarker('user.hospital_role=staff', 'X')
             },
             signingKey: { kid: 'k1', privateKey },
+            staffReadRoomsMs: 0,
             store,
             timeZone: 'UTC',
             token: { audience: 'jitsi', issuer: 'coordinator', subject: 'meet' }

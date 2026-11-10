@@ -87,6 +87,9 @@ interface IPlayingVideo {
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
 const POLL_MS = 1000;
 
+/** How old a snapshot of the rooms may be when it is shared by staff reads. */
+const STAFF_READ_ROOMS_MS = 1000;
+
 /**
  * Where the patients whose own room is known were seen in those rooms.
  *
@@ -206,6 +209,9 @@ export class CoordinatorService {
         retentionSweepMs: number;
         roleMarkers: IRoleMarkers;
         signingKey: { kid: string; privateKey: string; };
+
+        /** How old, in milliseconds, a snapshot of the rooms may be for staff reads; 1000 when unset, 0 for none. */
+        staffReadRoomsMs?: number;
         store: Store;
         timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
@@ -224,6 +230,7 @@ export class CoordinatorService {
 
     /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
     private readonly _videos = new Map<string, IPlayingVideo>();
+    private _staffRooms?: { at: number; rooms: Promise<IRoom[]>; };
     private _videoWatch?: NodeJS.Timeout;
 
     private readonly _effects: MoveEffects;
@@ -294,6 +301,31 @@ export class CoordinatorService {
 
             return encounter ? { ...room, encounterId: encounter.id, occupants } : { ...room, occupants };
         });
+    }
+
+    /**
+     * The rooms for a staff member's read (their place, their questionnaires), which their client asks again every few
+     * seconds: a snapshot up to a second old (`staffReadRoomsMs`) is shared, so the clients of every staff member in a call
+     * do not each force a full dump of Prosody's rooms. Anything that acts on the rooms reads them afresh.
+     *
+     * @returns {Promise<IRoom[]>}
+     */
+    private _roomsForStaffRead(): Promise<IRoom[]> {
+        const now = Date.now();
+
+        if (!this._staffRooms || now - this._staffRooms.at >= (this._opts.staffReadRoomsMs ?? STAFF_READ_ROOMS_MS)) {
+            const snapshot = { at: now, rooms: this.rooms() };
+
+            // A failed dump is not kept for the next reader.
+            snapshot.rooms.catch(() => {
+                if (this._staffRooms === snapshot) {
+                    this._staffRooms = undefined;
+                }
+            });
+            this._staffRooms = snapshot;
+        }
+
+        return this._staffRooms.rooms;
     }
 
     /**
@@ -492,7 +524,7 @@ export class CoordinatorService {
         if (!questionnaires) {
             return { refused: 'unknown_encounter' };
         }
-        if (!await this._staffInPatientsRoom(encounterId, staff.id)) {
+        if (!await this._staffInPatientsRoom(encounterId, staff.id, true)) {
             return { refused: 'not_in_patients_room' };
         }
 
@@ -504,10 +536,11 @@ export class CoordinatorService {
      *
      * @param {string} encounterId - The encounter.
      * @param {string} staffId - The staff member's verified identity id.
+     * @param {boolean} [read] - Whether it is for a read, which may use a snapshot of the rooms up to a second old.
      * @returns {Promise<boolean>}
      */
-    private async _staffInPatientsRoom(encounterId: string, staffId: string): Promise<boolean> {
-        const here = findStaff(await this.rooms(), staffId);
+    private async _staffInPatientsRoom(encounterId: string, staffId: string, read = false): Promise<boolean> {
+        const here = findStaff(await (read ? this._roomsForStaffRead() : this.rooms()), staffId);
 
         return here?.room.kind === 'patient' && here.room.encounterId === encounterId;
     }
@@ -1134,7 +1167,7 @@ export class CoordinatorService {
      * @returns {Promise<IStaffContext>}
      */
     async staffContext(staff: { id: string; }): Promise<IStaffContext> {
-        const here = findStaff(await this.rooms(), staff.id);
+        const here = findStaff(await this._roomsForStaffRead(), staff.id);
 
         if (!here) {
             return { where: 'nowhere' };
