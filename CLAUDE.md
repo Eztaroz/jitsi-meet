@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Language
 
-- **Work in English.** Everything written into the repo or posted publicly is in English: code, identifiers, code comments, commit messages, branch names, PR titles and bodies, GitHub issues and comments, docs, and prompts to subagents.
+- **Work in English.** Everything written into the repo or posted publicly is in English: code, identifiers, code comments, commit messages, branch names, PR and merge request titles and bodies, issues and comments, docs, and prompts to subagents.
 - **Talk to the user in Thai.** Replies, progress reports, summaries, plans and questions (including `AskUserQuestion` prompts and options) are in Thai.
 - In Thai replies, keep code, file paths, commands, identifiers, config keys and quoted errors or logs exactly as they are; do not translate them.
 - Exception: translation files under `lang/` (such as a Thai `lang/main-th.json`) hold Thai text by design.
-- Exception: the coordinator's screen (`coordinator/src/screen/screen.ts`) keeps its Thai text in the script, by design: the coordinator service runs straight from source with no build step, and the screen is Thai only (story 9 of #14).
+- Exception: the coordinator's screen (`coordinator/src/screen/screen.ts`) keeps its Thai text in the script, by design: the coordinator service runs straight from source with no build step, and the screen is Thai only (story 9 of GitHub #14).
 
 ## Development Commands
 
@@ -278,7 +278,9 @@ react/features/sample/
 
 ### Issue tracker
 
-Issues live in GitHub Issues on `Eztaroz/jitsi-meet` (this fork, never upstream `jitsi/jitsi-meet`). See `docs/agents/issue-tracker.md`.
+Issues and merge requests live on the hospital's GitLab, the primary home of the code; its host and project come from the environment. GitHub `Eztaroz/jitsi-meet` (this fork, never upstream `jitsi/jitsi-meet`) is a public mirror (a fork of a public repo cannot be private) of the same branches, and keeps the issues opened before the move, cited as `GitHub #n`. Push to both. See `docs/agents/issue-tracker.md`.
+
+Internal host names may be in the repo, but never a secret (password, token, private key, webhook URL) and never patient data, on either remote: secrets belong in the CI/CD variables and in each stack's environment. Before pushing, check the new commits for secrets.
 
 ### Triage labels
 

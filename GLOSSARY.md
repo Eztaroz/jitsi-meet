@@ -71,8 +71,26 @@ How long evidence recordings are kept: three months by default (ADR 0003). The r
 _Avoid_: Expiry, TTL
 
 **Gap**:
-A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or the consultation stopped.
+A stretch of a consultation the recorder bot did not record, from when its browser crashed or lost its connection until the relaunched bot was back in the room, or from its worker's last heartbeat until another recorder bot took the consultation over; or until the consultation stopped.
 _Avoid_: Outage, hole, downtime
+
+### Scaling
+
+**Worker**:
+One running recorder bot service or video player service, on its own host, that the coordinator service hands consultations or waiting videos to (ADR 0014).
+_Avoid_: Node, agent, instance, server
+
+**Heartbeat**:
+A worker's message to the coordinator service, every few seconds, that it is up, what kind it is, how many it can run and how many it runs now. A worker whose heartbeats stop is lost.
+_Avoid_: Registration, check-in, ping
+
+**Draining**:
+A worker that runs what it has to the end but gets nothing new, so that its host can be updated or shut down without cutting a consultation.
+_Avoid_: Maintenance mode, disabled
+
+**Takeover**:
+Another recorder bot joining a consultation whose recorder bot was lost, and recording the rest of it, with a gap for what was missed (ADR 0016). It is the same consultation.
+_Avoid_: Failover, restart, new consultation
 
 ### Patient flow
 
