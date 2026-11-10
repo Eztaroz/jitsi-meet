@@ -14,7 +14,8 @@ and other clients do not, is refused when it tries to join, on the main domain a
 let in. Only the hosts listed in muc_require_move_support_exempt_hosts (the auth domain and the recorder bot\'s hidden \
 domain) may join without announcing it, which the recorder bot and jicofo showing up in other specs prove. Breakout rooms are \
 disabled, so a moderator finds no button for one in the participants pane, and deep linking is off so that a phone opens \
-the link in its browser. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the \
+the link in its browser. The guest-domain cases are skipped unless GUEST_DOMAIN_AVAILABLE=true, since a deployment without a guest domain has \
+nothing to join. Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the \
 coordinator service on top of it.',
     usesBrowsers: [ 'p1' ]
 });
@@ -72,6 +73,16 @@ function tryToJoin(
     }, room, jwt, announce, domain);
 }
 
+/**
+ * Whether the deployment has a guest domain to try. The test deployment has one (ENABLE_GUESTS) so that this spec can
+ * check it is not exempt; a deployment without one has nothing to join, so those cases are skipped there.
+ *
+ * @returns {boolean}
+ */
+function guestDomainAvailable(): boolean {
+    return process.env.GUEST_DOMAIN_AVAILABLE === 'true';
+}
+
 describe('Coordinator: the web client only', () => {
     let host: Participant;
     let hn: string;
@@ -117,7 +128,12 @@ describe('Coordinator: the web client only', () => {
         expect(await host.isInMuc()).toBe(true);
     });
 
-    it('refuses a guest-domain client that does not announce that it obeys moves', async () => {
+    it('refuses a guest-domain client that does not announce that it obeys moves', async function() {
+        if (!guestDomainAvailable()) {
+            // eslint-disable-next-line @typescript-eslint/no-invalid-this
+            this.skip();
+        }
+
         const room = encodeURIComponent(hn.toLowerCase()).toLowerCase();
 
         const result = await tryToJoin(host, room, '', false, 'guest.meet.jitsi');
@@ -126,7 +142,12 @@ describe('Coordinator: the web client only', () => {
         expect(result).toContain('cannot be moved');
     });
 
-    it('lets in a guest-domain client that announces it', async () => {
+    it('lets in a guest-domain client that announces it', async function() {
+        if (!guestDomainAvailable()) {
+            // eslint-disable-next-line @typescript-eslint/no-invalid-this
+            this.skip();
+        }
+
         const room = encodeURIComponent(hn.toLowerCase()).toLowerCase();
 
         expect(await tryToJoin(host, room, '', true, 'guest.meet.jitsi')).toBe('joined');

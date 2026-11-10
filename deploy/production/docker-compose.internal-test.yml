@@ -1,0 +1,14 @@
+# Deviations for an internal test of this deployment, as an override of docker-compose.yml. Not for production:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.internal-test.yml up -d
+#
+# The test certificate is not valid for the bots (it has expired, or is self-signed), so the bots accept it. In
+# production they check the real certificate, so remove this file there.
+services:
+    recorder-bot:
+        environment:
+            RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS: 'true'
+
+    video-player:
+        environment:
+            VIDEO_PLAYER_IGNORE_CERTIFICATE_ERRORS: 'true'
