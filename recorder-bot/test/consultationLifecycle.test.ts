@@ -295,6 +295,28 @@ describe('immediate stops', () => {
 });
 
 describe('hidden participants', () => {
+    test('the video player does not cancel the first-join wait', () => {
+        const c = consultation({ firstJoinMs: 600_000 });
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'video1', role: 'video_player' });
+        mock.timers.tick(600_000);
+
+        assert.deepEqual(c.stop, { at: at(600_000), reason: 'no_one_joined' });
+    });
+
+    test('the video player does not keep an empty room open', () => {
+        const c = consultation({ emptyRoomMs: 60_000 });
+
+        c.send({ type: 'bot_joined' });
+        c.send({ type: 'participant_joined', endpointId: 'patient1', role: 'patient' });
+        c.send({ type: 'participant_joined', endpointId: 'video1', role: 'video_player' });
+        c.send({ type: 'participant_left', endpointId: 'patient1' });
+        mock.timers.tick(60_000);
+
+        assert.equal(c.stop?.reason, 'no_humans_for_grace');
+    });
+
     test('a hidden participant does not cancel the first-join wait', () => {
         const c = consultation({ firstJoinMs: 600_000 });
 
