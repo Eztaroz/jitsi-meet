@@ -35,7 +35,7 @@ Read-only inspection, 2026-11-10:
 
 | Item | Detail |
 |---|---|
-| New host | Ubuntu LTS with Docker and Compose. Size by the recorder bot: about one CPU core per recorded 720p video track (a patient and one staff member is about two cores), 0.4 GB RAM per pair, plus the videobridge, Prosody and the video player. Start from **8 vCPU, 16 GB RAM, 200 GB disk** and set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the cores. The 2 vCPU test VM is too small |
+| New host | Ubuntu LTS with Docker and Compose. Size by the recorder bot: about one CPU core per recorded 720p video track (a patient and one staff member is about two cores; with `RECORDER_BOT_MAX_HEIGHT=360`, about 0.2 of a core: see recorder-bot/deploy/README.md), 0.4 GB RAM per pair, plus the videobridge, Prosody and the video player. Start from **8 vCPU, 16 GB RAM, 200 GB disk** and set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the cores. The 2 vCPU test VM is too small |
 | Addresses | An internal address for the host. At the cut-over it takes over `192.0.2.10`, or the NAT and DNS are repointed to it |
 | NAT/firewall | Public `203.0.113.10` forwards TCP 80/443, UDP 10000, UDP 3478, TCP 5349 to the host |
 | Test name | A name under the wildcard for the parallel run, such as `telemedicine-new.example.org`, pointing at the new host: the wildcard certificate covers it |
