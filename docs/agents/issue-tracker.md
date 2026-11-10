@@ -1,6 +1,6 @@
 # Issue tracker: the hospital's GitLab
 
-Issues, specs and merge requests for this repo live on the hospital's own GitLab, which is the primary home of the code. GitHub (`Eztaroz/jitsi-meet`) is a private mirror for work away from the hospital, and it keeps the issues opened before the move.
+Issues, specs and merge requests for this repo live on the hospital's own GitLab, which is the primary home of the code. GitHub (`Eztaroz/jitsi-meet`) is a public mirror for work away from the hospital (a fork of a public repo cannot be private), and it keeps the issues opened before the move.
 
 ## This repo
 
@@ -36,6 +36,7 @@ AUTH="PRIVATE-TOKEN: $GITLAB_TOKEN"
 
 ## Keeping GitHub in step
 
+- GitHub is public, and GitLab's `master` has CI commits that name internal hosts. Make each branch from GitHub's `master`, never from GitLab's, and never push GitLab's `master` to GitHub.
 - At the hospital: push each branch to both remotes.
 - Away from the hospital: push branches to GitHub only.
 - Back at the hospital: fetch from GitHub, then push those branches to GitLab and open the merge requests there.
