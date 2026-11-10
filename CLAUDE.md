@@ -278,9 +278,9 @@ react/features/sample/
 
 ### Issue tracker
 
-Issues and merge requests live on the hospital's GitLab, the primary home of the code; its host and project come from the environment, never from the repo. GitHub `Eztaroz/jitsi-meet` (this fork, never upstream `jitsi/jitsi-meet`) is a public mirror (a fork of a public repo cannot be private) and keeps the issues opened before the move, cited as `GitHub #n`. GitLab's `master` has CI commits that name internal hosts, so never push it, or a branch made from it, to GitHub: branch from GitHub's `master`. See `docs/agents/issue-tracker.md`.
+Issues and merge requests live on the hospital's GitLab, the primary home of the code; its host and project come from the environment. GitHub `Eztaroz/jitsi-meet` (this fork, never upstream `jitsi/jitsi-meet`) is a public mirror (a fork of a public repo cannot be private) of the same branches, and keeps the issues opened before the move, cited as `GitHub #n`. Push to both. See `docs/agents/issue-tracker.md`.
 
-The repo holds no internal host names, addresses or other hospital-internal details, on either remote: they belong in the CI/CD variables and in each stack's environment. The one exception is the runner tags in `.gitlab-ci.yml`, which this GitLab cannot read from variables.
+Internal host names may be in the repo, but never a secret (password, token, private key, webhook URL) and never patient data, on either remote: secrets belong in the CI/CD variables and in each stack's environment. Before pushing, check the new commits for secrets.
 
 ### Triage labels
 

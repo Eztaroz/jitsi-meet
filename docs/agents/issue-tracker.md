@@ -36,7 +36,8 @@ AUTH="PRIVATE-TOKEN: $GITLAB_TOKEN"
 
 ## Keeping GitHub in step
 
-- GitHub is public, and GitLab's `master` has CI commits that name internal hosts. Make each branch from GitHub's `master`, never from GitLab's, and never push GitLab's `master` to GitHub.
+- GitHub is public: before pushing, check the new commits for secrets (passwords, tokens, private keys, webhook URLs). Internal host names are allowed.
+- Keep `master` the same on both remotes.
 - At the hospital: push each branch to both remotes.
 - Away from the hospital: push branches to GitHub only.
 - Back at the hospital: fetch from GitHub, then push those branches to GitLab and open the merge requests there.

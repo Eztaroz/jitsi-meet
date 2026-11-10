@@ -28,4 +28,4 @@ Every change merged to the main branch on the hospital's GitLab is built into im
 - The telemedicine service has its own Portainer, with an agent on each of its VMs (central, recorder bots, video players, videobridges, database). Each VM has one stack, and each stack one webhook, which the pipeline calls.
 - A front web server, in the central stack, ends TLS and forwards to the web server. While the web server restarts, it shows the maintenance page. A change to the front web server itself is deployed in the night window too.
 - The web client's build needs several gigabytes of memory, so it runs on a runner of its own, not on a host that runs production.
-- The repository holds no internal host names or addresses: they are in the pipeline's variables and in each stack's environment.
+- The repository holds no secrets: they are in the pipeline's variables and in each stack's environment.
