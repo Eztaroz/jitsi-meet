@@ -111,7 +111,10 @@ describe('Coordinator: stations as teams on the screen', () => {
     });
 
     it('lists them as free again, and the patient back in the queue, once they are back in the lounge', async () => {
-        const { body } = await postMove(hn.toLowerCase(), await staff.getEndpointId(), lounge);
+        // The staff member has a new endpoint in the patient's room; the participant helper caches the old one.
+        const room = await waitForRoom(r => r?.occupants.some(o => o.identity?.id === staffIdentity.id), hn, 'the staff member');
+        const endpointId = room!.occupants.find(o => o.identity?.id === staffIdentity.id)!.endpointId;
+        const { body } = await postMove(hn.toLowerCase(), endpointId, lounge);
 
         await waitForMove(body.id, 'done');
         await screen.driver.waitUntil(async () => (await teamText()).includes('ว่าง 1'),
