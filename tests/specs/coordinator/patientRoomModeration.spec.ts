@@ -20,7 +20,8 @@ on top of it, and its web server sets patientMarker.',
 
 // How long a refused request is given to show up, had it not been refused: Prosody answers it at once.
 const SETTLE_MS = 3000;
-const HANGUP_MENU = '[aria-controls="hangup-menu"]';
+// The hangup button is wrapped in a dialog only when it is a menu; Toolbox does not pass its aria-controls on.
+const HANGUP_MENU = '//div[contains(@class, "toolbox-button-wth-dialog")]//*[@aria-label="Leave the meeting"]';
 
 describe('Coordinator: staff cannot end, kick or demote in a patient\'s room', () => {
     const patientToken = () => generateToken({
