@@ -108,7 +108,11 @@ describe('Coordinator: staff change a patient\'s stage', () => {
         expect(await (await staff.driver.$('#staff-current-stage')).getText()).toMatch(/รอคิว/u);
 
         const options = await staff.driver.$$('#staff-stage-picker option');
-        const values = await Promise.all(options.map(o => o.getAttribute('value')));
+        const values: string[] = [];
+
+        for (const option of options) {
+            values.push(await option.getAttribute('value'));
+        }
 
         expect(values).toContain('billing');
         expect(values).toContain('waiting');

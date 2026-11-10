@@ -43,7 +43,8 @@ describe('Coordinator: a waiting video from the screen', () => {
         }, { roomName: patientLinkRoom(hn) });
         encounterId = (await postEncounter(hn)).body.id;
 
-        screen = await joinMuc({ name: 'p2' }, { skipInMeetingChecks: true });
+        // The deployment needs a token to join any room, even a scratch one for the browser the screen runs in.
+        screen = await joinMuc({ name: 'p2', token: generateToken({ displayName: 'x' }) }, { roomName: `scratch-${uuidv4()}` });
         await screen.driver.url(screenUrl());
         await (await screen.driver.$('#signin-token')).setValue(generateToken({
             displayName: coordinator.name,
@@ -60,7 +61,10 @@ describe('Coordinator: a waiting video from the screen', () => {
         await (await toggle()).click();
         await waitForRoom(room => Boolean(room?.occupants.some(o => o.role === 'video_player')), hn,
             'the video player in the patient\'s room');
-        await patient.waitForParticipants(1);
+        // The recorder bot is a hidden member of the room too, so count the visible ones: the video player alone.
+        await patient.driver.waitUntil(() => patient.execute(
+            () => APP.conference.listMembers().filter((m: { isHidden: () => boolean; }) => !m.isHidden()).length === 1),
+        { timeout: 15_000, timeoutMsg: 'the patient does not see the video player alone' });
     });
 
     it('gives the patient no menu on the video player\'s tile', async () => {

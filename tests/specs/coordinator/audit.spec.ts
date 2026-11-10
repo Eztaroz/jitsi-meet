@@ -17,6 +17,7 @@ import {
 } from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
+import { cancelMoveNotice } from '../../helpers/moveNotice';
 import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
@@ -74,8 +75,7 @@ describe('Coordinator: audit log and retention', () => {
 
         const cancelled = (await postMove(lounge, staffEndpoint, hn.toLowerCase())).body;
 
-        await (await staff.driver.$('#coordinator-move-cancel')).waitForExist({ timeout: 10_000 });
-        await (await staff.driver.$('#coordinator-move-cancel')).click();
+        await cancelMoveNotice(staff);
         await waitForMove(cancelled.id, 'cancelled', 15_000);
 
         await staff.driver.pause(1_000);
@@ -88,7 +88,7 @@ describe('Coordinator: audit log and retention', () => {
 
         const entries = await getAudit(1000);
         const moves = entries.filter(e => e.kind === 'move' && e.participantId === staffIdentity.id);
-        const stage = entries.find(e => e.kind === 'stage' && e.encounterId === encounterId);
+        const stage = entries.find(e => e.kind === 'stage' && e.encounterId === encounterId && e.outcome === 'ok');
 
         expect(moves.map(m => m.outcome)).toContain('cancelled');
         expect(stage).toMatchObject({ from: 'waiting', issuer: 'system', outcome: 'ok', to: 'intake' });

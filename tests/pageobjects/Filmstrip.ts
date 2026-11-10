@@ -143,7 +143,7 @@ export default class Filmstrip extends BasePageObject {
 
         // The menu is open once it has the mute link, which every moderator has for a participant who can be muted.
         await this.participant.driver.$(
-            '//div[contains(@class, \'popover\')]//div[contains(@class, \'mutelink\')]').waitForDisplayed();
+            '//div[contains(@class, \'popover\')]//div[contains(@class, \'mutelink\')]').waitForDisplayed({ timeout: 5_000 });
 
         return this.participant.driver.$(
             `//div[contains(@class, 'popover')]//div[contains(@class, '${linkClassname}')]`).isExisting();

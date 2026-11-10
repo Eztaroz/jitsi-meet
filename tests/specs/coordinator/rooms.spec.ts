@@ -86,8 +86,10 @@ describe('Coordinator: open rooms and their occupants', () => {
 
     it('drops the room once everyone has left', async () => {
         // Nobody can end a patient's own room for everyone (ADR 0012).
-        await patient.getToolbar().clickHangupButton();
+        // Staff leave first: once the patient has gone, the staff member is a moderator of a room without a patient and
+        // their hangup button opens a menu instead of leaving.
         await staff.getToolbar().clickHangupButton();
+        await patient.getToolbar().clickHangupButton();
         await waitForRoom(r => r === undefined, hn, 'the room to close', 60_000);
     });
 });
