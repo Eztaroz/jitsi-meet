@@ -29,7 +29,8 @@ try {
         timeZone: config.timeZone,
         token: config.token,
         videoBaseUrl: config.videoPlayer?.baseUrl,
-        videoPlayer: config.videoPlayer && new VideoPlayer(config.videoPlayer.url, config.videoPlayer.secret)
+        videoPlayer: config.videoPlayer && new VideoPlayer(config.videoPlayer.url, config.videoPlayer.secret,
+            { playTimeoutMs: config.videoPlayer.playTimeoutMs })
     });
 } catch (error) {
     // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).

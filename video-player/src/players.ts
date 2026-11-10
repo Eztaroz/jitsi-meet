@@ -44,8 +44,11 @@ export class Players {
     private readonly launch: LaunchPlayer;
     private readonly maxRooms: number;
 
-    /** A room maps to its browser once the browser has started; to undefined while it starts. */
-    private readonly rooms = new Map<string, IPlayerBrowser | undefined>();
+    /**
+     * A room maps to a slot per launch, which tells a launch from a later play in the same room, and holds its
+     * browser once it has started.
+     */
+    private readonly rooms = new Map<string, { browser?: IPlayerBrowser; }>();
 
     /**
      * The rooms being played in.
@@ -87,25 +90,28 @@ export class Players {
         }
 
         // Take the slot before the browser starts, so that concurrent requests cannot exceed the capacity.
-        this.rooms.set(room, undefined);
+        const slot: { browser?: IPlayerBrowser; } = {};
+
+        this.rooms.set(room, slot);
 
         try {
             const browser = await this.launch(params, {
-                onEnded: () => this.finish(room),
+                onEnded: () => this.finish(room, slot),
                 onFailed: reason => {
                     log.warn('video player failed', { reason });
-                    this.finish(room);
+                    this.finish(room, slot);
                 }
             });
 
-            // The video may have ended or the browser failed before the launch settled.
-            if (this.rooms.has(room)) {
-                this.rooms.set(room, browser);
+            // The video may have ended, the browser failed or a stop came before the launch settled; the room may
+            // even be another play's by now, which this browser must not take.
+            if (this.rooms.get(room) === slot) {
+                slot.browser = browser;
             } else {
                 await browser.stop().catch(() => undefined);
             }
         } catch (error) {
-            this.rooms.delete(room);
+            this.finish(room, slot);
             throw error;
         }
     }
@@ -139,12 +145,17 @@ export class Players {
      * Frees a room and closes its browser.
      *
      * @param {string} room - The room.
+     * @param {Object} [slot] - The launch that ends; a later play's slot in the room is left alone.
      * @returns {Promise<void>}
      */
-    private async finish(room: string): Promise<void> {
-        const browser = this.rooms.get(room);
+    private async finish(room: string, slot?: { browser?: IPlayerBrowser; }): Promise<void> {
+        const current = this.rooms.get(room);
+
+        if (!current || slot && current !== slot) {
+            return;
+        }
 
         this.rooms.delete(room);
-        await browser?.stop().catch(error => log.warn('video player did not stop cleanly', { error: errorCode(error) }));
+        await current.browser?.stop().catch(error => log.warn('video player did not stop cleanly', { error: errorCode(error) }));
     }
 }

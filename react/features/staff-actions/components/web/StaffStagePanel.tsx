@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector, useStore } from 'react-redux';
 import { makeStyles } from 'tss-react/mui';
@@ -79,6 +79,8 @@ const StaffStagePanel = () => {
     const [ context, setContext ] = useState<IStaffContext | undefined>();
     const [ chosen, setChosen ] = useState('');
     const [ error, setError ] = useState<string | undefined>();
+    const [ videoError, setVideoError ] = useState<string | undefined>();
+    const encounterIdRef = useRef<string | undefined>();
     const [ chosenQuestionnaire, setChosenQuestionnaire ] = useState('');
     const [ questionnaireError, setQuestionnaireError ] = useState(false);
     const [ sentQuestionnaires, setSentQuestionnaires ] = useState<IStaffQuestionnaire[]>([]);
@@ -94,13 +96,19 @@ const StaffStagePanel = () => {
 
         let cancelled = false;
         const refresh = async () => {
-            const fresh = await fetchStaffContext(store.getState());
-
-            const answers = fresh?.encounter ? await fetchQuestionnaires(store.getState(), fresh.encounter.id) : undefined;
+            // Both are asked at once, so a refresh costs one round trip: the questionnaires are of the encounter the
+            // last refresh found, and are dropped when this one finds another.
+            const known = encounterIdRef.current;
+            const [ fresh, answers ] = await Promise.all([
+                fetchStaffContext(store.getState()),
+                known ? fetchQuestionnaires(store.getState(), known) : undefined
+            ]);
+            const current = fresh?.encounter?.id;
 
             if (!cancelled) {
+                encounterIdRef.current = current;
                 setContext(fresh);
-                setSentQuestionnaires(answers ?? []);
+                setSentQuestionnaires(current && current === known ? answers ?? [] : []);
             }
         };
 
@@ -123,7 +131,7 @@ const StaffStagePanel = () => {
     }, [ chosen, context, store ]);
 
     /**
-     * Sends a video request, shows why it was refused, and asks where the staff member is again at once.
+     * Sends a video request, shows that it failed, and asks where the staff member is again at once.
      *
      * @param {Function} request - The request.
      * @returns {Promise<void>}
@@ -132,7 +140,7 @@ const StaffStagePanel = () => {
         if (!context?.encounter) {
             return;
         }
-        setError(await request(context.encounter.id));
+        setVideoError(await request(context.encounter.id));
         setContext(await fetchStaffContext(store.getState()));
     }, [ context, store ]);
     const onChooseVideo = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -225,6 +233,7 @@ const StaffStagePanel = () => {
                 </div>
             ) }
             { error && <span className = { classes.error }>{ t('staffActions.refused') }</span> }
+            { videoError && <span className = { classes.error }>{ t('staffActions.videoRefused') }</span> }
             { Boolean(context.questionnaires?.length) && (
                 <>
                     <select

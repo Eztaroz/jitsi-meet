@@ -137,6 +137,21 @@ describe('stations as teams, through the coordinator service', () => {
         assert.equal(waiting.find(e => e.encounterId === b?.id)?.at, undefined);
     });
 
+    it('shows a patient in the examination queue at the station whose staff are in their room', async () => {
+        const a = (await service.startEncounter('HN/1')).encounter;
+
+        await service.changeStage(a?.id ?? '', 'examination', 'system');
+        rooms = [ { name: 'lounge-exam', occupants: [ lee ] } ];
+        await service.rooms();
+        rooms = [ { name: 'HN/1', occupants: [ pat, lee ] } ];
+
+        const entry = service.examinationQueues(await service.rooms()).unassigned
+            .find(e => e.encounterId === a?.id);
+
+        assert.deepEqual(entry?.at, [ 'exam' ]);
+        assert.equal(service.examinationQueues().unassigned.find(e => e.encounterId === a?.id)?.at, undefined);
+    });
+
     it('names every station whose staff are in the patient\'s room', async () => {
         const a = (await service.startEncounter('HN/1')).encounter;
 

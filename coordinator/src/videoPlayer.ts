@@ -29,7 +29,14 @@ export interface IVideoPlayer {
     stop: (room: string) => Promise<void>;
 }
 
+/** How long `/play` may take: the service starts a Chromium before it answers, and a cold start is slow. */
+export const DEFAULT_PLAY_TIMEOUT_MS = 45_000;
+
+/** How long any other request may take. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 export class VideoPlayer implements IVideoPlayer {
+    private readonly _playTimeoutMs: number;
     private readonly _secret: string;
     private readonly _url: string;
 
@@ -38,10 +45,13 @@ export class VideoPlayer implements IVideoPlayer {
      *
      * @param {string} url - The video player service's base URL.
      * @param {string} secret - Its bearer secret.
+     * @param {Object} [options] - Options.
+     * @param {number} [options.playTimeoutMs] - How long to wait for `/play` to answer.
      */
-    constructor(url: string, secret: string) {
+    constructor(url: string, secret: string, options: { playTimeoutMs?: number; } = {}) {
         this._url = url;
         this._secret = secret;
+        this._playTimeoutMs = options.playTimeoutMs ?? DEFAULT_PLAY_TIMEOUT_MS;
     }
 
     /**
@@ -50,15 +60,17 @@ export class VideoPlayer implements IVideoPlayer {
      * @param {string} method - The HTTP method.
      * @param {string} path - The path.
      * @param {object} [body] - The JSON body.
+     * @param {number} [timeoutMs] - How long to wait for the answer.
      * @returns {Promise<Response>}
      */
-    private async _request(method: string, path: string, body?: object): Promise<Response> {
+    private async _request(method: string, path: string, body?: object,
+            timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
         try {
             return await fetch(`${this._url}${path}`, {
                 body: body && JSON.stringify(body),
                 headers: { authorization: `Bearer ${this._secret}`, 'content-type': 'application/json' },
                 method,
-                signal: AbortSignal.timeout(10_000)
+                signal: AbortSignal.timeout(timeoutMs)
             });
         } catch {
             throw new VideoPlayerUnavailableError('unreachable');
@@ -72,7 +84,15 @@ export class VideoPlayer implements IVideoPlayer {
      * @returns {Promise<void>}
      */
     async play(request: { room: string; token: string; videoUrl: string; }): Promise<void> {
-        const response = await this._request('POST', '/play', request);
+        let response: Response;
+
+        try {
+            response = await this._request('POST', '/play', request, this._playTimeoutMs);
+        } catch (error) {
+            // The player may still start the video after we gave up on it: take it down so it does not play unseen.
+            await this.stop(request.room).catch(() => undefined);
+            throw error;
+        }
 
         if (response.status === 503) {
             throw new VideoPlayerUnavailableError('at_capacity');

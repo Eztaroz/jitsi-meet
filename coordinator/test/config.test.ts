@@ -76,6 +76,19 @@ describe('the rooms file', () => {
         assert.throws(() => loadLayout(roomsFile({ ...center([]), videos: 'x' })), /"videos" must be a list/u);
     });
 
+    it('refuses a stage whose default video is not in the catalogue', () => {
+        const stages = [ { id: 'waiting', name: 'W', defaultVideo: 'nope' }, { id: 'done', name: 'D' } ];
+        const withVideos = (videos?: unknown) => roomsFile({
+            centers: [ { id: 'c', pathways: [ { id: 'p', stages } ], stations: [] } ],
+            ...videos ? { videos } : {}
+        });
+
+        assert.throws(() => loadLayout(withVideos([ { file: 'a.mp4', id: 'intro', title: 'Intro' } ])),
+            /stage "waiting" of pathway "p".*"nope"/u);
+        assert.throws(() => loadLayout(withVideos()), /"nope"/u);
+        assert.doesNotThrow(() => loadLayout(withVideos([ { file: 'a.mp4', id: 'nope', title: 'N' } ])));
+    });
+
     it('refuses two stations with one id, or with one lounge whatever its case', () => {
         assert.throws(() => loadLayout(roomsFile(center([
             { id: 'x', lounge: 'a', stage: 'intake' }, { id: 'x', lounge: 'b', stage: 'aftercare' }
@@ -112,8 +125,30 @@ describe('the settings', () => {
             COORDINATOR_VIDEO_PLAYER_URL: 'http://video-player:8091/'
         }));
 
-        assert.deepEqual(config.videoPlayer, { baseUrl: 'https://meet.example/', secret: 'vp-secret', url: 'http://video-player:8091' });
+        assert.deepEqual(config.videoPlayer, {
+            baseUrl: 'https://meet.example/', playTimeoutMs: 45_000, secret: 'vp-secret', url: 'http://video-player:8091'
+        });
         assert.deepEqual(config.roleMarkers.videoPlayer, { path: [ 'user', 'hospital_role' ], value: 'video_player' });
+    });
+
+    it('let the wait for a video to start be set, in seconds', () => {
+        const config = loadConfig(env({
+            COORDINATOR_VIDEO_BASE_URL: 'https://meet.example/',
+            COORDINATOR_VIDEO_PLAYER_MARKER: 'user.hospital_role=video_player',
+            COORDINATOR_VIDEO_PLAYER_SECRET: 'vp-secret',
+            COORDINATOR_VIDEO_PLAYER_URL: 'http://video-player:8091/',
+            COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS: '90'
+        }));
+
+        assert.equal(config.videoPlayer?.playTimeoutMs, 90_000);
+    });
+
+    it('refuse a video player URL without the video player marker', () => {
+        assert.throws(() => loadConfig(env({
+            COORDINATOR_VIDEO_BASE_URL: 'https://meet.example/',
+            COORDINATOR_VIDEO_PLAYER_SECRET: 'vp-secret',
+            COORDINATOR_VIDEO_PLAYER_URL: 'http://video-player:8091/'
+        })), /COORDINATOR_VIDEO_PLAYER_MARKER/u);
     });
 
     it('have no video player without its URL, and refuse a half-set one', () => {

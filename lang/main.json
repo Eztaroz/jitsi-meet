@@ -1479,9 +1479,9 @@
         "timelineStart": "Start"
     },
     "staffActions": {
+        "answer": "{{question}}: {{choice}}",
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
-        "answer": "{{question}}: {{choice}}",
         "nextPatient": "Next patient",
         "nextRefused": "Could not call the next patient.",
         "noAnswersYet": "No answers yet.",
@@ -1489,11 +1489,12 @@
         "pickStage": "Change stage to...",
         "pickVideo": "Waiting video for this stage...",
         "playVideo": "Play video",
-        "queueEmpty": "Nobody is waiting for your station.",
         "questionnaireNotSent": "The questionnaire was not sent.",
+        "queueEmpty": "Nobody is waiting for your station.",
         "refused": "The stage was not changed.",
         "sendQuestionnaire": "Send questionnaire",
-        "stopVideo": "Stop video"
+        "stopVideo": "Stop video",
+        "videoRefused": "The video request failed."
     },
     "startupoverlay": {
         "genericTitle": "The meeting needs to use your microphone and camera.",

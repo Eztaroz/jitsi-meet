@@ -233,6 +233,8 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
 
     const humans = new Set<string>();
     const hidden = new Set<string>();
+    // Present but not a person: the video player. Recorded like anyone, but it never counts as someone in the room.
+    const nonHumans = new Set<string>();
     const visits: IStaffVisit[] = [];
     const openVisits = new Map<string, IStaffVisit>();
     const activeTimers = new Set<Timer>();
@@ -293,7 +295,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
     function leave(at: Date, endpointId: string): ILifecycleResult {
         participants.get(endpointId)?.leaves.push(at);
 
-        if (hidden.delete(endpointId)) {
+        if (hidden.delete(endpointId) || nonHumans.delete(endpointId)) {
             return { entries: [ { at, endpointId, type: 'participant_left' } ], commands: [] };
         }
 
@@ -326,7 +328,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
 
         const result: ILifecycleResult = { entries: [ { at, type: 'bot_resumed' }, ...closeGap(at) ], commands: [] };
 
-        for (const endpointId of [ ...humans, ...hidden ]) {
+        for (const endpointId of [ ...humans, ...hidden, ...nonHumans ]) {
             if (!seenSinceInterruption.has(endpointId) && !stopped) {
                 const left = leave(at, endpointId);
 
@@ -415,7 +417,7 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                     seenSinceInterruption.add(endpointId);
 
                     // Still in the room from before the interruption: not a new join.
-                    if (humans.has(endpointId) || hidden.has(endpointId)) {
+                    if (humans.has(endpointId) || hidden.has(endpointId) || nonHumans.has(endpointId)) {
                         return nothing();
                     }
                 }
@@ -443,6 +445,15 @@ export function createConsultationLifecycle(options: ILifecycleOptions = {}): IC
                         entries: [
                             { at, displayName, endpointId, hidden: true, identity, role, type: 'participant_joined' }
                         ],
+                        commands: []
+                    };
+                }
+
+                if (role === 'video_player') {
+                    nonHumans.add(endpointId);
+
+                    return {
+                        entries: [ { at, displayName, endpointId, identity, role, type: 'participant_joined' } ],
                         commands: []
                     };
                 }
