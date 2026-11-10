@@ -101,7 +101,7 @@ describe('Coordinator: stations as teams on the screen', () => {
         const { body } = await postMove(lounge, staffEndpoint, hn.toLowerCase());
 
         await waitForMove(body.id, 'done');
-        await waitForRoom(r => r?.occupants.length === 2, hn, 'the staff member in the patient\'s room');
+        await waitForRoom(r => r?.occupants.some(o => o.role === 'staff'), hn, 'the staff member in the patient\'s room');
         await screen.driver.waitUntil(async () => (await teamText()).includes(`กับ ${hn}`),
             { timeout: 15_000, timeoutMsg: 'the staff member is not shown as busy with the patient' });
         expect(await teamText()).toContain('ว่าง 0');
