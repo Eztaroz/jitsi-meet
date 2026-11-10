@@ -102,7 +102,7 @@ export function createScreenRoutes({ act, screen, service }: {
 
                 send(res, 200, {
                     coordinator,
-                    examination: service.examinationQueues(),
+                    examination: service.examinationQueues(rooms),
                     moves: service.state.moves
                         .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down')
                         .map(m => ({

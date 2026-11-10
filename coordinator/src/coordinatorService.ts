@@ -1039,13 +1039,18 @@ export class CoordinatorService {
      * Examination's queue split by doctor, with the patients who have no doctor yet. Each entry names the patient's HN,
      * for the readers that are allowed to see it.
      *
+     * @param {IRoom[]} [rooms] - The rooms now; with them, an entry names in `at` the stations whose staff are in the
+     * patient's room, as `queues` does.
      * @returns {Object}
      */
-    examinationQueues(): { doctors: Record<string, (IQueueEntry & { hn?: string; })[]>;
+    examinationQueues(rooms?: IRoom[]): { doctors: Record<string, (IQueueEntry & { hn?: string; })[]>;
         unassigned: (IQueueEntry & { hn?: string; })[]; } {
         const split: IExaminationQueues = examinationQueues(this._state, new Date());
+        const at = rooms ? stationsAt(this.teams(rooms)) : {};
         const named = (entries: IQueueEntry[]) => entries.map(e => ({
-            ...e, hn: this._state.encounters.find(x => x.id === e.encounterId)?.hn
+            ...e,
+            ...at[e.encounterId] ? { at: at[e.encounterId] } : {},
+            hn: this._state.encounters.find(x => x.id === e.encounterId)?.hn
         }));
 
         return {
