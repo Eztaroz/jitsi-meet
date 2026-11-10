@@ -1,0 +1,12 @@
+# Secrets and what the containers generate.
+.env
+config/
+coturn/turnserver.conf
+keys/coordinator-private/
+keys/asap/*.pem
+keys/coordinator-public/*.pem
+videos/*
+!videos/.gitkeep
+coordinator/rooms.json
+!keys/asap/.gitkeep
+!keys/coordinator-public/.gitkeep

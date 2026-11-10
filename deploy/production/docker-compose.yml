@@ -1,0 +1,307 @@
+# Production deployment of this fork: docker-jitsi-meet's images with token (JWT) authentication, this fork's web build,
+# the recorder bot, the coordinator service, the video player and a coturn server. See README.md.
+#
+# It is the production counterpart of coordinator/test-deployment (which layers recorder-bot/test-deployment and its
+# JWT variant), in one file and without the test settings: no fixed passwords, no ignored certificate errors, and no
+# host networking for the services. Never start it without a .env made by scripts/generate-secrets.sh.
+#
+# Relative paths are relative to this directory. The fork's web build (`make all`) is mounted from the repository root.
+name: tele-meet
+
+x-jwt-auth: &jwt-auth
+    ENABLE_AUTH: 1
+    AUTH_TYPE: jwt
+
+services:
+    web:
+        image: jitsi/web:${JITSI_IMAGE_VERSION:?set JITSI_IMAGE_VERSION in .env}
+        restart: unless-stopped
+        ports:
+            - '${HTTP_PORT:-80}:80'
+            - '${HTTPS_PORT:-443}:443'
+        volumes:
+            # The web image writes its generated configuration here.
+            - ./config/web:/config
+            # The TLS certificate (full chain) and key, which the image's nginx reads from /config/keys.
+            - ${TLS_CERT_FILE:?set TLS_CERT_FILE in .env}:/config/keys/cert.crt:ro
+            - ${TLS_KEY_FILE:?set TLS_KEY_FILE in .env}:/config/keys/cert.key:ro
+            # Prosody fetches public keys from here: http://web/.well-known/asap/<sha256 of the key id>.pem is where
+            # the hospital issuer's keys and the coordinator service's key are, and the one key server of the
+            # coordinator API is http://web/.well-known/coordinator/. Both read-only: whoever can write to the first
+            # can sign tokens for any room.
+            - ./keys/asap:/usr/share/jitsi-meet/.well-known/asap:ro
+            - ./keys/coordinator-public:/usr/share/jitsi-meet/.well-known/coordinator:ro
+            # Patient HNs with "/" (recorder-bot/deploy/README.md).
+            - ../../recorder-bot/deploy/nginx/hn-rooms.conf:/config/nginx-custom/hn-rooms.conf:ro
+            # Proxies /coordinator/ to the coordinator service over this server's TLS (ADR 0008).
+            - ../../coordinator/deploy/nginx/coordinator.conf:/config/nginx-custom/coordinator.conf:ro
+            # The waiting videos, at /videos/.
+            - ./videos:/usr/share/jitsi-meet/videos:ro
+            - ./nginx/videos.conf:/config/nginx-custom/videos.conf:ro
+            # Marks patients and the video player for the client.
+            - ./custom-config.js:/config/custom-config.js:ro
+            # The fork's web build (make all) replaces the image's own. The bot pages are in static/.
+            - ../../index.html:/usr/share/jitsi-meet/index.html:ro
+            - ../../base.html:/usr/share/jitsi-meet/base.html:ro
+            - ../../body.html:/usr/share/jitsi-meet/body.html:ro
+            - ../../fonts.html:/usr/share/jitsi-meet/fonts.html:ro
+            - ../../head.html:/usr/share/jitsi-meet/head.html:ro
+            - ../../plugin.head.html:/usr/share/jitsi-meet/plugin.head.html:ro
+            - ../../title.html:/usr/share/jitsi-meet/title.html:ro
+            - ../../manifest.json:/usr/share/jitsi-meet/manifest.json:ro
+            - ../../pwa-worker.js:/usr/share/jitsi-meet/pwa-worker.js:ro
+            - ../../libs:/usr/share/jitsi-meet/libs:ro
+            - ../../css:/usr/share/jitsi-meet/css:ro
+            - ../../static:/usr/share/jitsi-meet/static:ro
+            - ../../images:/usr/share/jitsi-meet/images:ro
+            - ../../fonts:/usr/share/jitsi-meet/fonts:ro
+            - ../../lang:/usr/share/jitsi-meet/lang:ro
+            - ../../sounds:/usr/share/jitsi-meet/sounds:ro
+        environment:
+            <<: *jwt-auth
+            DISABLE_DEEP_LINKING: 'true'
+            ENABLE_BREAKOUT_ROOMS: 'false'
+            ENABLE_CLOSE_PAGE: 'false'
+            ENABLE_IPV6: ${ENABLE_IPV6:-0}
+            ENABLE_P2P: 'false'
+            ENABLE_PREJOIN_PAGE: 'false'
+            ENABLE_RECORDING: 1
+            ENABLE_WELCOME_PAGE: 'false'
+            PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}
+            RESOLUTION: 720
+            TZ: ${TZ:-Asia/Bangkok}
+            XMPP_HIDDEN_DOMAIN: ${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}
+        networks:
+            meet.jitsi:
+        depends_on:
+            - jvb
+
+    prosody:
+        image: jitsi/prosody:${JITSI_IMAGE_VERSION}
+        restart: unless-stopped
+        # 5280 is Prosody's HTTP port: the web server proxies BOSH and the websocket to it, and the coordinator service
+        # reads the open rooms from it. It is on the internal network only, never published: the coordinator API
+        # module lists everyone in every room.
+        expose:
+            - '5222'
+            - '5347'
+            - '5280'
+        volumes:
+            - ./config/prosody/config:/config
+            - ./config/prosody/prosody-plugins-custom:/prosody-plugins-custom
+            - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
+            - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
+            - ../../resources/prosody-plugins/mod_muc_patient_never_moderator.lua:/prosody-plugins-custom/mod_muc_patient_never_moderator.lua:ro
+            - ../../resources/prosody-plugins/patient_marker.lib.lua:/prosody-plugins-custom/patient_marker.lib.lua:ro
+            # Refuses the end of a patient's room for everyone; reads the MUC component's muc_patient_marker.
+            - ../../resources/prosody-plugins/mod_end_conference.lua:/prosody-plugins-custom/mod_end_conference.lua:ro
+        environment:
+            <<: *jwt-auth
+            ENABLE_BREAKOUT_ROOMS: 'false'
+            ENABLE_IPV6: ${ENABLE_IPV6:-0}
+            ENABLE_RECORDING: 1
+            JIBRI_RECORDER_PASSWORD: ${JIBRI_RECORDER_PASSWORD:?run scripts/generate-secrets.sh}
+            JIBRI_RECORDER_USER: ${JIBRI_RECORDER_USER:-recorder-bot}
+            JIBRI_XMPP_PASSWORD: ${JIBRI_XMPP_PASSWORD}
+            JICOFO_AUTH_PASSWORD: ${JICOFO_AUTH_PASSWORD:?run scripts/generate-secrets.sh}
+            JIGASI_TRANSCRIBER_PASSWORD: ${JIGASI_TRANSCRIBER_PASSWORD}
+            JIGASI_XMPP_PASSWORD: ${JIGASI_XMPP_PASSWORD}
+            JVB_AUTH_PASSWORD: ${JVB_AUTH_PASSWORD:?run scripts/generate-secrets.sh}
+            # The hospital issuer's tokens (JWT-CONTRACT.md) and, for a move, the coordinator service's (ADR 0009).
+            # The audience is the one the coordinator service puts in its tokens (COORDINATOR_TOKEN_AUDIENCE).
+            JWT_APP_ID: ${JWT_APP_ID:-tele-med}
+            JWT_ACCEPTED_ISSUERS: ${HOSPITAL_JWT_ISSUER:-tele-med},coordinator
+            JWT_ACCEPTED_AUDIENCES: ${JWT_AUDIENCE:-jitsi}
+            JWT_ASAP_KEYSERVER: http://web/.well-known/asap
+            PUBLIC_URL: ${PUBLIC_URL}
+            # The relay Prosody hands to clients. coturn below shares the secret.
+            TURN_CREDENTIALS: ${TURN_CREDENTIALS:?run scripts/generate-secrets.sh}
+            TURN_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+            TURN_PORT: 3478
+            TURNS_HOST: ${PUBLIC_HOST}
+            TURNS_PORT: 5349
+            TZ: ${TZ:-Asia/Bangkok}
+            XMPP_HIDDEN_DOMAIN: ${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}
+            # Verified identities in presence (the recorder bot and the coordinator read them) and the coordinator API.
+            XMPP_MODULES: presence_identity,coordinator_api
+            XMPP_CONFIGURATION: coordinator_api_key_server = "http://web/.well-known/coordinator"
+            # Refuses a client that does not announce that it obeys moves, apart from the auth domain (Jicofo) and the
+            # recorder bot's hidden domain (ADR 0010); keeps patients, by the marker of the coordinator service, out
+            # of the moderator role; lets the recorder bot through token verification. Separate the hosts with ";",
+            # not ",": the image turns every comma in this variable into a new line.
+            XMPP_MUC_MODULES: muc_require_move_support,muc_patient_never_moderator
+            XMPP_MUC_CONFIGURATION: |
+                token_verification_allowlist = { "${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}" }
+                muc_require_move_support_exempt_hosts = { "auth.meet.jitsi"; "${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}" }
+                muc_patient_marker = "${PATIENT_MARKER:-user.hospital_role=patient}"
+        networks:
+            meet.jitsi:
+                aliases:
+                    - xmpp.meet.jitsi
+
+    jicofo:
+        image: jitsi/jicofo:${JITSI_IMAGE_VERSION}
+        restart: unless-stopped
+        volumes:
+            - ./config/jicofo:/config
+        environment:
+            <<: *jwt-auth
+            ENABLE_BREAKOUT_ROOMS: 'false'
+            ENABLE_RECORDING: 1
+            JICOFO_AUTH_PASSWORD: ${JICOFO_AUTH_PASSWORD}
+            TZ: ${TZ:-Asia/Bangkok}
+            XMPP_HIDDEN_DOMAIN: ${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}
+        depends_on:
+            - prosody
+        networks:
+            meet.jitsi:
+
+    jvb:
+        image: jitsi/jvb:${JITSI_IMAGE_VERSION}
+        restart: unless-stopped
+        ports:
+            - '10000:10000/udp'
+        volumes:
+            - ./config/jvb:/config
+        environment:
+            # Both addresses: the host's own, so that the recorder bot and the video player (and any client on the
+            # internal network) reach it without a detour through the NAT, and the NAT's public one for everyone else.
+            JVB_ADVERTISE_IPS: ${JVB_ADVERTISE_IPS:?set JVB_ADVERTISE_IPS in .env}
+            JVB_AUTH_PASSWORD: ${JVB_AUTH_PASSWORD}
+            JVB_DISABLE_STUN: 'true'
+            TZ: ${TZ:-Asia/Bangkok}
+        depends_on:
+            - prosody
+        networks:
+            meet.jitsi:
+
+    # coturn: the same settings as the old server's (use-auth-secret, UDP 3478, TLS 5349). On the host network, as a
+    # relay needs the host's addresses. Render coturn/turnserver.conf with scripts/generate-secrets.sh.
+    coturn:
+        image: ${COTURN_IMAGE:-coturn/coturn:4.6.3}
+        restart: unless-stopped
+        network_mode: host
+        command: ['-c', '/etc/coturn/turnserver.conf']
+        volumes:
+            - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+            - ${TLS_CERT_FILE}:/etc/coturn/certs/fullchain.pem:ro
+            - ${TLS_KEY_FILE}:/etc/coturn/certs/privkey.pem:ro
+
+    recorder-bot:
+        # Built from recorder-bot/Dockerfile: docker build -t recorder-bot:<version> recorder-bot/
+        image: ${RECORDER_BOT_IMAGE:?set RECORDER_BOT_IMAGE in .env}
+        restart: unless-stopped
+        # As Playwright recommends for Chromium in a container.
+        init: true
+        ipc: host
+        # Time to finalise the consultations in progress when stopped (recorder-bot/deploy/README.md, Running it).
+        stop_grace_period: 1m
+        # Reaches the control API from this host for health checks; the coordinator service reaches it on the network.
+        ports:
+            - '127.0.0.1:8090:8090'
+        extra_hosts:
+            # The public name resolves to this host, so that the bot reaches the web server and the videobridge without
+            # a detour through the NAT.
+            - '${PUBLIC_HOST}:${HOST_INTERNAL_IP:?set HOST_INTERNAL_IP in .env}'
+        volumes:
+            # The evidence storage root, at the same path inside the container. The service runs as uid 1001, which
+            # must be able to write to it. Mounts of the host propagate, so that the service sees the share once it
+            # is mounted, even after the service started.
+            - type: bind
+              source: '${RECORDER_BOT_STORAGE_ROOT:?set RECORDER_BOT_STORAGE_ROOT in .env}'
+              target: '${RECORDER_BOT_STORAGE_ROOT}'
+              bind:
+                  propagation: rslave
+            # The spool outlives the container: it holds the consultations in progress, and evidence recordings that
+            # could not be moved to the storage root yet.
+            - recorder-bot-spool:/var/lib/recorder-bot/spool
+        environment:
+            RECORDER_BOT_API_PORT: 8090
+            RECORDER_BOT_API_SECRET: ${RECORDER_BOT_API_SECRET:?run scripts/generate-secrets.sh}
+            RECORDER_BOT_JID: ${JIBRI_RECORDER_USER:-recorder-bot}@${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}
+            RECORDER_BOT_PASSWORD: ${JIBRI_RECORDER_PASSWORD}
+            RECORDER_BOT_JITSI_URL: ${PUBLIC_URL}
+            RECORDER_BOT_STORAGE_ROOT: ${RECORDER_BOT_STORAGE_ROOT}
+            RECORDER_BOT_MAX_CONSULTATIONS: ${RECORDER_BOT_MAX_CONSULTATIONS:?set RECORDER_BOT_MAX_CONSULTATIONS in .env}
+            RECORDER_BOT_RETENTION_DAYS: ${RETENTION_DAYS:-90}
+            RECORDER_BOT_PATIENT_MARKER: ${PATIENT_MARKER:-user.hospital_role=patient}
+            RECORDER_BOT_STAFF_MARKER: ${STAFF_MARKER:-user.hospital_role=staff}
+            RECORDER_BOT_VIDEO_PLAYER_MARKER: ${VIDEO_PLAYER_MARKER:-user.hospital_role=video_player}
+            TZ: ${TZ:-Asia/Bangkok}
+        networks:
+            meet.jitsi:
+        depends_on:
+            - web
+
+    video-player:
+        # Built from video-player/Dockerfile: docker build -t video-player:<version> video-player/
+        image: ${VIDEO_PLAYER_IMAGE:?set VIDEO_PLAYER_IMAGE in .env}
+        restart: unless-stopped
+        init: true
+        ipc: host
+        ports:
+            - '127.0.0.1:8094:8094'
+        extra_hosts:
+            - '${PUBLIC_HOST}:${HOST_INTERNAL_IP}'
+        environment:
+            VIDEO_PLAYER_API_PORT: 8094
+            VIDEO_PLAYER_API_SECRET: ${VIDEO_PLAYER_API_SECRET:?run scripts/generate-secrets.sh}
+            VIDEO_PLAYER_JITSI_URL: ${PUBLIC_URL}
+            VIDEO_PLAYER_MAX_ROOMS: ${VIDEO_PLAYER_MAX_ROOMS:-3}
+            TZ: ${TZ:-Asia/Bangkok}
+        networks:
+            meet.jitsi:
+        depends_on:
+            - web
+
+    coordinator:
+        # Built from coordinator/Dockerfile: docker build -t coordinator:<version> coordinator/
+        image: ${COORDINATOR_IMAGE:?set COORDINATOR_IMAGE in .env}
+        restart: unless-stopped
+        # On the internal network only, and no port is published: the web server proxies /coordinator/ to port 8091
+        # (ADR 0008). Never add a "ports" entry here.
+        volumes:
+            - coordinator-data:/var/lib/coordinator
+            - ./keys/coordinator-private/private.pem:/run/keys/private.pem:ro
+            - ./coordinator/rooms.json:/etc/coordinator/rooms.json:ro
+            # The hospital issuer's public keys, which sign the coordinators and the staff in. The same directory the
+            # key server serves, so that there is one set of issuer keys.
+            - ./keys/asap:/etc/coordinator/issuer-keys:ro
+        environment:
+            COORDINATOR_API_SECRET: ${COORDINATOR_API_SECRET:?run scripts/generate-secrets.sh}
+            COORDINATOR_AUDIT_KEY: ${COORDINATOR_AUDIT_KEY:?run scripts/generate-secrets.sh}
+            COORDINATOR_ACCEPTED_AUDIENCES: ${JWT_AUDIENCE:-jitsi}
+            COORDINATOR_ACCEPTED_ISSUERS: ${HOSPITAL_JWT_ISSUER:-tele-med}
+            COORDINATOR_COORDINATOR_MARKER: ${COORDINATOR_MARKER:-user.hospital_role=coordinator}
+            COORDINATOR_DATA_DIR: /var/lib/coordinator
+            COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
+            COORDINATOR_PATIENT_MARKER: ${PATIENT_MARKER:-user.hospital_role=patient}
+            COORDINATOR_PROSODY_URL: http://prosody:5280
+            COORDINATOR_RECORDER_BOT_SECRET: ${RECORDER_BOT_API_SECRET}
+            COORDINATOR_RECORDER_BOT_URL: http://recorder-bot:8090
+            COORDINATOR_RETENTION_DAYS: ${RETENTION_DAYS:-90}
+            COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
+            COORDINATOR_SIGNING_KEY_FILE: /run/keys/private.pem
+            COORDINATOR_SIGNING_KID: ${COORDINATOR_SIGNING_KID:-coordinator/key-1}
+            COORDINATOR_STAFF_MARKER: ${STAFF_MARKER:-user.hospital_role=staff}
+            COORDINATOR_TIME_ZONE: ${TZ:-Asia/Bangkok}
+            # The XMPP domain, as the participants' tokens have it as "sub" (JWT-CONTRACT.md).
+            COORDINATOR_TOKEN_SUBJECT: meet.jitsi
+            COORDINATOR_VIDEO_BASE_URL: ${PUBLIC_URL}/
+            COORDINATOR_VIDEO_PLAYER_MARKER: ${VIDEO_PLAYER_MARKER:-user.hospital_role=video_player}
+            COORDINATOR_VIDEO_PLAYER_SECRET: ${VIDEO_PLAYER_API_SECRET}
+            COORDINATOR_VIDEO_PLAYER_URL: http://video-player:8094
+            TZ: ${TZ:-Asia/Bangkok}
+        networks:
+            meet.jitsi:
+        depends_on:
+            - recorder-bot
+            - video-player
+            - prosody
+
+volumes:
+    coordinator-data:
+    recorder-bot-spool:
+
+networks:
+    meet.jitsi:
