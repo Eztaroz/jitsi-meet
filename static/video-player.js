@@ -31,6 +31,18 @@
     }
 
     /**
+     * Names a room as Prosody and jitsi-meet do (getBackendSafeRoomName): NFKC, lower case, URL-encoded, lower case
+     * again. The service passes the room as people know it, such as an HN, which may contain "/".
+     *
+     * @param {string} name - The room name.
+     * @returns {string}
+     */
+    function backendSafeRoomName(name) {
+        return encodeURIComponent(name.normalize('NFKC').toLowerCase()).replace(/\*/gu, '%2a')
+            .toLowerCase();
+    }
+
+    /**
      * Returns the deployment's XMPP websocket URL for a room, with the token.
      *
      * @param {string} room - The backend-safe room name.
@@ -100,7 +112,7 @@
     function joinConference(params) {
         const events = JitsiMeetJS.events.conference;
 
-        conference = connection.initJitsiConference(params.room, { p2p: { enabled: false } });
+        conference = connection.initJitsiConference(backendSafeRoomName(params.room), { p2p: { enabled: false } });
         conference.on(events.CONFERENCE_JOINED, () => {
             publishVideo(params.videoUrl).catch(error => {
                 if (!stopping) {
@@ -138,7 +150,7 @@
                     domain: config.hosts.domain,
                     muc: config.hosts.muc
                 },
-                serviceUrl: websocketUrl(params.room, params.token)
+                serviceUrl: websocketUrl(backendSafeRoomName(params.room), params.token)
             });
             connection.addEventListener(events.CONNECTION_ESTABLISHED, () => joinConference(params));
             connection.addEventListener(events.CONNECTION_FAILED, error => emit('failed', { error: String(error) }));
