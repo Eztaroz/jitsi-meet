@@ -1,0 +1,123 @@
+# GitLab CI for the internal copy of this fork (git.medicine.psu.ac.th): test the coordinator service, build the images of
+# deploy/production with kaniko (the runner has no Docker daemon), push them to the registry as :latest and as the commit,
+# then ask Portainer to redeploy the stack. Same pattern as the other projects on this runner (tag HOSAPP02).
+#
+# CI/CD variables (Settings > CI/CD > Variables, Protected + Masked):
+#   REGISTRY_AUTH     base64 of "user:password" for reg.medicine.psu.ac.th (required to push)
+#   DOCKERHUB_AUTH    base64 of "user:password" for Docker Hub (optional, against pull limits)
+#   PORTAINER_WEBHOOK the full webhook URL of the stack (optional: without it the deploy job is skipped)
+#
+# The web image is built by hand (the "play" button of image-web): webpack needs about 4 GB of memory, and the runner
+# shares its host with other services. Build it when the web client, the nginx settings or the Prosody plugins change;
+# Portainer then pulls the new :latest of every image.
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  REGISTRY: reg.medicine.psu.ac.th
+  IMAGE_PREFIX: reg.medicine.psu.ac.th/ppapop/jitsi-meet
+
+test-coordinator:
+  stage: test
+  image: node:24-bookworm-slim
+  script:
+    - cd coordinator
+    - node --disable-warning=ExperimentalWarning --test test/*.test.ts
+  tags:
+    - HOSAPP02
+
+.kaniko:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.9.0-debug
+    entrypoint: [""]
+  before_script:
+    - |
+      if [ -z "$REGISTRY_AUTH" ]; then
+        echo "ERROR: REGISTRY_AUTH is empty: set the CI/CD variable (tick Protected only if the branch is protected)"
+        exit 1
+      fi
+    - mkdir -p /kaniko/.docker
+    - |
+      AUTHS="\"$REGISTRY\":{\"auth\":\"$REGISTRY_AUTH\"}"
+      if [ -n "$DOCKERHUB_AUTH" ]; then
+        AUTHS="\"https://index.docker.io/v1/\":{\"auth\":\"$DOCKERHUB_AUTH\"},$AUTHS"
+      fi
+      echo "{\"auths\":{$AUTHS}}" > /kaniko/.docker/config.json
+  script:
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}/${CONTEXT}"
+      --dockerfile "${CI_PROJECT_DIR}/${DOCKERFILE}"
+      --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
+      --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}"
+  tags:
+    - HOSAPP02
+  only:
+    - master
+    - main
+
+image-coordinator:
+  extends: .kaniko
+  variables:
+    IMAGE_NAME: coordinator
+    CONTEXT: coordinator
+    DOCKERFILE: coordinator/Dockerfile
+
+image-recorder-bot:
+  extends: .kaniko
+  variables:
+    IMAGE_NAME: recorder-bot
+    CONTEXT: recorder-bot
+    DOCKERFILE: recorder-bot/Dockerfile
+
+image-video-player:
+  extends: .kaniko
+  variables:
+    IMAGE_NAME: video-player
+    CONTEXT: video-player
+    DOCKERFILE: video-player/Dockerfile
+
+image-prosody:
+  extends: .kaniko
+  variables:
+    IMAGE_NAME: prosody
+    CONTEXT: "."
+    DOCKERFILE: deploy/production/prosody/Dockerfile
+
+image-web:
+  extends: .kaniko
+  variables:
+    IMAGE_NAME: web
+    CONTEXT: "."
+    DOCKERFILE: deploy/production/web/Dockerfile
+  when: manual
+  allow_failure: true
+
+deploy-stack:
+  stage: deploy
+  image:
+    name: curlimages/curl:latest
+    entrypoint: [""]
+  script:
+    - |
+      if [ -z "$PORTAINER_WEBHOOK" ]; then
+        echo "PORTAINER_WEBHOOK is not set: skipping the deploy (the images are pushed)"
+        exit 0
+      fi
+    - echo "Triggering the Portainer redeploy"
+    - |
+      # -k: Portainer's certificate is self-signed on an internal address
+      HTTP_CODE=$(curl -k -sS -o /dev/null -w "%{http_code}" -X POST "$PORTAINER_WEBHOOK")
+      echo "Portainer webhook -> HTTP $HTTP_CODE"
+      if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+        echo "ERROR: the Portainer webhook failed (HTTP $HTTP_CODE)"
+        exit 1
+      fi
+  allow_failure: true
+  tags:
+    - HOSAPP02
+  only:
+    - master
+    - main

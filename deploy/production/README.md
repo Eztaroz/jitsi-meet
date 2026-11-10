@@ -103,3 +103,29 @@ The old server had no firewall; this host should have one that allows only the r
 
 - The mobile apps (ADR 0010): Prosody refuses a client that does not announce it can be moved, so users open the link in a phone's browser.
 - Breakout rooms (ADR 0007), peer-to-peer media (ADR 0002), guests, and dial-in. Adding Jigasi later means adding its host to `muc_require_move_support_exempt_hosts` in `docker-compose.yml`.
+
+## Portainer and GitLab CI
+
+`docker-compose.portainer.yml` is this deployment as a Portainer stack that is updated by GitLab CI. It mounts nothing from the
+repository: the images carry the web build (`web/Dockerfile`), the nginx settings, the Prosody plugins (`prosody/Dockerfile`)
+and the services. The generated configuration of the docker-jitsi-meet services is in named volumes. What stays on the Docker
+host, under `DATA_DIR`: `keys/` (`asap`, `coordinator-public`, `coordinator-private/private.pem`), `coordinator/rooms.json`,
+`coturn/turnserver.conf` (rendered by `scripts/generate-secrets.sh`) and `videos/`. Run the scripts once, in `DATA_DIR`.
+
+```text
+push to the default branch (GitLab)
+  → test-coordinator
+  → image-coordinator, image-recorder-bot, image-video-player, image-prosody   (kaniko; :latest and :<commit>)
+  → image-web (manual: webpack needs about 4 GB)
+  → deploy-stack: POST to the stack's webhook → Portainer pulls the new images and redeploys
+```
+
+Set up once:
+
+1. GitLab project CI/CD variables: `REGISTRY_AUTH` (base64 of `user:password` for the registry), `PORTAINER_WEBHOOK`.
+2. Run the pipeline and play `image-web`, so that every image exists in the registry.
+3. In Portainer, add a stack from this repository (`deploy/production/docker-compose.portainer.yml`), with the variables of
+   `.env.example` as its environment, plus `REGISTRY_PREFIX` (`reg.medicine.psu.ac.th/ppapop/jitsi-meet`), `IMAGE_TAG` (`latest`)
+   and `DATA_DIR`. Turn on the stack's webhook, with "re-pull images", and put its URL in `PORTAINER_WEBHOOK`.
+
+Roll back by setting `IMAGE_TAG` to a commit hash and updating the stack.
