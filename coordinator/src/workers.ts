@@ -9,6 +9,9 @@ import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts
 /** How long a worker that did not answer, or was full, is tried last. */
 export const SKIP_MS = 10_000;
 
+/** How often a pool waiting for its first worker looks again. */
+const WAIT_STEP_MS = 200;
+
 /** How many consultations a recorder bot pool remembers the worker of: the service reads it right after handing one out. */
 export const MAX_REMEMBERED = 1000;
 
@@ -39,15 +42,21 @@ export interface IVideoPlayerWorker extends IWorker, IVideoPlayer {}
 class Pool<T extends IWorker> {
     private readonly _skipped = new Map<string, number>();
     private readonly _source: T[] | (() => T[]);
+    private readonly _waitForWorkersUntil: number;
 
     /**
      * Creates the pool.
      *
      * @param {T[]|Function} workers - The workers, in the order of the configuration; or a function that gives the
      * workers there are now, as the heartbeats tell.
+     * @param {Object} [options] - Options.
+     * @param {number} [options.waitForWorkersUntil] - Until when, in milliseconds since the epoch, work that finds no
+     * worker waits for one to be known: just after the coordinator service starts, the heartbeats have not told of the
+     * workers yet, and work would otherwise be refused for a heartbeat period.
      */
-    constructor(workers: T[] | (() => T[])) {
+    constructor(workers: T[] | (() => T[]), { waitForWorkersUntil = 0 }: { waitForWorkersUntil?: number; } = {}) {
         this._source = workers;
+        this._waitForWorkersUntil = waitForWorkersUntil;
     }
 
     /**
@@ -71,6 +80,10 @@ class Pool<T extends IWorker> {
      */
     protected async _assign<R>(offer: (worker: T) => Promise<R>, isUnavailable: (error: unknown) => boolean,
             makeError: (code: string) => Error): Promise<{ result: R; worker: T; }> {
+        while (!this._workers.length && Date.now() < this._waitForWorkersUntil) {
+            await new Promise(resolve => setTimeout(resolve, WAIT_STEP_MS));
+        }
+
         const now = Date.now();
         const workers = this._workers.filter(w => !w.draining);
         const rooms = await Promise.all(workers.map(w => w.room().catch(() => undefined)));
@@ -88,7 +101,8 @@ class Pool<T extends IWorker> {
             .map((worker, index) => ({ index, room: rooms[index], worker }))
             .filter(w => w.room === undefined || w.room > 0)
             .sort((a, b) => late(a) - late(b) || (b.room ?? 0) - (a.room ?? 0) || a.index - b.index);
-        let failed = rooms.some(r => r === undefined);
+        // No worker known is not a full house: none answered.
+        let failed = !workers.length || rooms.some(r => r === undefined);
 
         for (const { worker } of order) {
             try {
@@ -102,7 +116,7 @@ class Pool<T extends IWorker> {
             }
         }
 
-        // At capacity only when every worker answered and none has room.
+        // At capacity only when there are workers, every one answered and none has room.
         throw makeError(failed ? 'unreachable' : 'at_capacity');
     }
 }

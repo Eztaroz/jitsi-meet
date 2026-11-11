@@ -34,11 +34,11 @@ export interface IRecorderBot {
     /** Records a patient's room as the consultation with that id; resolves to the id of the one recording the room. */
     recordRoom: (hn: string, consultationId: string, options?: IRecordRoomOptions) => Promise<string>;
 
-    /** Names the recorder bot recording a consultation. */
-    workerOf?: (consultationId: string) => string | undefined;
-
     /** Names the recorder bot when there is only one. */
     workerId?: string;
+
+    /** Names the recorder bot recording a consultation. */
+    workerOf?: (consultationId: string) => string | undefined;
 }
 
 export class RecorderBot {

@@ -61,6 +61,7 @@ import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './su
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
 import { destinationClaims } from './tokens.ts';
 import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts';
+import { HEARTBEAT_MS } from './workerRegistry.ts';
 
 /** How long the token a video player joins a room with lasts: it is used at once. */
 const VIDEO_PLAYER_TOKEN_MS = 5 * 60_000;
@@ -234,6 +235,12 @@ export class CoordinatorService {
     private _retention?: NodeJS.Timeout;
 
     private _takeover?: NodeJS.Timeout;
+
+    /**
+     * When this process last handed each consultation to a recorder bot, by consultation id, so that a heartbeat sent
+     * before the recorder bot took it does not mark it ended. Kept for two heartbeat periods only.
+     */
+    private readonly _handedOut = new Map<string, number>();
 
     /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
     private readonly _videos = new Map<string, IPlayingVideo>();
@@ -414,6 +421,8 @@ export class CoordinatorService {
         const startedAt = new Date();
         const id = await recorderBot.recordRoom(command.hn, randomUUID(), { startedAt });
 
+        this._noteHandedOut(id);
+
         return {
             consultation: {
                 encounterId: command.encounterId,
@@ -436,7 +445,9 @@ export class CoordinatorService {
      */
     takeOverLostConsultations(): Promise<void> {
         return this._serial(async () => {
-            const recording = this._opts.store.consultationsByRecording(true);
+            // An ended consultation has nothing left to record: taking it over would send a recorder bot into an empty
+            // room, and take the room a live one needs.
+            const recording = this._opts.store.consultationsRecordingNow();
             const lost = new Map((this._opts.lostRecorderBots?.(recording.map(c => c.recorderBot)) ?? [])
                 .map(w => [ w.id, w.lastSeen ]));
 
@@ -473,6 +484,7 @@ export class CoordinatorService {
             });
             const taker = recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot';
 
+            this._noteHandedOut(consultation.id);
             this._opts.store.apply([ { consultation: { ...consultation, recorderBot: taker }, kind: 'consultation' } ]);
             log.info('took a consultation over from a lost recorder bot', {
                 consultation: consultation.id, from: consultation.recorderBot, to: taker
@@ -507,8 +519,65 @@ export class CoordinatorService {
      * @returns {string[]}
      */
     takenOverFrom(workerId: string, running: string[]): string[] {
+        // Whether it has ended since on the recorder bot that took it over does not matter: this one must stop it too.
         return this._opts.store.consultationsByIds(running)
             .filter(c => c.recording && c.recorderBot !== workerId).map(c => c.id);
+    }
+
+    /**
+     * Marks ended the consultations a recorder bot no longer runs (nobody joined, everyone left, or it was stopped),
+     * from the list its heartbeat sends, so that they are never taken over. A consultation handed to it less than two
+     * heartbeat periods ago is left alone: the heartbeat may have been sent before the recorder bot took it.
+     *
+     * @param {string} workerId - The recorder bot.
+     * @param {string[]} running - The ids of the consultations it says it runs.
+     * @returns {void}
+     */
+    endConsultationsNotRunning(workerId: string, running: string[]): void {
+        const now = Date.now();
+        const since = now - (2 * HEARTBEAT_MS);
+        const runs = new Set(running);
+
+        this._forgetOldHandOuts(since);
+
+        const ended = this._opts.store.consultationsRecordingNow(workerId)
+            .filter(c => !runs.has(c.id) && c.startedAt.getTime() < since && !this._handedOut.has(c.id));
+
+        if (!ended.length) {
+            return;
+        }
+        this._opts.store.apply(ended.map(c => ({ consultation: { ...c, endedAt: new Date(now) }, kind: 'consultation' as const })));
+        for (const c of ended) {
+            log.info('a consultation ended: its recorder bot no longer runs it', { consultation: c.id, recorderBot: workerId });
+        }
+    }
+
+    /**
+     * Notes that a consultation was handed to a recorder bot now.
+     *
+     * @param {string} id - The consultation.
+     * @returns {void}
+     */
+    private _noteHandedOut(id: string): void {
+        const now = Date.now();
+
+        // Without heartbeats nothing else forgets them.
+        this._forgetOldHandOuts(now - (2 * HEARTBEAT_MS));
+        this._handedOut.set(id, now);
+    }
+
+    /**
+     * Forgets the consultations handed out before a time.
+     *
+     * @param {number} since - The time, in milliseconds.
+     * @returns {void}
+     */
+    private _forgetOldHandOuts(since: number): void {
+        for (const [ id, at ] of this._handedOut) {
+            if (at < since) {
+                this._handedOut.delete(id);
+            }
+        }
     }
 
     /**

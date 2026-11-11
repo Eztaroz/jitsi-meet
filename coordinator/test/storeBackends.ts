@@ -1,13 +1,13 @@
 /**
  * The databases the store suite runs against: SQLite always, and MariaDB when `COORDINATOR_TEST_MARIADB` names one, as
  * `mariadb://user:password@host:port/schema`. The suite drops every table of that schema before each test, so point it
- * at a schema made for tests, never at a real one. The pipeline gives it a MariaDB service container.
+ * at a schema made for tests, never at a real one, and run the test files one at a time (`--test-concurrency=1`, as
+ * `npm test` does): the suites that use it share the schema. The pipeline gives it a MariaDB service container.
  */
+import { createConnection } from 'mariadb';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-import { createConnection } from 'mariadb';
 
 import { type IMariaDbConfig, MariaDbStore } from '../src/mariadbStore.ts';
 import { type IStore, Store } from '../src/store.ts';
@@ -15,13 +15,13 @@ import { type IStore, Store } from '../src/store.ts';
 export interface IBackend {
 
     /** Closes every store this backend opened. */
-    closeAll(): void;
+    closeAll: () => void;
 
     /** Whether only one instance at a time can be active on this database (a named lock), as in MariaDB. */
     exclusive: boolean;
 
     /** Makes an empty database, and returns a function that opens it: each call is one more instance on the same data. */
-    fresh(): Promise<() => IStore>;
+    fresh: () => Promise<() => IStore>;
     name: string;
 }
 

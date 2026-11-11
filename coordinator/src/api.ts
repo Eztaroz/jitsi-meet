@@ -8,8 +8,8 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 
 import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
-import { DatabaseError } from './mariadbClient.ts';
 import { errorCode, log } from './log.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
 import { describeSent } from './questionnaires.ts';
@@ -418,11 +418,16 @@ export function createApi({ holdsLock, pipelineSecret, screen, secret, service, 
 
                 reply = workers.heartbeat(scheme === 'Bearer' ? token : undefined, heartbeat);
                 // The answer tells a worker that was cut off which of its consultations were taken over (ADR 0016).
+                // The list also tells which of its consultations ended; an older recorder bot sends none, and nothing is
+                // learnt from it.
                 const { consultations, id } = heartbeat as { consultations?: unknown; id?: unknown; };
 
-                takenOver = Array.isArray(consultations)
-                    ? service.takenOverFrom(String(id), consultations.filter((c): c is string => typeof c === 'string').slice(0, 1000))
-                    : [];
+                if (Array.isArray(consultations)) {
+                    const running = consultations.filter((c): c is string => typeof c === 'string').slice(0, 1000);
+
+                    takenOver = service.takenOverFrom(String(id), running);
+                    service.endConsultationsNotRunning(String(id), running);
+                }
             } catch (error) {
                 if (error instanceof HttpError && error.status === 401) {
                     res.setHeader('www-authenticate', 'Bearer');
@@ -563,7 +568,7 @@ export function createApi({ holdsLock, pipelineSecret, screen, secret, service, 
                 throw new HttpError(404, 'no such encounter');
             }
             send(res, 200, { consultations: found.map(c => ({
-                id: c.id, recorderBot: c.recorderBot, recording: c.recording, startedAt: c.startedAt
+                endedAt: c.endedAt, id: c.id, recorderBot: c.recorderBot, recording: c.recording, startedAt: c.startedAt
             })) });
 
             return;

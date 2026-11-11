@@ -5,7 +5,7 @@
     "description": "Coordinator service: encounters, stages, queues and moves between rooms. Standalone package: its dependencies are installed here and nothing in it goes into the web bundle.",
     "type": "module",
     "scripts": {
-        "test": "node --test --test-reporter=spec 'test/**/*.test.ts'",
+        "test": "node --test --test-concurrency=1 --test-reporter=spec 'test/**/*.test.ts'",
         "start": "node src/main.ts",
         "typecheck": "tsc --noEmit"
     },

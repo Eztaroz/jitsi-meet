@@ -41,6 +41,12 @@ export interface IConfig {
     /** The center, its stations and each station's lounge (`COORDINATOR_ROOMS_FILE`). */
     layout: ILayout;
 
+    /**
+     * The pipeline's own secret (`COORDINATOR_PIPELINE_SECRET`): it alone sets a worker draining. Unset, nobody can.
+     * It is not a worker's secret and not the hospital system's.
+     */
+    pipelineSecret?: string;
+
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
 
@@ -67,18 +73,6 @@ export interface IConfig {
         marker: IRoleMarker;
     };
 
-    /**
-     * The file of the workers' ids and secrets (`COORDINATOR_WORKER_SECRETS_FILE`). Set, the workers send heartbeats
-     * and the fixed list is not used; the file is read again without a restart (ADR 0014).
-     */
-    workerSecretsFile?: string;
-
-    /**
-     * The pipeline's own secret (`COORDINATOR_PIPELINE_SECRET`): it alone sets a worker draining. Unset, nobody can.
-     * It is not a worker's secret and not the hospital system's.
-     */
-    pipelineSecret?: string;
-
     /** The service's key id and its PEM private key; Prosody has the public key (ADR 0009). */
     signingKey: { kid: string; privateKey: string; };
 
@@ -93,6 +87,12 @@ export interface IConfig {
      * videos. `baseUrl` is where the web server hosts the videos' files.
      */
     videoPlayer?: { baseUrl: string; playTimeoutMs: number; workers: IWorkerConfig[]; };
+
+    /**
+     * The file of the workers' ids and secrets (`COORDINATOR_WORKER_SECRETS_FILE`). Set, the workers send heartbeats
+     * and the fixed list is not used; the file is read again without a restart (ADR 0014).
+     */
+    workerSecretsFile?: string;
 }
 
 /** A worker's id, base URL and bearer secret. */
@@ -196,16 +196,16 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
         videoPlayer: workerSecretsFile
             ? env.COORDINATOR_VIDEO_BASE_URL?.trim() ? { baseUrl: env.COORDINATOR_VIDEO_BASE_URL.trim(), playTimeoutMs, workers: [] } : undefined
             : workers.videoPlayers || env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
-            ? {
-                baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
-                playTimeoutMs,
-                workers: workers.videoPlayers ?? [ {
-                    id: 'video-player',
-                    secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
-                    url: required(env, 'COORDINATOR_VIDEO_PLAYER_URL').replace(/\/+$/u, '')
-                } ]
-            }
-            : undefined,
+                ? {
+                    baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
+                    playTimeoutMs,
+                    workers: workers.videoPlayers ?? [ {
+                        id: 'video-player',
+                        secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
+                        url: required(env, 'COORDINATOR_VIDEO_PLAYER_URL').replace(/\/+$/u, '')
+                    } ]
+                }
+                : undefined,
         token: {
             audience: env.COORDINATOR_TOKEN_AUDIENCE?.trim() || 'jitsi',
             issuer: env.COORDINATOR_TOKEN_ISSUER?.trim() || 'coordinator',

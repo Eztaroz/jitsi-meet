@@ -37,6 +37,11 @@ function fill(store: IStore): void {
         { kind: 'move', move, record: { ...newMoveRecord('coordinator-1'), audited: true, deadlines: { move_arrival: T0 } } },
         { consultation: { encounterId: 'e1', id: 'c1', recorderBot: 'bot-1', recording: false, startedAt: T0 }, kind: 'consultation' },
         { consultation: { encounterId: 'e2', id: 'c2', recorderBot: 'bot-2', recording: true, startedAt: T0 }, kind: 'consultation' },
+        {
+            consultation: { encounterId: 'e2', endedAt: new Date(T0.getTime() + 60_000), id: 'c3', recorderBot: 'bot-2', recording: true,
+                startedAt: T0 },
+            kind: 'consultation'
+        },
         { identityId: 'p1', kind: 'patient_room', room: 'r1' },
         { identityId: 's1', kind: 'staff_station', station: 'intake' }
     ]);
@@ -65,10 +70,11 @@ for (const backend of databases) {
             assert.equal(target.audit(10_000).length, 1200);
             assert.deepEqual(target.surveys(new Date(0), new Date('2100-01-01')), source.surveys(new Date(0), new Date('2100-01-01')));
             assert.deepEqual(target.allConsultations(), source.allConsultations());
-            assert.equal(target.allConsultations().length, 2);
+            assert.equal(target.allConsultations().length, 3);
+            assert.deepEqual(target.allConsultations().find(c => c.id === 'c3')?.endedAt, new Date(T0.getTime() + 60_000));
             assert.deepEqual(target.patientRooms(), { p1: 'r1' });
             assert.deepEqual(target.staffStations(), { s1: 'intake' });
-            assert.deepEqual(counts, { audit: 1200, consultations: 2, encounters: 2, moves: 1, surveys: 1 });
+            assert.deepEqual(counts, { audit: 1200, consultations: 3, encounters: 2, moves: 1, surveys: 1 });
         });
 
         it('refuses a database that already holds something, and changes nothing', async () => {
