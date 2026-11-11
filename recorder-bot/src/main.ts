@@ -38,7 +38,11 @@ const heartbeat = config.heartbeat && new Heartbeat({
         }
     },
     secret: config.apiSecret,
-    status: () => ({ capacity: config.maxConsultations, running: consultations.active().length })
+    status: () => ({
+        capacity: config.maxConsultations,
+        consultations: consultations.active().map(c => c.id),
+        running: consultations.active().length
+    })
 });
 
 // Named by the coordinator service in its answers to the heartbeats: with several recorder bots on one storage root,

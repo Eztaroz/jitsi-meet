@@ -299,6 +299,16 @@ for (const backend of databases) {
             assert.deepEqual(store.consultationsByRecording(false), [ consultation('c2', 'e2', false) ]);
         });
 
+        it('reads consultations by their ids, leaving out ids it does not know', async () => {
+            const store = (await fresh())();
+
+            store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' },
+                { consultation: consultation('c2', 'e2'), kind: 'consultation' } ]);
+
+            assert.deepEqual(store.consultationsByIds([ 'c2', 'nope' ]), [ consultation('c2', 'e2') ]);
+            assert.deepEqual(store.consultationsByIds([]), []);
+        });
+
         it('sweeps the consultations older than the retention period', async () => {
             const open = await fresh();
             const store = open();

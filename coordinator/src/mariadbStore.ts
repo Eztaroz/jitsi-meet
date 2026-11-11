@@ -196,6 +196,22 @@ export class MariaDbStore implements IStore {
     }
 
     /**
+     * Reads the consultations with these ids.
+     *
+     * @param {string[]} ids - The ids.
+     * @returns {IConsultation[]} The oldest first; an id it does not know is left out.
+     */
+    consultationsByIds(ids: string[]): IConsultation[] {
+        if (!ids.length) {
+            return [];
+        }
+
+        return this._client.select<IConsultationRow>(
+            `SELECT * FROM consultations WHERE id IN (${ids.map(() => '?').join(', ')}) ORDER BY started_at, id`, ids
+        ).map(consultationOfRow);
+    }
+
+    /**
      * Reads the consultations that are recording, or the ones that are not.
      *
      * @param {boolean} recording - Which.

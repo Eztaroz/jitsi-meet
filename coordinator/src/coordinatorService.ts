@@ -233,8 +233,6 @@ export class CoordinatorService {
     private readonly _timers = new Map<string, NodeJS.Timeout>();
     private _retention?: NodeJS.Timeout;
 
-    /** The consultations taken over from a lost worker, by worker, until the worker is told (ADR 0016). */
-    private readonly _takenOver = new Map<string, Set<string>>();
     private _takeover?: NodeJS.Timeout;
 
     /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
@@ -476,8 +474,6 @@ export class CoordinatorService {
             const taker = recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot';
 
             this._opts.store.apply([ { consultation: { ...consultation, recorderBot: taker }, kind: 'consultation' } ]);
-            this._takenOver.set(consultation.recorderBot,
-                new Set([ ...this._takenOver.get(consultation.recorderBot) ?? [], consultation.id ]));
             log.info('took a consultation over from a lost recorder bot', {
                 consultation: consultation.id, from: consultation.recorderBot, to: taker
             });
@@ -501,18 +497,18 @@ export class CoordinatorService {
     }
 
     /**
-     * The consultations that were taken over from a worker, once, so that the worker's recorder bot stops them when it
-     * is heard from again (ADR 0016).
+     * Which of the consultations a recorder bot says it is running were given to another recorder bot, so that it
+     * stops them when it is heard from again (ADR 0016). It comes from the stored consultations, not from what was
+     * done: while the bot reports a consultation that is recording elsewhere it is told again, so a lost answer or a
+     * restart of this service does not leave two bots recording the same room.
      *
-     * @param {string} workerId - The worker.
+     * @param {string} workerId - The recorder bot.
+     * @param {string[]} running - The ids of the consultations it says it runs.
      * @returns {string[]}
      */
-    takenOverFrom(workerId: string): string[] {
-        const ids = [ ...this._takenOver.get(workerId) ?? [] ];
-
-        this._takenOver.delete(workerId);
-
-        return ids;
+    takenOverFrom(workerId: string, running: string[]): string[] {
+        return this._opts.store.consultationsByIds(running)
+            .filter(c => c.recording && c.recorderBot !== workerId).map(c => c.id);
     }
 
     /**

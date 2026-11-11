@@ -112,6 +112,9 @@ export interface IStore {
     /** Closes the database. */
     close(): void;
 
+    /** Reads the consultations with these ids, the oldest first; an id it does not know is left out. */
+    consultationsByIds(ids: string[]): IConsultation[];
+
     /** Reads the consultations that are recording, or the ones that are not, the oldest first. */
     consultationsByRecording(recording: boolean): IConsultation[];
 
@@ -374,6 +377,23 @@ export class Store implements IStore {
     consultationsOf(encounterId: string): IConsultation[] {
         const rows = this._db.prepare('SELECT * FROM consultations WHERE encounter_id = ? ORDER BY started_at, id')
             .all(encounterId) as unknown as IConsultationRow[];
+
+        return rows.map(consultationOfRow);
+    }
+
+    /**
+     * Reads the consultations with these ids.
+     *
+     * @param {string[]} ids - The ids.
+     * @returns {IConsultation[]} The oldest first; an id it does not know is left out.
+     */
+    consultationsByIds(ids: string[]): IConsultation[] {
+        if (!ids.length) {
+            return [];
+        }
+
+        const rows = this._db.prepare(`SELECT * FROM consultations WHERE id IN (${ids.map(() => '?').join(', ')}) ORDER BY started_at, id`)
+            .all(...ids) as unknown as IConsultationRow[];
 
         return rows.map(consultationOfRow);
     }

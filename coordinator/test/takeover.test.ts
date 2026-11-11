@@ -148,7 +148,8 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
     }
 
     const beat = (bot: IFakeBot) => call('POST', '/workers/heartbeat', {
-        build: 'b1', capacity: bot.capacity, id: bot.id, kind: 'recorder-bot', running: bot.running.length, url: bot.url
+        build: 'b1', capacity: bot.capacity, consultations: [ ...bot.running ], id: bot.id, kind: 'recorder-bot',
+        running: bot.running.length, url: bot.url
     }, bot.secret);
     const consultationOf = async (encounterId: string) =>
         (await call('GET', `/encounters/${encounterId}/consultations`)).body.consultations[0];
@@ -306,6 +307,26 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         await service.takeOverLostConsultations();
 
         assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-2');
+    });
+
+    it('keeps telling the lost worker until it stops the consultation, even over a lost reply or a restart', async () => {
+        const encounterId = await loseBot1();
+        const { id } = await consultationOf(encounterId);
+
+        await service.takeOverLostConsultations();
+
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ]);
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ], 'the first answer may have been lost');
+
+        service.stop();
+        server.close();
+        server.closeAllConnections();
+        store.close();
+        await boot();
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ], 'a restart forgets nothing');
+
+        bots[0].running = [];
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [], 'it stopped');
     });
 
     it('tells the lost worker, when it is heard again, that its consultation was taken over', async () => {
