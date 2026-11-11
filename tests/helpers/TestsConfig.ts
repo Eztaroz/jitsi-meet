@@ -62,7 +62,12 @@ export const config = {
         /** The coordinator service's API through the web server's proxy, e.g. https://localhost:8443/coordinator. */
         apiUrl: process.env.COORDINATOR_API_URL?.trim()?.replace(/\/+$/, ''),
         /** The docker container the coordinator service runs in, so that the tests can restart it. */
-        container: process.env.COORDINATOR_CONTAINER?.trim()
+        container: process.env.COORDINATOR_CONTAINER?.trim(),
+        /**
+         * The docker containers of the recorder bot workers, by the worker's id, as "id=container,id=container", so
+         * that the takeover test can cut one off from the coordinator service.
+         */
+        workerContainers: process.env.COORDINATOR_WORKER_CONTAINERS?.trim()
     },
     recorderBot: {
         /** The bearer secret of the recorder bot service's control API. */

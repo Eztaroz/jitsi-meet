@@ -15,11 +15,21 @@ export class RecorderBotUnavailableError extends Error {
     }
 }
 
+/** What the coordinator service tells a recorder bot about a consultation beside its id (ADR 0016). */
+export interface IRecordRoomOptions {
+
+    /** For a consultation taken over: when its previous recorder bot was last heard from, where the gap starts. */
+    gapSince?: Date;
+
+    /** When the consultation started, which names its folder in the evidence storage root. */
+    startedAt?: Date;
+}
+
 /** What the coordinator service needs from the recorder bots; tests fake it. */
 export interface IRecorderBot {
 
     /** Records a patient's room as the consultation with that id; resolves to the id of the one recording the room. */
-    recordRoom: (hn: string, consultationId: string) => Promise<string>;
+    recordRoom: (hn: string, consultationId: string, options?: IRecordRoomOptions) => Promise<string>;
 
     /** Names the recorder bot recording a consultation. */
     workerOf?: (consultationId: string) => string | undefined;
@@ -79,15 +89,21 @@ export class RecorderBot {
      *
      * @param {string} hn - The patient's HN.
      * @param {string} consultationId - The consultation's id.
+     * @param {IRecordRoomOptions} [options] - When the consultation started, and where its gap starts if it was taken over.
      * @returns {Promise<string>} The id of the consultation recording the room: the one given, or the one already
      * running in that room.
      */
-    async recordRoom(hn: string, consultationId: string): Promise<string> {
+    async recordRoom(hn: string, consultationId: string, options: IRecordRoomOptions = {}): Promise<string> {
         let response: Response;
 
         try {
             response = await fetch(`${this._url}/consultations`, {
-                body: JSON.stringify({ consultationId, hn }),
+                body: JSON.stringify({
+                    consultationId,
+                    gapSince: options.gapSince?.toISOString(),
+                    hn,
+                    startedAt: options.startedAt?.toISOString()
+                }),
                 headers: { authorization: `Bearer ${this._secret}`, 'content-type': 'application/json' },
                 method: 'POST',
                 signal: AbortSignal.timeout(10_000)

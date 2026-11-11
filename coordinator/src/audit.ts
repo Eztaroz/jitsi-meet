@@ -30,7 +30,8 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'survey_export' | 'video';
+    kind: 'call_next' | 'consultation_unrecorded' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'survey_export'
+        | 'video';
     outcome: string;
 
     /** The moved participant's verified identity id. */
@@ -189,4 +190,15 @@ export function callNextEntry({ at, encounterId, issuer, outcome, reason }: {
     reason?: string;
 }): IAuditEntry {
     return { at, encounterId, issuer, kind: 'call_next', outcome, reason };
+}
+
+/**
+ * The entry of a consultation that is no longer recorded: its recorder bot was lost and no other had room to take it
+ * over (ADR 0016). It names the encounter, never the patient.
+ *
+ * @param {Object} options - Options.
+ * @returns {IAuditEntry}
+ */
+export function unrecordedEntry({ at, encounterId, reason }: { at: Date; encounterId: string; reason: string; }): IAuditEntry {
+    return { at, encounterId, issuer: 'system', kind: 'consultation_unrecorded', outcome: 'unrecorded', reason };
 }

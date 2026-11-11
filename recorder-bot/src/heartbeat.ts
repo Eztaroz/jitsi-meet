@@ -29,6 +29,9 @@ export interface IHeartbeatOptions {
     /** How often to send; for tests. */
     intervalMs?: number;
 
+    /** Called with the consultations the coordinator service took over, from the answer: this worker stops them. */
+    onTakenOver?: (consultationIds: string[]) => void;
+
     /** The worker's own secret on that list: the same one the coordinator service sends with its requests. */
     secret: string;
 
@@ -68,6 +71,8 @@ export class Heartbeat {
 
             if (!response.ok) {
                 log.warn('the coordinator service refused the heartbeat', { status: response.status });
+            } else {
+                await this._stopTakenOver(response);
             }
 
             return response.ok;
@@ -75,6 +80,27 @@ export class Heartbeat {
             log.warn('could not send a heartbeat', { error: errorCode(error) });
 
             return false;
+        }
+    }
+
+    /**
+     * Reads the consultations the answer says were taken over, when this worker was cut off from the coordinator
+     * service for a while, and hands them to the worker to stop (ADR 0016).
+     *
+     * @param {Response} response - The answer.
+     * @returns {Promise<void>}
+     */
+    private async _stopTakenOver(response: Response): Promise<void> {
+        const { onTakenOver } = this._options;
+
+        if (!onTakenOver) {
+            return;
+        }
+
+        const { takenOver } = await response.json().catch(() => ({})) as { takenOver?: unknown; };
+
+        if (Array.isArray(takenOver) && takenOver.length) {
+            onTakenOver(takenOver.filter((id): id is string => typeof id === 'string'));
         }
     }
 

@@ -403,15 +403,21 @@ export function createApi({ screen, secret, service, staff, survey, workers }: {
 
         // A worker's heartbeat carries the worker's own secret, not the system's (ADR 0014).
         if (path === '/workers/heartbeat' && req.method === 'POST' && workers) {
+            let takenOver: string[] = [];
+
             try {
-                workers.heartbeat(scheme === 'Bearer' ? token : undefined, await readJson(req));
+                const heartbeat = await readJson(req);
+
+                workers.heartbeat(scheme === 'Bearer' ? token : undefined, heartbeat);
+                // The answer tells a worker that was cut off which of its consultations were taken over (ADR 0016).
+                takenOver = service.takenOverFrom(String((heartbeat as { id?: unknown; }).id));
             } catch (error) {
                 if (error instanceof HttpError && error.status === 401) {
                     res.setHeader('www-authenticate', 'Bearer');
                 }
                 throw error;
             }
-            send(res, 200, { status: 'ok' });
+            send(res, 200, { status: 'ok', takenOver });
 
             return;
         }

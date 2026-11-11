@@ -8,7 +8,7 @@
  * in the spool and the move is retried (see spool.ts).
  */
 import { execFile } from 'node:child_process';
-import { appendFile, cp, lstat, mkdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { appendFile, cp, lstat, mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -45,6 +45,9 @@ const RAW_DIR = 'raw';
 export interface IEvidenceInput {
 
     consultationId: string;
+
+    /** When the consultation started, as the coordinator service says: it names the consultation's folder (ADR 0016). */
+    consultationStart?: Date;
     end: Date;
     hn: string;
     identities: IIdentitySummary[];
@@ -52,6 +55,9 @@ export interface IEvidenceInput {
     /** The conference's meeting id, as jitsi-meet and the videobridge log it. */
     meetingId?: string;
     participants: IParticipant[];
+
+    /** This recorder bot's folder under the consultation's, so that parts never overwrite each other (ADR 0016). */
+    part?: string;
 
     /** The patient's room, which names the evidence's place under their HN. */
     room: string;
@@ -83,15 +89,19 @@ interface IManifestFile {
 
 /**
  * Returns where a consultation's evidence recording goes, relative to the storage root:
- * `<backend-safe HN>/<consultation start, UTC>`. The start is in ISO 8601 basic format, which has no ":"; some file
- * servers refuse ":" in names.
+ * `<backend-safe HN>/<consultation start, UTC>`, and a folder of its own for each recorder bot's part of it:
+ * `<backend-safe HN>/<consultation start, UTC>/<part>` (ADR 0016). The start is in ISO 8601 basic format, which has no
+ * ":"; some file servers refuse ":" in names.
  *
  * @param {string} room - The room name, which is the backend-safe HN.
  * @param {Date} start - When the consultation started.
+ * @param {string} [part] - The recorder bot's part.
  * @returns {string}
  */
-export function evidenceLocation(room: string, start: Date): string {
-    return path.posix.join(room, start.toISOString().replace(/[-:]/g, ''));
+export function evidenceLocation(room: string, start: Date, part?: string): string {
+    const consultation = path.posix.join(room, start.toISOString().replace(/[-:]/g, ''));
+
+    return part ? path.posix.join(consultation, part) : consultation;
 }
 
 /**
@@ -159,7 +169,12 @@ function writeJson(file: string, value: unknown): Promise<void> {
 /** What the service reads back from a finalised folder's manifest. */
 export interface IManifestHeader {
     consultationId: string;
+
+    /** The recorder bot's part of the consultation, when the folder is one. */
+    part?: string;
     room: string;
+
+    /** When the consultation started: the folder's name in the storage root is made of it. */
     start: Date;
 }
 
@@ -184,14 +199,104 @@ export async function readManifest(folder: string): Promise<IManifestHeader | un
     }
 
     const manifest = JSON.parse(text) as Record<string, unknown> | null;
-    const start = new Date(String(manifest?.start));
+    const start = new Date(String(manifest?.consultationStart ?? manifest?.start));
 
     if (typeof manifest?.consultationId !== 'string' || typeof manifest.room !== 'string'
             || Number.isNaN(start.getTime())) {
         throw Object.assign(new Error('the manifest is malformed'), { code: 'EBADMANIFEST' });
     }
 
-    return { consultationId: manifest.consultationId, room: manifest.room, start };
+    return {
+        consultationId: manifest.consultationId,
+        part: typeof manifest.part === 'string' ? manifest.part : undefined,
+        room: manifest.room,
+        start
+    };
+}
+
+/** What a consultation's manifest says of one part. */
+interface IPartSummary {
+    end: string;
+    folder: string;
+    gaps: { end: string; start: string; }[];
+    part: string;
+    start: string;
+    stopReason: string;
+}
+
+/**
+ * Writes the manifest of a consultation made of the parts stored under its folder: which parts there are, and every
+ * gap in them. It is made again from the parts each time one is stored, so that it lists those stored so far, whichever
+ * recorder bot stores last; a part still on a lost VM's spool is not in it until that VM stores it (ADR 0016).
+ *
+ * @param {string} folder - The consultation's folder in the storage root.
+ * @returns {Promise<void>}
+ */
+async function writeConsultationManifest(folder: string): Promise<void> {
+    const parts: IPartSummary[] = [];
+    let consultation: { consultationId: string; consultationStart: string; room: string; } | undefined;
+
+    for (const entry of await readdir(folder, { withFileTypes: true })) {
+        if (!entry.isDirectory()) {
+            continue;
+        }
+
+        let manifest;
+
+        try {
+            manifest = JSON.parse(await readFile(path.join(folder, entry.name, MANIFEST), 'utf8'));
+        } catch {
+            continue;
+        }
+        consultation ??= {
+            consultationId: manifest.consultationId,
+            consultationStart: manifest.consultationStart ?? manifest.start,
+            room: manifest.room
+        };
+        parts.push({
+            end: manifest.end,
+            folder: entry.name,
+            gaps: manifest.gaps ?? [],
+            part: manifest.part ?? entry.name,
+            start: manifest.start,
+            stopReason: manifest.stopReason
+        });
+    }
+    if (!consultation) {
+        return;
+    }
+    parts.sort((a, b) => a.start.localeCompare(b.start) || a.part.localeCompare(b.part));
+
+    const tmp = path.join(folder, `${MANIFEST}.${process.pid}.tmp`);
+
+    await writeJson(tmp, {
+        consultationId: consultation.consultationId,
+        end: parts.map(p => p.end).sort().at(-1),
+        gaps: parts.flatMap(p => p.gaps).sort((a, b) => a.start.localeCompare(b.start)),
+        parts: parts.map(({ gaps: _gaps, ...p }) => p),
+        room: consultation.room,
+        start: consultation.consultationStart
+    });
+    await rename(tmp, path.join(folder, MANIFEST));
+}
+
+/**
+ * Moves a finalised folder into the storage root, and when it is a recorder bot's part of a consultation, brings the
+ * consultation's manifest up to date.
+ *
+ * @param {string} folder - The finalised folder in the spool, named after its consultation.
+ * @param {string} storageRoot - The evidence storage root.
+ * @param {string} location - Where in the storage root.
+ * @returns {Promise<void>}
+ */
+export async function storeFolder(folder: string, storageRoot: string, location: string): Promise<void> {
+    await moveIntoStorage(folder, storageRoot, location);
+
+    const destination = path.join(storageRoot, location);
+
+    if ((await readManifest(destination).catch(() => undefined))?.part) {
+        await writeConsultationManifest(path.dirname(destination));
+    }
 }
 
 /**
@@ -385,6 +490,8 @@ export class EvidenceRecording {
             consultationId: input.consultationId,
             hn: input.hn,
             room: input.room,
+            consultationStart: input.consultationStart,
+            part: input.part,
             meetingId: input.meetingId,
             start: input.start,
             end: input.end,
@@ -405,7 +512,7 @@ export class EvidenceRecording {
      * @returns {Promise<void>}
      */
     store(location: string): Promise<void> {
-        return moveIntoStorage(this.folder, this.storageRoot, location);
+        return storeFolder(this.folder, this.storageRoot, location);
     }
 
     /**

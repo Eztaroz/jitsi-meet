@@ -30,6 +30,16 @@ export type ConsultationStatus =
 
     | 'failed';
 
+/** What the coordinator service says of a consultation beside its id (ADR 0016). */
+export interface IConsultationOptions {
+
+    /** For a consultation taken over: when its previous recorder bot was last heard from, where the gap starts. */
+    gapSince?: Date;
+
+    /** When the consultation started: it names the consultation's folder in the evidence storage root. */
+    startedAt?: Date;
+}
+
 /** What the control API reports about a consultation. */
 export interface IConsultationSnapshot {
     consultationId: string;
@@ -69,11 +79,20 @@ export class Consultation {
     readonly room: string;
     readonly startedAt = new Date();
 
+    /** When the consultation started, which can be before this recorder bot did, for one that was taken over. */
+    readonly consultationStart: Date;
+
+    /** This recorder bot's folder under the consultation's in the storage root: the worker's id, when it has one. */
+    readonly part?: string;
+
     /** Resolves when the consultation has reached a final status. */
     readonly done: Promise<void>;
 
     private readonly config: IConfig;
     private readonly evidence: EvidenceRecording;
+
+    /** For a takeover: where the gap starts, until the bot is in the room and the gap is in the timeline. */
+    private gapSince?: Date;
     private readonly lifecycle: IConsultationLifecycle;
     private readonly timeline: TimelineEntry[] = [];
     private readonly timers = new Map<Timer, ReturnType<typeof setTimeout>>();
@@ -114,10 +133,14 @@ export class Consultation {
      * @param {string} hn - The patient's HN.
      * @param {string} id - The consultation's id, made by the coordinator service.
      * @param {IConfig} config - Service settings.
+     * @param {IConsultationOptions} [options] - What the coordinator service says of the consultation.
      */
-    constructor(hn: string, id: string, config: IConfig) {
+    constructor(hn: string, id: string, config: IConfig, options: IConsultationOptions = {}) {
         this.id = id;
         this.hn = hn;
+        this.consultationStart = options.startedAt ?? this.startedAt;
+        this.gapSince = options.gapSince;
+        this.part = config.heartbeat?.id.replace(/[^\w.-]/gu, '_');
         this.room = roomNameFromHn(hn);
         this.config = config;
         this.lifecycle = createConsultationLifecycle({
@@ -332,6 +355,13 @@ export class Consultation {
             break;
         case 'joined':
             this.botJoined = true;
+            if (this.gapSince) {
+                // Taken over from a lost recorder bot: nothing was recorded from its last heartbeat until now.
+                const at = new Date();
+
+                this.timeline.push({ at, end: at, start: this.gapSince, type: 'gap' });
+                this.gapSince = undefined;
+            }
             this.meetingId ??= event.meetingId;
             this.updateStatus();
             if (this.interrupted) {
@@ -531,11 +561,13 @@ export class Consultation {
         try {
             await this.evidence.finalise({
                 consultationId: this.id,
+                consultationStart: this.consultationStart,
                 end: this.stoppedAt ?? new Date(),
                 hn: this.hn,
                 identities: this.lifecycle.identities(),
                 meetingId: this.meetingId,
                 participants: this.lifecycle.participants(),
+                part: this.part,
                 room: this.room,
                 staffVisits: this.lifecycle.staffVisits(),
                 start: this.startedAt,
@@ -554,7 +586,7 @@ export class Consultation {
             return;
         }
 
-        const location = evidenceLocation(this.room, this.startedAt);
+        const location = evidenceLocation(this.room, this.consultationStart, this.part);
 
         try {
             await this.evidence.store(location);
