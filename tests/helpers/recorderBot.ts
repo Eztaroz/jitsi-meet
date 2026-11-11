@@ -108,11 +108,13 @@ function callApi(route: string, init: RequestInit = {}, apiUrl = config.recorder
  *
  * @param {string} hn - The patient's HN.
  * @param {string} apiUrl - Which instance of the service; the main one by default.
+ * @param {string|null} consultationId - The id the coordinator service makes; a random one by default, none for null.
  * @returns {Promise<Object>} The HTTP status and the body.
  */
-export async function postConsultation(hn: string, apiUrl?: string): Promise<{ body: IConsultation; status: number; }> {
+export async function postConsultation(hn: string, apiUrl?: string,
+        consultationId: string | null = randomUUID()): Promise<{ body: IConsultation; status: number; }> {
     const response = await callApi('/consultations', {
-        body: JSON.stringify({ hn }),
+        body: JSON.stringify({ consultationId, hn }),
         method: 'POST'
     }, apiUrl);
 
@@ -130,7 +132,7 @@ export async function postConsultation(hn: string, apiUrl?: string): Promise<{ b
 export async function postStationConsultation(
         hn: string, room: string, patient: string): Promise<{ body: IConsultation; status: number; }> {
     const response = await callApi('/consultations', {
-        body: JSON.stringify({ hn, patient, room }),
+        body: JSON.stringify({ consultationId: randomUUID(), hn, patient, room }),
         method: 'POST'
     });
 

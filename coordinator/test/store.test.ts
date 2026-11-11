@@ -196,3 +196,33 @@ describe('the satisfaction surveys', () => {
         assert.deepEqual(store.surveys(new Date(0), now).map(s => s.id), [ 'new' ]);
     });
 });
+
+describe('consultations', () => {
+    const consultation = (id: string, encounterId: string, recording = true) =>
+        ({ encounterId, id, recorderBot: 'bot-1', recording, startedAt: T0 });
+
+    it('keeps each consultation, with its encounter, recorder bot and whether it is recording, across a restart', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'store-'));
+        const store = new Store(dir);
+
+        store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' },
+            { consultation: consultation('c2', 'e2'), kind: 'consultation' } ]);
+        store.apply([ { consultation: consultation('c1', 'e1', false), kind: 'consultation' } ]);
+        store.close();
+
+        const loaded = new Store(dir);
+
+        assert.deepEqual(loaded.consultationsOf('e1'), [ consultation('c1', 'e1', false) ]);
+        assert.deepEqual(loaded.consultationsOf('e2'), [ consultation('c2', 'e2') ]);
+        assert.deepEqual(loaded.consultationsOf('nope'), []);
+    });
+
+    it('sweeps the consultations older than the retention period', () => {
+        const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
+
+        store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' } ]);
+
+        assert.equal(store.sweep(new Date(T0.getTime() + 1000)).consultations, 1);
+        assert.deepEqual(store.consultationsOf('e1'), []);
+    });
+});

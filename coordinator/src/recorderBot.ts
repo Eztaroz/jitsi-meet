@@ -16,6 +16,9 @@ export class RecorderBotUnavailableError extends Error {
 }
 
 export class RecorderBot {
+
+    /** Names this recorder bot in what the coordinator service keeps; until there are several workers, there is one. */
+    readonly workerId = 'recorder-bot';
     private readonly _secret: string;
     private readonly _url: string;
 
@@ -31,17 +34,19 @@ export class RecorderBot {
     }
 
     /**
-     * Asks the recorder bot to record a patient's room.
+     * Asks the recorder bot to record a patient's room as a consultation with an id the coordinator service made.
      *
      * @param {string} hn - The patient's HN.
-     * @returns {Promise<string>} The consultation's id.
+     * @param {string} consultationId - The consultation's id.
+     * @returns {Promise<string>} The id of the consultation recording the room: the one given, or the one already
+     * running in that room.
      */
-    async recordRoom(hn: string): Promise<string> {
+    async recordRoom(hn: string, consultationId: string): Promise<string> {
         let response: Response;
 
         try {
             response = await fetch(`${this._url}/consultations`, {
-                body: JSON.stringify({ hn }),
+                body: JSON.stringify({ consultationId, hn }),
                 headers: { authorization: `Bearer ${this._secret}`, 'content-type': 'application/json' },
                 method: 'POST',
                 signal: AbortSignal.timeout(10_000)

@@ -12,7 +12,7 @@ describe('starting an encounter', () => {
         assert.equal(encounter?.stage, 'waiting');
         assert.equal(encounter?.hn, 'TEST-1');
         assert.equal(encounter?.created, true);
-        assert.deepEqual(commands, [ { hn: 'TEST-1', type: 'record_room' } ]);
+        assert.deepEqual(commands, [ { encounterId: encounter?.id, hn: 'TEST-1', type: 'record_room' } ]);
         assert.equal(state.encounters.length, 1);
     });
 

@@ -481,6 +481,21 @@ export function createApi({ screen, secret, service, staff, survey }: {
             return;
         }
 
+        const consultationsMatch = /^\/encounters\/([^/]+)\/consultations$/.exec(pathname);
+
+        if (consultationsMatch && req.method === 'GET') {
+            const found = service.consultationsOf(decodeURIComponent(consultationsMatch[1]));
+
+            if (!found) {
+                throw new HttpError(404, 'no such encounter');
+            }
+            send(res, 200, { consultations: found.map(c => ({
+                id: c.id, recorderBot: c.recorderBot, recording: c.recording, startedAt: c.startedAt
+            })) });
+
+            return;
+        }
+
         const encounterMatch = /^\/encounters\/([^/]+)$/.exec(pathname);
 
         if (encounterMatch && req.method === 'GET') {

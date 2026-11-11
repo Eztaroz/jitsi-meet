@@ -183,7 +183,7 @@ export type RulesEvent = { at: Date; } & (
 );
 
 export type Command =
-    | { hn: string; type: 'record_room'; }
+    | { encounterId: string; hn: string; type: 'record_room'; }
     | { destination: string; endpointId: string; moveId: string; room: string; type: 'send_move'; }
     | { afterMs: number; moveId: string; timer: 'move_arrival'; type: 'start_timer'; };
 
@@ -247,7 +247,7 @@ function startEncounter(state: IState, event: RulesEvent & { type: 'start_encoun
     };
 
     return {
-        commands: [ { hn, type: 'record_room' } ],
+        commands: [ { encounterId: encounter.id, hn, type: 'record_room' } ],
         encounter: { ...encounter, created: true },
         state: { ...state, encounters: [ ...state.encounters, encounter ] }
     };

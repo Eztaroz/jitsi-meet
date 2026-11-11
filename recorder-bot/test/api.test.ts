@@ -11,10 +11,10 @@ describe('starting a consultation', () => {
     const started: string[] = [];
     const fake = {
         active: () => [],
-        start: (hn: string) => {
-            started.push(hn);
+        start: (hn: string, consultationId: string) => {
+            started.push(`${hn}/${consultationId}`);
 
-            return { consultation: { snapshot: () => ({ consultationId: 'c1', status: 'starting' }) }, created: true };
+            return { consultation: { snapshot: () => ({ consultationId, status: 'starting' }) }, created: true };
         }
     } as unknown as Consultations;
     const server = createApi({ consultations: fake, maxConsultations: 2, secret: SECRET });
@@ -42,18 +42,33 @@ describe('starting a consultation', () => {
         });
     }
 
-    test('accepts an HN alone', async () => {
-        const res = await post({ hn: '123' });
+    test('starts the consultation under the id it is given', async () => {
+        const res = await post({ consultationId: 'made-by-coordinator', hn: '123' });
 
         assert.equal(res.status, 201);
-        assert.deepEqual(started, [ '123' ]);
+        assert.deepEqual(started, [ '123/made-by-coordinator' ]);
+        assert.equal(((await res.json()) as { consultationId: string; }).consultationId, 'made-by-coordinator');
     });
+
+    for (const body of [ { hn: '123' }, { consultationId: '', hn: '123' }, { consultationId: 7, hn: '123' },
+        { consultationId: '../x', hn: '123' }, { consultationId: 'a/b', hn: '123' } ]) {
+        test(`refuses ${JSON.stringify(body)} as it has no usable consultation id`, async () => {
+            started.length = 0;
+
+            const res = await post(body);
+            const { error } = await res.json() as { error: string; };
+
+            assert.equal(res.status, 400);
+            assert.match(error, /consultationId/);
+            assert.deepEqual(started, []);
+        });
+    }
 
     for (const fields of [ { room: 'station-1' }, { patient: 'p@hospital' }, { room: 'station-1', patient: 'p@hospital' } ]) {
         test(`refuses station fields ${Object.keys(fields).join(' and ')}, pointing to ADR 0011`, async () => {
             started.length = 0;
 
-            const res = await post({ hn: '123', ...fields });
+            const res = await post({ consultationId: 'c1', hn: '123', ...fields });
             const { error } = await res.json() as { error: string; };
 
             assert.equal(res.status, 400);

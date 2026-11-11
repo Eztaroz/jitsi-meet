@@ -235,7 +235,7 @@ Every request needs the bearer secret; without it the service answers `401`.
 
 | Request | Answer |
 |---|---|
-| `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` for a new consultation; `200` and the same for the consultation already running in that HN's room; `503` when the service is at its limit |
+| `POST /consultations` with `{ "hn": "<HN>", "consultationId": "<id>" }`; the id is made by the coordinator service (ADR 0016) | `201` and `{ "consultationId", "status" }` for a new consultation, recorded under that id; `200` and the same for the consultation already running in that HN's room; `400` without a usable `consultationId`; `409` when the id is already in use; `503` when the service is at its limit |
 | `POST /consultations` with station fields (`room` or `patient`) | `400` and an error that says station consultations are gone (ADR 0011). Nothing is started. Patients are never moved and staff come to their room, so only the patient's own room is recorded |
 | `POST /consultations/<consultationId>/stop` | Stops the consultation before its time, and answers `200` and the consultation once it has stopped. |
 | `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, `relaunches` (how many times its bot was relaunched), and once stored `evidenceLocation` |
