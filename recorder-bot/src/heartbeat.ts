@@ -9,6 +9,9 @@ import { errorCode, log } from './log.ts';
 /** How often a heartbeat is sent. The coordinator service takes a worker for lost after three missed ones. */
 export const HEARTBEAT_MS = 5_000;
 
+/** How long the coordinator service's word that this worker sweeps the storage root holds without a new one: three heartbeats. */
+const SWEEPER_VALID_MS = 3 * HEARTBEAT_MS;
+
 /** How long a heartbeat may take to be answered. */
 const TIMEOUT_MS = 4_000;
 
@@ -32,6 +35,9 @@ export interface IHeartbeatOptions {
     /** Called with the consultations the coordinator service took over, from the answer: this worker stops them. */
     onTakenOver?: (consultationIds: string[]) => void;
 
+    /** The clock, in milliseconds; for tests. */
+    now?: () => number;
+
     /** The worker's own secret on that list: the same one the coordinator service sends with its requests. */
     secret: string;
 
@@ -41,6 +47,7 @@ export interface IHeartbeatOptions {
 
 export class Heartbeat {
     private readonly _options: IHeartbeatOptions;
+    private _sweeperUntil = 0;
     private _timer?: ReturnType<typeof setInterval>;
 
     /**
@@ -50,6 +57,17 @@ export class Heartbeat {
      */
     constructor(options: IHeartbeatOptions) {
         this._options = options;
+    }
+
+    /**
+     * Whether the coordinator service named this worker, in its last answer, to be the one that sweeps the evidence
+     * storage root. It stops holding when the answers stop coming, because the coordinator service then names another
+     * worker, and two must not sweep at once.
+     *
+     * @returns {boolean}
+     */
+    get sweeper(): boolean {
+        return (this._options.now ?? Date.now)() < this._sweeperUntil;
     }
 
     /**
@@ -72,7 +90,11 @@ export class Heartbeat {
             if (!response.ok) {
                 log.warn('the coordinator service refused the heartbeat', { status: response.status });
             } else {
-                await this._stopTakenOver(response);
+                const reply = await response.json().catch(() => ({})) as { sweeper?: unknown; takenOver?: unknown; };
+
+                this._sweeperUntil = reply?.sweeper === true ? (this._options.now ?? Date.now)() + SWEEPER_VALID_MS : 0;
+
+                this._stopTakenOver(reply.takenOver);
             }
 
             return response.ok;
@@ -87,17 +109,15 @@ export class Heartbeat {
      * Reads the consultations the answer says were taken over, when this worker was cut off from the coordinator
      * service for a while, and hands them to the worker to stop (ADR 0016).
      *
-     * @param {Response} response - The answer.
-     * @returns {Promise<void>}
+     * @param {unknown} takenOver - What the answer says: the ids of the consultations.
+     * @returns {void}
      */
-    private async _stopTakenOver(response: Response): Promise<void> {
+    private _stopTakenOver(takenOver: unknown): void {
         const { onTakenOver } = this._options;
 
         if (!onTakenOver) {
             return;
         }
-
-        const { takenOver } = await response.json().catch(() => ({})) as { takenOver?: unknown; };
 
         if (Array.isArray(takenOver) && takenOver.length) {
             onTakenOver(takenOver.filter((id): id is string => typeof id === 'string'));

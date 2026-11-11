@@ -1,6 +1,8 @@
 /**
  * The coordinator service: runs the API.
  */
+import type { Server } from 'node:http';
+
 import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
 import { CoordinatorService } from './coordinatorService.ts';
@@ -9,6 +11,7 @@ import { openStore } from './openStore.ts';
 import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
 import { keyLookup } from './screenAuth.ts';
+import { createStandbyApi, waitUntilActive, watchActive } from './standby.ts';
 import type { IStore } from './store.ts';
 import { VideoPlayer } from './videoPlayer.ts';
 import { WorkerRegistry } from './workerRegistry.ts';
@@ -24,6 +27,35 @@ try {
     log.error('refusing to start: cannot open the store', { reason: (error as Error).message });
     process.exit(1);
 }
+
+// One instance is active at a time. Another waits as standby, with no state in memory, and takes over when the
+// active one is gone, reading what it wrote (ADR 0015).
+let standbyApi: Server | undefined;
+const standbySignal = () => {
+    store.close();
+    process.exit(0);
+};
+
+process.on('SIGTERM', standbySignal);
+process.on('SIGINT', standbySignal);
+await waitUntilActive(store, {
+    onStandby: () => {
+        log.info('standby: another instance is active', { port: config.apiPort });
+        standbyApi = createStandbyApi(config.apiSecret);
+        standbyApi.listen(config.apiPort);
+    }
+});
+process.off('SIGTERM', standbySignal);
+process.off('SIGINT', standbySignal);
+if (standbyApi) {
+    const standby = standbyApi;
+
+    await new Promise<void>(resolve => {
+        standby.close(() => resolve());
+        standby.closeAllConnections();
+    });
+}
+log.info('active: holding the coordinator lock');
 
 // With a list of worker secrets, the workers are the ones that send heartbeats; else a fixed list (ADR 0014).
 const registry = config.workerSecretsFile
@@ -72,6 +104,8 @@ const issuer = config.screen && {
     keyFor: keyLookup(config.screen.keys)
 };
 const api = createApi({
+    holdsLock: () => store.holdsActive(),
+    pipelineSecret: config.pipelineSecret,
     screen: issuer && config.screen && { ...issuer, marker: config.screen.marker },
 
     // A patient's page sends the survey with the patient's token, from the same issuer as the coordinators'.
@@ -86,6 +120,15 @@ const api = createApi({
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));
 
+// Without the lock another instance may be active: stop, and the supervisor starts this one again as standby.
+const lockWatch = watchActive(store, {
+    onLost: () => {
+        log.error('lost the active place: stopping');
+        service.stop();
+        process.exit(1);
+    }
+});
+
 /**
  * Stops the API, then exits.
  *
@@ -94,6 +137,7 @@ api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPor
  */
 function shutdown(signal: string) {
     log.info('shutting down', { signal });
+    clearInterval(lockWatch);
     service.stop();
     api.close(() => {
         store.close();

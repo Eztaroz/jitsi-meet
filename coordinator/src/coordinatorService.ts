@@ -358,6 +358,8 @@ export class CoordinatorService {
      */
     startEncounter(hn: string, where: { center?: string; clinic?: string; visitNumber?: string; } = {}): Promise<IStep> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const resolved = resolvePathway(this._opts.layout, where);
 
             if ('reason' in resolved) {
@@ -530,6 +532,8 @@ export class CoordinatorService {
      */
     changeStage(encounterId: string, stage: Stage, issuer: string): Promise<IStep> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const at = new Date();
             const encounter = this._state.encounters.find(e => e.id === encounterId);
             const from = encounter?.stage;
@@ -1384,6 +1388,8 @@ export class CoordinatorService {
      */
     staffChangeStage(encounterId: string, stage: Stage, staff: { id: string; }): Promise<IStaffStageResult> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const at = new Date();
             const encounter = this._state.encounters.find(e => e.id === encounterId);
             const here = findStaff(await this.rooms(), staff.id);
@@ -1451,6 +1457,8 @@ export class CoordinatorService {
      */
     staffCallNext(staff: { id: string; }): Promise<IStaffCallNextResult> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const at = new Date();
             const rooms = await this.rooms();
             const here = findStaff(rooms, staff.id);
@@ -1510,6 +1518,9 @@ export class CoordinatorService {
      * @returns {Promise<IMove>}
      */
     private async _startMove(request: { endpointId: string; fromRoom: string; toRoom: string; }, issuer: string): Promise<IMove> {
+        // A move is audited, so it is not made while the database cannot keep the audit entry.
+        this._opts.store.checkWritable();
+
         const rooms = await this.rooms();
         const named = (name: string) => rooms.find(r => backendSafeRoomName(r.name) === backendSafeRoomName(name))
             ?.name ?? name;
@@ -1646,7 +1657,13 @@ export class CoordinatorService {
             // that a restart would write again.
             const { entries, records } = this._endedMoves();
 
-            this._opts.store.apply([ ...diffState(previous, state, this._records, records, entries), ...extra ]);
+            try {
+                this._opts.store.apply([ ...diffState(previous, state, this._records, records, entries), ...extra ]);
+            } catch (error) {
+                // Memory must not get ahead of the database: what was refused was not done.
+                this._state = previous;
+                throw error;
+            }
             for (const [ id, record ] of records) {
                 this._records.set(id, record);
             }

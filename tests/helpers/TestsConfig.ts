@@ -67,7 +67,9 @@ export const config = {
          * The docker containers of the recorder bot workers, by the worker's id, as "id=container,id=container", so
          * that the takeover test can cut one off from the coordinator service.
          */
-        workerContainers: process.env.COORDINATOR_WORKER_CONTAINERS?.trim()
+        workerContainers: process.env.COORDINATOR_WORKER_CONTAINERS?.trim(),
+        /** The pipeline's own secret, the only one that sets a worker draining. */
+        pipelineSecret: process.env.COORDINATOR_PIPELINE_SECRET?.trim()
     },
     recorderBot: {
         /** The bearer secret of the recorder bot service's control API. */

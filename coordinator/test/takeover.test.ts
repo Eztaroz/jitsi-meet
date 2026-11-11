@@ -272,7 +272,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
 
         await service.takeOverLostConsultations();
 
-        assert.deepEqual((await beat(bots[0])).body, { status: 'ok', takenOver: [ id ] });
-        assert.deepEqual((await beat(bots[1])).body, { status: 'ok', takenOver: [] });
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ]);
+        assert.deepEqual((await beat(bots[1])).body.takenOver, []);
     });
 });
