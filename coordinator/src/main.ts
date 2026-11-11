@@ -67,6 +67,7 @@ try {
     service = new CoordinatorService({
         auditKey: config.auditKey,
         layout: config.layout,
+        lostRecorderBots: registry && (() => registry.lostRecorderBots()),
         prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
         recorderBot: new RecorderBotPool(registry
             ? () => registry.recorderBots()
@@ -94,6 +95,9 @@ try {
 service.resume().catch(error => log.error('could not resume the moves', { error: (error as Error).name }));
 service.startDayEnds();
 service.startRetention();
+if (registry) {
+    service.startTakeover();
+}
 const issuer = config.screen && {
     acceptedAudiences: config.screen.acceptedAudiences,
     acceptedIssuers: config.screen.acceptedIssuers,

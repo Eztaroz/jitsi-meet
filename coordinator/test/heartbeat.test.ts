@@ -340,7 +340,7 @@ describe('workers send heartbeats to the coordinator service', () => {
     it('tells a worker in its heartbeat answer whether it is draining', async () => {
         assert.equal((await heartbeat(workers[0])).body.draining, false);
         await drain('bot-1', true);
-        assert.deepEqual((await heartbeat(workers[0])).body, { draining: true, status: 'ok', sweeper: true });
+        assert.deepEqual((await heartbeat(workers[0])).body, { draining: true, status: 'ok', sweeper: true, takenOver: [] });
         await drain('bot-1', false);
         assert.equal((await heartbeat(workers[0])).body.draining, false);
     });

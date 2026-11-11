@@ -121,6 +121,9 @@ export interface IRoom {
     /** For a lounge, its station. */
     stage?: StationStage;
     station?: string;
+
+    /** For a patient's room, true when its consultation is not being recorded (ADR 0016). */
+    unrecorded?: boolean;
 }
 
 /**

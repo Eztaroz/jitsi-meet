@@ -269,6 +269,18 @@ export class WorkerRegistry {
     }
 
     /**
+     * The recorder bots that were heard from and have fallen silent, with the time of their last heartbeat: the ones
+     * whose consultations are taken over (ADR 0016).
+     *
+     * @returns {{ id: string; lastSeen: Date; }[]}
+     */
+    lostRecorderBots(): { id: string; lastSeen: Date; }[] {
+        const lost = new Set(this.list().filter(w => w.lost && w.kind === 'recorder-bot').map(w => w.id));
+
+        return [ ...this._heard ].filter(([ id ]) => lost.has(id)).map(([ id, h ]) => ({ id, lastSeen: new Date(h.lastSeen) }));
+    }
+
+    /**
      * The video players to hand waiting videos to: heard from lately and on the list.
      *
      * @returns {IVideoPlayerWorker[]}

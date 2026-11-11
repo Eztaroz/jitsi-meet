@@ -92,6 +92,21 @@ describe('the heartbeat to the coordinator service', () => {
         assert.equal(received.length, count);
     });
 
+    test('stops the consultations the coordinator service says were taken over (ADR 0016)', async () => {
+        const taken: string[][] = [];
+        const heartbeat = new Heartbeat({
+            advertisedUrl: 'http://worker-1:8090', build: 'abc123', coordinatorUrl: url, id: 'worker-1',
+            onTakenOver: ids => taken.push(ids), secret: 'worker-1-secret', status: () => ({ capacity: 3, running })
+        });
+
+        await heartbeat.send();
+        reply = JSON.stringify({ status: 'ok', takenOver: [ 'c1', 'c2' ] });
+        await heartbeat.send();
+        reply = 'not json';
+        assert.equal(await heartbeat.send(), true);
+        assert.deepEqual(taken, [ [ 'c1', 'c2' ] ]);
+    });
+
     test('does not throw when refused or when the coordinator service cannot be reached', async () => {
         answer = 401;
         assert.equal(await make().send(), false);

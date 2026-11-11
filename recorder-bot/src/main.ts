@@ -26,6 +26,17 @@ const retrier = new SpoolRetrier(storage);
 // Tells the coordinator service this worker is up, so that it is handed consultations (ADR 0014).
 const heartbeat = config.heartbeat && new Heartbeat({
     ...config.heartbeat,
+    onTakenOver: ids => {
+        // The coordinator service gave these consultations to another recorder bot while this one was cut off from it.
+        for (const id of ids) {
+            const consultation = consultations.get(id);
+
+            if (consultation?.isRunning()) {
+                log.warn('stopping a consultation that was taken over', { consultationId: id });
+                consultation.requestStop().catch(() => undefined);
+            }
+        }
+    },
     secret: config.apiSecret,
     status: () => ({ capacity: config.maxConsultations, running: consultations.active().length })
 });

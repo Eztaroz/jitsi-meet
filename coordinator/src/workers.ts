@@ -3,7 +3,7 @@
  * waiting video, goes to the worker of its kind with the most room, and a worker that is full or silent is skipped
  * (ADR 0014). They are a fixed list, or the workers the heartbeats tell of (`workerRegistry.ts`).
  */
-import { RecorderBotUnavailableError } from './recorderBot.ts';
+import { type IRecordRoomOptions, RecorderBotUnavailableError } from './recorderBot.ts';
 import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts';
 
 /** How long a worker that did not answer, or was full, is tried last. */
@@ -24,7 +24,7 @@ export interface IWorker {
 
 /** A recorder bot worker. */
 export interface IRecorderBotWorker extends IWorker {
-    recordRoom: (hn: string, consultationId: string) => Promise<string>;
+    recordRoom: (hn: string, consultationId: string, options?: IRecordRoomOptions) => Promise<string>;
 }
 
 /** A video player worker. */
@@ -113,10 +113,11 @@ export class RecorderBotPool extends Pool<IRecorderBotWorker> {
      *
      * @param {string} hn - The patient's HN.
      * @param {string} consultationId - The consultation's id.
+     * @param {IRecordRoomOptions} [options] - When it started, and where its gap starts if it was taken over.
      * @returns {Promise<string>} The id of the consultation recording the room.
      */
-    async recordRoom(hn: string, consultationId: string): Promise<string> {
-        const { result, worker } = await this._assign(w => w.recordRoom(hn, consultationId),
+    async recordRoom(hn: string, consultationId: string, options?: IRecordRoomOptions): Promise<string> {
+        const { result, worker } = await this._assign(w => w.recordRoom(hn, consultationId, options),
             error => error instanceof RecorderBotUnavailableError, code => new RecorderBotUnavailableError(code));
 
         this._recording.set(result, worker.id);

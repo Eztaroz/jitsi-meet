@@ -317,7 +317,7 @@ export interface IAuditEntry {
     encounterId?: string;
     from?: string;
     issuer: string;
-    kind: 'call_next' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'video';
+    kind: 'call_next' | 'consultation_unrecorded' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'video';
     outcome: string;
     participantId?: string;
     previousDoctor?: string;

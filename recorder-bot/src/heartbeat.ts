@@ -32,6 +32,9 @@ export interface IHeartbeatOptions {
     /** How often to send; for tests. */
     intervalMs?: number;
 
+    /** Called with the consultations the coordinator service took over, from the answer: this worker stops them. */
+    onTakenOver?: (consultationIds: string[]) => void;
+
     /** The clock, in milliseconds; for tests. */
     now?: () => number;
 
@@ -87,9 +90,11 @@ export class Heartbeat {
             if (!response.ok) {
                 log.warn('the coordinator service refused the heartbeat', { status: response.status });
             } else {
-                const reply = await response.json().catch(() => ({})) as { sweeper?: unknown; };
+                const reply = await response.json().catch(() => ({})) as { sweeper?: unknown; takenOver?: unknown; };
 
                 this._sweeperUntil = reply?.sweeper === true ? (this._options.now ?? Date.now)() + SWEEPER_VALID_MS : 0;
+
+                this._stopTakenOver(reply.takenOver);
             }
 
             return response.ok;
@@ -97,6 +102,25 @@ export class Heartbeat {
             log.warn('could not send a heartbeat', { error: errorCode(error) });
 
             return false;
+        }
+    }
+
+    /**
+     * Reads the consultations the answer says were taken over, when this worker was cut off from the coordinator
+     * service for a while, and hands them to the worker to stop (ADR 0016).
+     *
+     * @param {unknown} takenOver - What the answer says: the ids of the consultations.
+     * @returns {void}
+     */
+    private _stopTakenOver(takenOver: unknown): void {
+        const { onTakenOver } = this._options;
+
+        if (!onTakenOver) {
+            return;
+        }
+
+        if (Array.isArray(takenOver) && takenOver.length) {
+            onTakenOver(takenOver.filter((id): id is string => typeof id === 'string'));
         }
     }
 
