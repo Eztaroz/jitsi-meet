@@ -178,14 +178,23 @@ Run one service per deployment. Each consultation runs in its own browser proces
 
 ### Capacity
 
-The prototype measured, on a shared 4-vCPU host without GPU:
+The bot copies each video track as the sender encoded it, so a video track no longer costs a core. What a consultation costs is now the browser's decoding-free copy, the remux when it finalises, and the audio. Capacity per worker is:
 
-- about one CPU core per recorded 720p video track, since the bot re-encodes each one;
-- about 0.4 GB of RAM per pair of participants recorded.
+    RECORDER_BOT_MAX_CONSULTATIONS = floor(cores / measured cores per consultation) with headroom
 
-A consultation with a patient and one staff member records two video tracks, so it needs about two cores. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
+where the measured cores per consultation is taken from the load test below, with real cameras, and the headroom covers what a synthetic test does not show: cameras that change resolution, a shared screen, and several consultations finalising at once. Leave at least 25% of the cores free.
 
-Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
+Measured results (the load test is run by hand on the test VM: 1 to 8 consultations, 5 minutes per level, 720p; record the build and the date with each row):
+
+| Date | Build | Cameras | Consultations | CPU per consultation | Notes |
+|---|---|---|---|---|---|
+| not yet measured | | | | | The copy path has not been run in a real browser with real cameras. Until a row is filled in, keep the earlier setting (about half the host's cores, default 2 on a 4-core host), which is on the safe side. |
+
+About 0.4 GB of RAM per pair of participants recorded (prototype figure, to be rechecked in the same test). At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
+
+Storage follows the sender's bitrate (ADR 0003): about 1 Mbps per AV1 camera at 720p, so about 0.5 GB per 30-minute consultation with two video participants, and more for a shared screen (bitrate in Mbps times 450 MB per hour, per video track). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
+
+A Review file can be made from a recording whose video tracks are AV1, VP9 or VP8, mixed in any way (`npm run review`); the ffmpeg in the image decodes all three. Making one is not free: it re-encodes to H.264, so run it away from a worker that is recording.
 
 ### Crashes
 
