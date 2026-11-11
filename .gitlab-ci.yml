@@ -23,6 +23,8 @@ stages:
   - promote
   - verify
   - rollback
+  # A stage of its own: this GitLab takes a job's dependencies from earlier stages only.
+  - rollback-redeploy
   - workers
 
 # The coordinator service's tests run its store suite against SQLite and, through COORDINATOR_TEST_MARIADB, against this
@@ -243,7 +245,7 @@ central-rollback-tag:
 
 central-rollback-redeploy:
   <<: [ *curl, *central-only ]
-  stage: rollback
+  stage: rollback-redeploy
   script:
     # Nothing was promoted: nothing to redeploy.
     - '[ -s central-previous.env ] || { echo "No previous build recorded: nothing to roll back"; exit 0; }'
