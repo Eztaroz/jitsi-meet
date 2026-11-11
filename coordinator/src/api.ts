@@ -192,7 +192,10 @@ function reportTime(value: string | null, fallback: Date): Date {
  * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ screen, secret, service, staff, survey, workers }: {
+export function createApi({ pipelineSecret, screen, secret, service, staff, survey, workers }: {
+
+    /** The pipeline's own secret: it alone sets a worker draining; unset, nothing can (ADR 0014). */
+    pipelineSecret?: string;
     screen?: ICoordinatorAuth;
     secret: string;
     service: CoordinatorService;
@@ -403,20 +406,50 @@ export function createApi({ screen, secret, service, staff, survey, workers }: {
 
         // A worker's heartbeat carries the worker's own secret, not the system's (ADR 0014).
         if (path === '/workers/heartbeat' && req.method === 'POST' && workers) {
+            let answer: { draining: boolean; };
+
             try {
-                workers.heartbeat(scheme === 'Bearer' ? token : undefined, await readJson(req));
+                answer = workers.heartbeat(scheme === 'Bearer' ? token : undefined, await readJson(req));
             } catch (error) {
                 if (error instanceof HttpError && error.status === 401) {
                     res.setHeader('www-authenticate', 'Bearer');
                 }
                 throw error;
             }
-            send(res, 200, { status: 'ok' });
+            send(res, 200, { ...answer, status: 'ok' });
 
             return;
         }
 
-        if (scheme !== 'Bearer' || !token || !sameSecret(token, secret)) {
+        // Setting a worker draining is the pipeline's alone: the hospital system's secret is refused, not only a wrong one.
+        const drainMatch = /^\/workers\/([^/]+)\/draining$/u.exec(path);
+
+        if (drainMatch && req.method === 'PUT' && workers) {
+            if (!pipelineSecret || scheme !== 'Bearer' || !token || !sameSecret(token, pipelineSecret)) {
+                if (scheme === 'Bearer' && token && sameSecret(token, secret)) {
+                    throw new HttpError(403, 'only the pipeline sets a worker draining');
+                }
+                res.setHeader('www-authenticate', 'Bearer');
+                throw new HttpError(401, 'missing or wrong bearer secret');
+            }
+
+            const body = await readJson(req) as { draining?: unknown; } | null;
+            const id = decodeURIComponent(drainMatch[1]);
+
+            if (typeof body?.draining !== 'boolean') {
+                throw new HttpError(400, 'draining must be true or false');
+            }
+            workers.setDraining(id, body.draining);
+            send(res, 200, { draining: body.draining, id });
+
+            return;
+        }
+
+        // The pipeline may read the list of workers, to wait until a draining one runs nothing.
+        const pipelineReads = req.method === 'GET' && path === '/workers' && pipelineSecret && scheme === 'Bearer'
+            && token && sameSecret(token, pipelineSecret);
+
+        if (!pipelineReads && (scheme !== 'Bearer' || !token || !sameSecret(token, secret))) {
             res.setHeader('www-authenticate', 'Bearer');
             throw new HttpError(401, 'missing or wrong bearer secret');
         }

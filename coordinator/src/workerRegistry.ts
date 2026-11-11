@@ -29,6 +29,7 @@ export type WorkerKind = 'recorder-bot' | 'video-player';
 export interface IWorkerStatus {
     build: string;
     capacity: number;
+    draining: boolean;
     id: string;
     kind: WorkerKind;
     lost: boolean;
@@ -62,6 +63,7 @@ function sameSecret(a: string, b: string): boolean {
 
 export class WorkerRegistry {
     private readonly _clients = new Map<string, IRecorderBotWorker | IVideoPlayerWorker>();
+    private readonly _draining = new Set<string>();
     private readonly _file: string;
     private readonly _heard = new Map<string, IHeard>();
     private _list: { recorderBots: IWorkerSecret[]; videoPlayers: IWorkerSecret[]; };
@@ -125,9 +127,9 @@ export class WorkerRegistry {
      * @param {unknown} body - Its JSON: id, kind, url, capacity, running and build.
      * @throws {HttpError} 401 when the secret is not the one of a worker on the list, 400 when the heartbeat is
      * malformed or names another kind than the list does.
-     * @returns {void}
+     * @returns {{ draining: boolean; }} What the worker is told: whether it is set draining.
      */
-    heartbeat(secret: string | undefined, body: unknown): void {
+    heartbeat(secret: string | undefined, body: unknown): { draining: boolean; } {
         const given = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
         const list = this._current();
         const kind: WorkerKind | undefined = list.recorderBots.some(w => w.id === given.id) ? 'recorder-bot'
@@ -172,6 +174,30 @@ export class WorkerRegistry {
         this._heard.set(entry.id, {
             build: given.build, capacity, kind: kind!, lastSeen: this._now(), running, url: url.href.replace(/\/+$/u, '')
         });
+
+        return { draining: this._draining.has(entry.id) };
+    }
+
+    /**
+     * Sets a worker draining, or taking work again. It is kept in memory like the rest of the registry, and holds
+     * for a worker not heard from yet; a worker taken off the list is forgotten with its line.
+     *
+     * @param {string} id - The worker's id.
+     * @param {boolean} draining - Whether it is draining.
+     * @throws {HttpError} 404 when the worker is not on the list.
+     * @returns {void}
+     */
+    setDraining(id: string, draining: boolean): void {
+        const { recorderBots, videoPlayers } = this._current();
+
+        if (![ ...recorderBots, ...videoPlayers ].some(w => w.id === id)) {
+            throw new HttpError(404, `no worker "${id}" on the list`);
+        }
+        if (draining) {
+            this._draining.add(id);
+        } else {
+            this._draining.delete(id);
+        }
     }
 
     /**
@@ -185,14 +211,15 @@ export class WorkerRegistry {
         const listed = new Set([ ...recorderBots, ...videoPlayers ].map(w => w.id));
 
         // A worker whose line was removed is forgotten, so that putting it back starts from its next heartbeat.
-        for (const id of [ ...this._heard.keys() ]) {
+        for (const id of [ ...this._heard.keys(), ...this._draining ]) {
             if (!listed.has(id)) {
                 this._heard.delete(id);
+                this._draining.delete(id);
             }
         }
 
         return [ ...this._heard ].map(([ id, h ]) => ({
-            build: h.build, capacity: h.capacity, id, kind: h.kind, lost: now - h.lastSeen >= LOST_AFTER_MS,
+            build: h.build, capacity: h.capacity, draining: this._draining.has(id), id, kind: h.kind, lost: now - h.lastSeen >= LOST_AFTER_MS,
             running: h.running, url: h.url
         })).sort((a, b) => a.id.localeCompare(b.id));
     }
@@ -243,7 +270,12 @@ export class WorkerRegistry {
             if (!this._clients.has(key)) {
                 this._clients.set(key, make(id, heard.url, secret));
             }
-            clients.push(this._clients.get(key) as T);
+
+            const client = this._clients.get(key) as T;
+
+            // Set on each look: a draining worker stays a worker, to stop what it runs, but is handed nothing new.
+            client.draining = this._draining.has(id);
+            clients.push(client);
         }
 
         return clients;

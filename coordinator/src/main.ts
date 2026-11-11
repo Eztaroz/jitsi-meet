@@ -68,6 +68,7 @@ const issuer = config.screen && {
     keyFor: keyLookup(config.screen.keys)
 };
 const api = createApi({
+    pipelineSecret: config.pipelineSecret,
     screen: issuer && config.screen && { ...issuer, marker: config.screen.marker },
 
     // A patient's page sends the survey with the patient's token, from the same issuer as the coordinators'.

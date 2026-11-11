@@ -12,6 +12,9 @@ export const SKIP_MS = 10_000;
 /** A worker as the pool sees it. */
 export interface IWorker {
 
+    /** Set draining by the pipeline: it finishes what it runs, and gets no new work (ADR 0014). */
+    draining?: boolean;
+
     /** Names the worker in what the coordinator service keeps. */
     id: string;
 
@@ -66,7 +69,7 @@ class Pool<T extends IWorker> {
     protected async _assign<R>(offer: (worker: T) => Promise<R>, isUnavailable: (error: unknown) => boolean,
             makeError: (code: string) => Error): Promise<{ result: R; worker: T; }> {
         const now = Date.now();
-        const workers = this._workers;
+        const workers = this._workers.filter(w => !w.draining);
         const rooms = await Promise.all(workers.map(w => w.room().catch(() => undefined)));
         const skipped = (id: string) => (this._skipped.get(id) ?? 0) > now;
 

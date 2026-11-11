@@ -136,6 +136,8 @@ services:
             - ../../coordinator/test-deployment/workers.json:/etc/coordinator/workers.json:ro
         environment:
             COORDINATOR_API_SECRET: coordinator-test-secret
+            # The pipeline's own secret: it alone sets a worker draining.
+            COORDINATOR_PIPELINE_SECRET: coordinator-pipeline-test-secret
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
             # The retention sweep runs every 2 seconds, for the retention test; production sweeps hourly.
             COORDINATOR_RETENTION_SWEEP_SECONDS: 2

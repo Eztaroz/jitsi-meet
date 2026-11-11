@@ -62,7 +62,9 @@ export const config = {
         /** The coordinator service's API through the web server's proxy, e.g. https://localhost:8443/coordinator. */
         apiUrl: process.env.COORDINATOR_API_URL?.trim()?.replace(/\/+$/, ''),
         /** The docker container the coordinator service runs in, so that the tests can restart it. */
-        container: process.env.COORDINATOR_CONTAINER?.trim()
+        container: process.env.COORDINATOR_CONTAINER?.trim(),
+        /** The pipeline's own secret, the only one that sets a worker draining. */
+        pipelineSecret: process.env.COORDINATOR_PIPELINE_SECRET?.trim()
     },
     recorderBot: {
         /** The bearer secret of the recorder bot service's control API. */
