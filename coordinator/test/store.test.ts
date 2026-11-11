@@ -390,6 +390,21 @@ describe('a MariaDB call that timed out', { skip: !testMariaDb() && 'COORDINATOR
     });
 });
 
+describe('asking a MariaDB whether it holds the active place', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIADB is not set' }, () => {
+    it('throws, rather than saying no, when the database cannot be asked', async () => {
+        const config = testMariaDb() as IMariaDbConfig;
+
+        await wipeMariaDb(config);
+
+        const store = new MariaDbStore(config);
+
+        assert.equal(store.acquireActive(), true);
+        assert.equal(store.holdsActive(), true);
+        store.close();
+        assert.throws(() => store.holdsActive(), DatabaseError);
+    });
+});
+
 describe('a MariaDB that cannot be reached', () => {
     it('refuses to open, with an error the caller can show', () => {
         assert.throws(() => new MariaDbStore({ database: 'x', host: '127.0.0.1', password: 'x', port: 1, user: 'x' }), DatabaseError);

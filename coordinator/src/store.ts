@@ -121,7 +121,7 @@ export interface IStore {
     /** Reads the consultations of an encounter, the oldest first. */
     consultationsOf(encounterId: string): IConsultation[];
 
-    /** Whether this instance holds the active place now. */
+    /** Whether this instance holds the active place now. Throws when that cannot be told. */
     holdsActive(): boolean;
 
     /** Reads the saved state. */
