@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { IAuditEntry } from './audit.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { DEFAULT_PATHWAY_ID } from './pathways.ts';
 import type { ISentQuestionnaire } from './questionnaires.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
@@ -82,6 +83,13 @@ export interface IStore {
      */
     apply(changes: StoreChange[]): void;
 
+    /**
+     * Takes the place of the one active coordinator service, without waiting (ADR 0015).
+     *
+     * @returns {boolean} Whether this instance holds it now: true when it already did, false while another instance does.
+     */
+    acquireActive(): boolean;
+
     /** Adds an entry to the audit log. */
     addAudit(entry: IAuditEntry): void;
 
@@ -94,11 +102,21 @@ export interface IStore {
     /** Reads the newest audit entries, the newest first. */
     audit(limit: number): IAuditEntry[];
 
+    /**
+     * Checks that a write would be accepted, before anything that cannot be undone is done.
+     *
+     * @throws {DatabaseError} When the database cannot be reached or written, or the active place was lost.
+     */
+    checkWritable(): void;
+
     /** Closes the database. */
     close(): void;
 
     /** Reads the consultations of an encounter, the oldest first. */
     consultationsOf(encounterId: string): IConsultation[];
+
+    /** Whether this instance holds the active place now. */
+    holdsActive(): boolean;
 
     /** Reads the saved state. */
     load(): IState;
@@ -585,6 +603,37 @@ export class Store implements IStore {
             staffStations: Number(this._db.prepare('DELETE FROM staff_stations WHERE updated_at < ?').run(at).changes),
             surveys: Number(this._db.prepare('DELETE FROM surveys WHERE submitted_at < ?').run(at).changes)
         };
+    }
+
+    /**
+     * Takes the active place: with a single SQLite file there is only one instance.
+     *
+     * @returns {boolean}
+     */
+    acquireActive(): boolean {
+        return true;
+    }
+
+    /**
+     * Whether this instance is the active one.
+     *
+     * @returns {boolean}
+     */
+    holdsActive(): boolean {
+        return true;
+    }
+
+    /**
+     * Checks that the database accepts a write, by one that changes nothing.
+     *
+     * @returns {void}
+     */
+    checkWritable(): void {
+        try {
+            this._db.exec('DELETE FROM audit WHERE id = 0');
+        } catch (error) {
+            throw new DatabaseError((error as Error).message);
+        }
     }
 
     /**

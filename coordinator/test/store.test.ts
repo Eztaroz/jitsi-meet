@@ -110,6 +110,58 @@ for (const backend of databases) {
         });
     });
 
+    describe(`being the active instance (${backend.name})`, () => {
+        it('holds the active place once it has taken it, and says so', async () => {
+            const store = (await fresh())();
+
+            assert.equal(store.holdsActive(), !backend.exclusive);
+            assert.equal(store.acquireActive(), true);
+            assert.equal(store.holdsActive(), true);
+            assert.equal(store.acquireActive(), true);
+        });
+
+        it('can be written while the database can, and refuses once it cannot', async () => {
+            const store = (await fresh())();
+
+            store.acquireActive();
+            store.checkWritable();
+            store.close();
+            assert.throws(() => store.checkWritable(), DatabaseError);
+        });
+
+        if (backend.exclusive) {
+            it('leaves a second instance standby while the first holds the place, and gives it up when the first stops', async () => {
+                const open = await fresh();
+                const first = open();
+                const second = open();
+
+                assert.equal(first.acquireActive(), true);
+                assert.equal(second.acquireActive(), false);
+                assert.equal(second.holdsActive(), false);
+
+                // What the active instance wrote is what the one taking over reads.
+                const started = step(initialState(), { at: T0, hn: 'A', type: 'start_encounter' });
+
+                first.apply(started.state.encounters.map(encounter => ({ encounter, kind: 'encounter' as const })));
+                first.close();
+
+                assert.equal(second.acquireActive(), true);
+                assert.deepEqual(second.load().encounters, started.state.encounters);
+            });
+
+            it('refuses writes from an instance that is not the active one', async () => {
+                const open = await fresh();
+                const first = open();
+                const second = open();
+
+                first.acquireActive();
+                assert.equal(second.acquireActive(), false);
+                assert.throws(() => second.checkWritable(), DatabaseError);
+                first.checkWritable();
+            });
+        }
+    });
+
     describe(`the audit log and the retention sweep (${backend.name})`, () => {
         const DAY = 24 * 60 * 60 * 1000;
         const entry = (at: Date) => ({ at, issuer: 'system', kind: 'stage' as const, outcome: 'ok', encounterId: 'e', from: 'waiting' as const, to: 'intake' as const });

@@ -2,7 +2,7 @@
  * Keeps the coordinator service's state in MariaDB (ADR 0015), behind the same interface as the SQLite store.
  */
 import type { IAuditEntry } from './audit.ts';
-import { MariaDbClient } from './mariadbClient.ts';
+import { DatabaseError, MariaDbClient } from './mariadbClient.ts';
 import type { IStatement } from './mariadbWorker.ts';
 import { applyMigrations } from './migrations.ts';
 import type { IState } from './rules.ts';
@@ -92,6 +92,12 @@ function statementOf(change: StoreChange, now: string): IStatement {
 export class MariaDbStore implements IStore {
     private readonly _client: MariaDbClient;
 
+    /** The named lock that makes an instance the active one. Locks are server-wide, so it names the schema. */
+    private readonly _lockName: string;
+
+    /** Whether this instance has tried to take the active place: from then on a write needs it. */
+    private _wantsActive = false;
+
     /** The numbers of the migrations this start applied; empty when the schema was up to date. */
     readonly migrationsApplied: number[];
 
@@ -102,12 +108,54 @@ export class MariaDbStore implements IStore {
      */
     constructor(config: IMariaDbConfig) {
         this._client = new MariaDbClient(config);
+        this._lockName = `coordinator-active:${config.database}`;
         try {
             this.migrationsApplied = applyMigrations(this._client);
         } catch (error) {
             this._client.close();
             throw error;
         }
+    }
+
+    /**
+     * Takes the named lock on the one connection, without waiting. It is held until this connection closes, so an
+     * instance that stops, or whose connection drops, gives it up and a standby instance can take it.
+     *
+     * @returns {boolean} Whether this instance holds it now.
+     */
+    acquireActive(): boolean {
+        this._wantsActive = true;
+
+        return this._client.select<{ got: number | null; }>('SELECT GET_LOCK(?, 0) AS got', [ this._lockName ])[0]?.got === 1;
+    }
+
+    /**
+     * Whether the lock is held by this very connection: after a dropped and remade connection it is not.
+     *
+     * @returns {boolean}
+     */
+    holdsActive(): boolean {
+        try {
+            const rows = this._client.select<{ held: number | null; }>(
+                'SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS held', [ this._lockName ]);
+
+            return rows[0]?.held === 1;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Checks that a write would be accepted: this instance still holds the active place when it took it, and a
+     * write that changes nothing goes through.
+     *
+     * @returns {void}
+     */
+    checkWritable(): void {
+        if (this._wantsActive && !this.holdsActive()) {
+            throw new DatabaseError('this instance does not hold the active place');
+        }
+        this._client.query('DELETE FROM audit WHERE id = 0');
     }
 
     /**
