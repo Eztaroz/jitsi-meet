@@ -132,6 +132,9 @@ services:
     jicofo:
         image: jitsi/jicofo:${JITSI_IMAGE_VERSION}
         restart: unless-stopped
+        # Its health check (/about/health), for the night pipeline (ADR 0017): on the host's internal address only.
+        ports:
+            - '${HOST_INTERNAL_IP:?set HOST_INTERNAL_IP in .env}:8888:8888'
         volumes:
             - jicofo-config:/config
         environment:
@@ -139,6 +142,7 @@ services:
             ENABLE_BREAKOUT_ROOMS: 'false'
             ENABLE_RECORDING: 1
             JICOFO_AUTH_PASSWORD: ${JICOFO_AUTH_PASSWORD}
+            JICOFO_ENABLE_HEALTH_CHECKS: 'true'
             TZ: ${TZ:-Asia/Bangkok}
             XMPP_HIDDEN_DOMAIN: ${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}
         depends_on:
@@ -151,6 +155,8 @@ services:
         restart: unless-stopped
         ports:
             - '10000:10000/udp'
+            # Its health check (/about/health), for the night pipeline (ADR 0017): on the host's internal address only.
+            - '${HOST_INTERNAL_IP:?set HOST_INTERNAL_IP in .env}:8080:8080'
         volumes:
             - jvb-config:/config
         environment:
