@@ -17,6 +17,9 @@ export interface IBackend {
     /** Closes every store this backend opened. */
     closeAll(): void;
 
+    /** Whether only one instance at a time can be active on this database (a named lock), as in MariaDB. */
+    exclusive: boolean;
+
     /** Makes an empty database, and returns a function that opens it: each call is one more instance on the same data. */
     fresh(): Promise<() => IStore>;
     name: string;
@@ -96,6 +99,7 @@ export function backends(): IBackend[] {
 
             return () => track(new Store(dir));
         },
+        exclusive: false,
         name: 'SQLite'
     });
 
@@ -109,6 +113,7 @@ export function backends(): IBackend[] {
 
                 return () => track(new MariaDbStore(mariadb));
             },
+            exclusive: true,
             name: 'MariaDB'
         });
     }
