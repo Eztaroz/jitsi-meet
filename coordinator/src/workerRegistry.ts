@@ -37,6 +37,16 @@ export interface IWorkerStatus {
     url: string;
 }
 
+/** What the answer to a heartbeat tells the worker. */
+export interface IHeartbeatReply {
+
+    /** Whether the pipeline set the worker draining: it finishes what it runs and gets nothing new (ADR 0014). */
+    draining: boolean;
+
+    /** Set for a recorder bot: whether it is the one that sweeps the evidence storage root (ADR 0014). */
+    sweeper?: boolean;
+}
+
 interface IHeard {
     build: string;
     capacity: number;
@@ -68,6 +78,7 @@ export class WorkerRegistry {
     private readonly _heard = new Map<string, IHeard>();
     private _list: { recorderBots: IWorkerSecret[]; videoPlayers: IWorkerSecret[]; };
     private _listVersion = '';
+    private _sweeper?: string;
     private readonly _now: () => number;
     private readonly _playTimeoutMs?: number;
 
@@ -127,9 +138,9 @@ export class WorkerRegistry {
      * @param {unknown} body - Its JSON: id, kind, url, capacity, running and build.
      * @throws {HttpError} 401 when the secret is not the one of a worker on the list, 400 when the heartbeat is
      * malformed or names another kind than the list does.
-     * @returns {{ draining: boolean; }} What the worker is told: whether it is set draining.
+     * @returns {IHeartbeatReply} What to tell the worker.
      */
-    heartbeat(secret: string | undefined, body: unknown): { draining: boolean; } {
+    heartbeat(secret: string | undefined, body: unknown): IHeartbeatReply {
         const given = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
         const list = this._current();
         const kind: WorkerKind | undefined = list.recorderBots.some(w => w.id === given.id) ? 'recorder-bot'
@@ -175,7 +186,9 @@ export class WorkerRegistry {
             build: given.build, capacity, kind: kind!, lastSeen: this._now(), running, url: url.href.replace(/\/+$/u, '')
         });
 
-        return { draining: this._draining.has(entry.id) };
+        const draining = this._draining.has(entry.id);
+
+        return kind === 'recorder-bot' ? { draining, sweeper: this._elect(entry.id, list.recorderBots) } : { draining };
     }
 
     /**
@@ -198,6 +211,28 @@ export class WorkerRegistry {
         } else {
             this._draining.delete(id);
         }
+    }
+
+    /**
+     * Whether a recorder bot that just sent a heartbeat is the one that sweeps the evidence storage root. The one
+     * named keeps it while it is heard from lately and on the list; when it is not, the next recorder bot to send a
+     * heartbeat takes over, so that exactly one sweeps at a time. The one named first does not get it back when it
+     * returns after another took over.
+     *
+     * @param {string} id - The recorder bot.
+     * @param {IWorkerSecret[]} recorderBots - The recorder bots on the list.
+     * @returns {boolean}
+     */
+    private _elect(id: string, recorderBots: IWorkerSecret[]): boolean {
+        const current = this._sweeper === undefined ? undefined : this._heard.get(this._sweeper);
+        const holds = current !== undefined && recorderBots.some(w => w.id === this._sweeper)
+            && (this._sweeper === id || this._now() - current.lastSeen < LOST_AFTER_MS);
+
+        if (!holds) {
+            this._sweeper = id;
+        }
+
+        return this._sweeper === id;
     }
 
     /**
