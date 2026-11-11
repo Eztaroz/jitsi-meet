@@ -96,6 +96,13 @@ image-prosody:
     CONTEXT: "."
     DOCKERFILE: deploy/production/prosody/Dockerfile
 
+image-front:
+  <<: *kaniko
+  variables:
+    IMAGE_NAME: front
+    CONTEXT: "."
+    DOCKERFILE: deploy/production/front/Dockerfile
+
 image-web:
   <<: *kaniko
   variables:
