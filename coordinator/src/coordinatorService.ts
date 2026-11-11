@@ -829,7 +829,7 @@ export class CoordinatorService {
      * @returns {Promise<{ refused?: VideoRefusal; }>}
      */
     private async _stopVideo(encounterId: string, issuer: string): Promise<{ refused?: VideoRefusal; }> {
-        const playing = this._videos.get(encounterId);
+        const playing = this._videos.get(encounterId) ?? await this._adoptPlayingVideo(encounterId);
 
         if (!playing) {
             this._audit(videoEntry({
@@ -841,6 +841,26 @@ export class CoordinatorService {
         await this._endVideo(playing, issuer);
 
         return {};
+    }
+
+    /**
+     * Finds a video the video players play in an encounter's room that this service does not know of, as after a
+     * restart (the video players' health reports say which room plays), so that it can still be stopped.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {Promise<IPlayingVideo|undefined>}
+     */
+    private async _adoptPlayingVideo(encounterId: string): Promise<IPlayingVideo | undefined> {
+        const encounter = this._state.encounters.find(e => e.id === encounterId);
+
+        if (!encounter) {
+            return undefined;
+        }
+
+        const live = await this._opts.videoPlayer?.playingRooms().catch(() => []);
+        const room = live?.find(r => sameRoom(r, encounter.hn));
+
+        return room === undefined ? undefined : { encounterId, room, staffAtStart: new Set(), videoId: '' };
     }
 
     /**
@@ -993,7 +1013,7 @@ export class CoordinatorService {
             log.warn('could not stop a video', { error: error instanceof VideoPlayerUnavailableError ? error.code : 'unknown' });
         }
         this._audit(videoEntry({
-            action: 'stop', at: new Date(), encounterId: playing.encounterId, issuer, outcome: 'ok', reason, video: playing.videoId
+            action: 'stop', at: new Date(), encounterId: playing.encounterId, issuer, outcome: 'ok', reason, video: playing.videoId || undefined
         }));
     }
 

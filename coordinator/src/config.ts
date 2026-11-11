@@ -44,7 +44,7 @@ export interface IConfig {
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
 
-    /** The recorder bots that record the consultations, one at least (ADR 0014). */
+    /** The recorder bots that record the consultations (ADR 0014): a fixed list; none when heartbeats are used. */
     recorderBots: IWorkerConfig[];
 
     /** How long encounters and audit entries are kept, in milliseconds. Older ones are deleted. */
@@ -66,6 +66,12 @@ export interface IConfig {
         keys: string;
         marker: IRoleMarker;
     };
+
+    /**
+     * The file of the workers' ids and secrets (`COORDINATOR_WORKER_SECRETS_FILE`). Set, the workers send heartbeats
+     * and the fixed list is not used; the file is read again without a restart (ADR 0014).
+     */
+    workerSecretsFile?: string;
 
     /** The service's key id and its PEM private key; Prosody has the public key (ADR 0009). */
     signingKey: { kid: string; privateKey: string; };
@@ -147,7 +153,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
  * @returns {IConfig}
  */
 function buildConfig(env: NodeJS.ProcessEnv): IConfig {
+    const workerSecretsFile = env.COORDINATOR_WORKER_SECRETS_FILE?.trim() || undefined;
     const workers = loadWorkers(env.COORDINATOR_WORKERS_FILE?.trim());
+    const playTimeoutMs = Number(env.COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS ?? DEFAULT_PLAY_TIMEOUT_MS / 1000) * 1000;
 
     return {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
@@ -169,7 +177,7 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
-        recorderBots: workers.recorderBots ?? [ {
+        recorderBots: workerSecretsFile ? [] : workers.recorderBots ?? [ {
             id: 'recorder-bot',
             secret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
             url: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, '')
@@ -179,10 +187,12 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
             staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER'),
             videoPlayer: parseRoleMarker(env.COORDINATOR_VIDEO_PLAYER_MARKER, 'COORDINATOR_VIDEO_PLAYER_MARKER')
         },
-        videoPlayer: workers.videoPlayers || env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
+        videoPlayer: workerSecretsFile
+            ? env.COORDINATOR_VIDEO_BASE_URL?.trim() ? { baseUrl: env.COORDINATOR_VIDEO_BASE_URL.trim(), playTimeoutMs, workers: [] } : undefined
+            : workers.videoPlayers || env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
             ? {
                 baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
-                playTimeoutMs: Number(env.COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS ?? DEFAULT_PLAY_TIMEOUT_MS / 1000) * 1000,
+                playTimeoutMs,
                 workers: workers.videoPlayers ?? [ {
                     id: 'video-player',
                     secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
@@ -198,8 +208,60 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
         signingKey: {
             kid: required(env, 'COORDINATOR_SIGNING_KID'),
             privateKey: readFileSync(required(env, 'COORDINATOR_SIGNING_KEY_FILE'), 'utf8')
-        }
+        },
+        workerSecretsFile
     };
+}
+
+/** A worker on the list of secrets: it says where it is itself, in its heartbeat. */
+export interface IWorkerSecret {
+    id: string;
+    secret: string;
+}
+
+/**
+ * Reads the list of workers and their secrets, which the coordinator service reads again without a restart:
+ * `{"recorderBots": [{"id", "secret"}], "videoPlayers": [...]}`. A kind left out has no workers.
+ *
+ * @param {string} file - The file.
+ * @returns {{ recorderBots: IWorkerSecret[]; videoPlayers: IWorkerSecret[]; }}
+ * @throws {Error} When the file is malformed, a worker lacks an id or a secret, or two share an id.
+ */
+export function loadWorkerSecrets(file: string): { recorderBots: IWorkerSecret[]; videoPlayers: IWorkerSecret[]; } {
+    const fail = (why: string) => new Error(`${file}: ${why}`);
+    let raw: Record<string, unknown>;
+
+    try {
+        raw = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+        throw fail(`cannot be read as JSON (${(error as Error).message})`);
+    }
+
+    const ids = new Set<string>();
+    const list = (key: string): IWorkerSecret[] => {
+        if (raw[key] === undefined) {
+            return [];
+        }
+        if (!Array.isArray(raw[key])) {
+            throw fail(`"${key}" must be a list`);
+        }
+
+        return (raw[key] as Record<string, unknown>[]).map(w => {
+            for (const field of [ 'id', 'secret' ]) {
+                if (typeof w?.[field] !== 'string' || !(w[field] as string).trim()) {
+                    throw fail(`every worker needs an "id" and a "secret" (missing "${field}" in "${key}")`);
+                }
+            }
+            if (ids.has(w.id as string)) {
+                throw fail(`two workers are "${w.id}"`);
+            }
+            ids.add(w.id as string);
+
+            return { id: w.id as string, secret: w.secret as string };
+        });
+    };
+
+    return { recorderBots: list('recorderBots'), videoPlayers: list('videoPlayers') };
 }
 
 /**

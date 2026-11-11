@@ -14,6 +14,12 @@ export interface IConfig {
     /** The Chromium binary to run; Playwright's own when unset. */
     chromiumPath?: string;
 
+    /**
+     * Where to send heartbeats to the coordinator service (ADR 0014); unset, none are sent. The worker's id on the
+     * service's list, its build and the address the service reaches the control API at.
+     */
+    heartbeat?: { advertisedUrl: string; build: string; coordinatorUrl: string; id: string; };
+
     /** Whether to accept the Jitsi web server's certificate without checking it. For local test deployments. */
     ignoreCertificateErrors: boolean;
 
@@ -76,6 +82,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         apiPort: integer(env, 'VIDEO_PLAYER_API_PORT', 8091),
         apiSecret: required(env, 'VIDEO_PLAYER_API_SECRET'),
         chromiumPath: env.VIDEO_PLAYER_CHROMIUM_PATH?.trim() || undefined,
+        heartbeat: env.VIDEO_PLAYER_HEARTBEAT_URL?.trim()
+            ? {
+                advertisedUrl: required(env, 'VIDEO_PLAYER_ADVERTISED_URL').replace(/\/+$/, ''),
+                build: env.VIDEO_PLAYER_BUILD?.trim() || 'unknown',
+                coordinatorUrl: env.VIDEO_PLAYER_HEARTBEAT_URL.trim().replace(/\/+$/, ''),
+                id: required(env, 'VIDEO_PLAYER_ID')
+            }
+            : undefined,
         ignoreCertificateErrors: [ '1', 'true', 'yes' ].includes(env.VIDEO_PLAYER_IGNORE_CERTIFICATE_ERRORS?.trim().toLowerCase() ?? ''),
         jitsiUrl: required(env, 'VIDEO_PLAYER_JITSI_URL').replace(/\/+$/, ''),
         maxRooms: integer(env, 'VIDEO_PLAYER_MAX_ROOMS', 2)

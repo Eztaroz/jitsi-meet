@@ -27,6 +27,7 @@ import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
 import { createStaffRoutes } from './staffRoutes.ts';
 import { createSurveyRoutes } from './surveyRoutes.ts';
+import type { WorkerRegistry } from './workerRegistry.ts';
 
 /** Who the audit log names for a call with the shared bearer secret. */
 const SYSTEM = 'system';
@@ -194,13 +195,16 @@ function reportTime(value: string | null, fallback: Date): Date {
  * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ holdsLock, screen, secret, service, staff, survey }: {
+export function createApi({ holdsLock, screen, secret, service, staff, survey, workers }: {
     holdsLock?: () => boolean;
     screen?: ICoordinatorAuth;
     secret: string;
     service: CoordinatorService;
     staff?: ICoordinatorAuth;
     survey?: ICoordinatorAuth;
+
+    /** The workers that send heartbeats; unset, the workers are a fixed list and there is nothing to receive. */
+    workers?: WorkerRegistry;
 }): Server {
     /**
      * Handles the requests that act: starting an encounter, moving a participant and changing a stage. The system and
@@ -401,6 +405,21 @@ export function createApi({ holdsLock, screen, secret, service, staff, survey }:
             return;
         }
 
+        // A worker's heartbeat carries the worker's own secret, not the system's (ADR 0014).
+        if (path === '/workers/heartbeat' && req.method === 'POST' && workers) {
+            try {
+                workers.heartbeat(scheme === 'Bearer' ? token : undefined, await readJson(req));
+            } catch (error) {
+                if (error instanceof HttpError && error.status === 401) {
+                    res.setHeader('www-authenticate', 'Bearer');
+                }
+                throw error;
+            }
+            send(res, 200, { status: 'ok' });
+
+            return;
+        }
+
         if (scheme !== 'Bearer' || !token || !sameSecret(token, secret)) {
             res.setHeader('www-authenticate', 'Bearer');
             throw new HttpError(401, 'missing or wrong bearer secret');
@@ -416,6 +435,11 @@ export function createApi({ holdsLock, screen, secret, service, staff, survey }:
                 openEncounters: service.state.encounters.filter(e => e.stage !== 'done').length,
                 status: active ? 'ok' : 'standby'
             });
+
+            return;
+        }
+        if (pathname === '/workers' && req.method === 'GET' && workers) {
+            send(res, 200, { workers: workers.list() });
 
             return;
         }

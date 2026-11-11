@@ -1,7 +1,7 @@
 /**
  * The workers (recorder bots and video players) the coordinator service hands work to: each new consultation, or
  * waiting video, goes to the worker of its kind with the most room, and a worker that is full or silent is skipped
- * (ADR 0014). This is the first step, a fixed list; heartbeats come later.
+ * (ADR 0014). They are a fixed list, or the workers the heartbeats tell of (`workerRegistry.ts`).
  */
 import { RecorderBotUnavailableError } from './recorderBot.ts';
 import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts';
@@ -32,15 +32,25 @@ export interface IVideoPlayerWorker extends IWorker, IVideoPlayer {}
  */
 class Pool<T extends IWorker> {
     private readonly _skipped = new Map<string, number>();
-    protected readonly _workers: T[];
+    private readonly _source: T[] | (() => T[]);
 
     /**
      * Creates the pool.
      *
-     * @param {T[]} workers - The workers, in the order of the configuration.
+     * @param {T[]|Function} workers - The workers, in the order of the configuration; or a function that gives the
+     * workers there are now, as the heartbeats tell.
      */
-    constructor(workers: T[]) {
-        this._workers = workers;
+    constructor(workers: T[] | (() => T[])) {
+        this._source = workers;
+    }
+
+    /**
+     * The workers to hand work to now.
+     *
+     * @returns {T[]}
+     */
+    protected get _workers(): T[] {
+        return typeof this._source === 'function' ? this._source() : this._source;
     }
 
     /**
@@ -56,18 +66,19 @@ class Pool<T extends IWorker> {
     protected async _assign<R>(offer: (worker: T) => Promise<R>, isUnavailable: (error: unknown) => boolean,
             makeError: (code: string) => Error): Promise<{ result: R; worker: T; }> {
         const now = Date.now();
-        const rooms = await Promise.all(this._workers.map(w => w.room().catch(() => undefined)));
+        const workers = this._workers;
+        const rooms = await Promise.all(workers.map(w => w.room().catch(() => undefined)));
         const skipped = (id: string) => (this._skipped.get(id) ?? 0) > now;
 
         for (const [ index, room ] of rooms.entries()) {
             if (room === undefined) {
-                this._skipped.set(this._workers[index].id, now + SKIP_MS);
+                this._skipped.set(workers[index].id, now + SKIP_MS);
             }
         }
 
         // Workers that answered with room first, most room first; then the ones silent just now or skipped lately.
         const late = (w: { room?: number; worker: T; }) => Number(w.room === undefined || skipped(w.worker.id));
-        const order = this._workers
+        const order = workers
             .map((worker, index) => ({ index, room: rooms[index], worker }))
             .filter(w => w.room === undefined || w.room > 0)
             .sort((a, b) => late(a) - late(b) || (b.room ?? 0) - (a.room ?? 0) || a.index - b.index);
@@ -141,17 +152,20 @@ export class VideoPlayerPool extends Pool<IVideoPlayerWorker> implements IVideoP
 
     /**
      * The rooms a video is playing in, on every video player. A video player that does not answer keeps the rooms it
-     * was known to play in; the rooms of the ones that do are learnt again, so the list is whole after a restart.
+     * was known to play in; the rooms of the ones that do are learnt again, so the list is whole after a restart. A
+     * video player that is no longer a worker (lost, or taken off the list) plays nothing the service can stop: its
+     * rooms are forgotten.
      *
      * @returns {Promise<string[]>}
      */
     async playingRooms(): Promise<string[]> {
-        const answers = await Promise.all(this._workers.map(
+        const workers = this._workers;
+        const answers = await Promise.all(workers.map(
             w => w.playingRooms().then(rooms => ({ rooms, worker: w }), () => ({ rooms: undefined, worker: w }))));
         const answered = new Set(answers.filter(a => a.rooms).map(a => a.worker.id));
 
         for (const [ room, id ] of [ ...this._playing ]) {
-            if (answered.has(id)) {
+            if (answered.has(id) || !workers.some(w => w.id === id)) {
                 this._playing.delete(room);
             }
         }

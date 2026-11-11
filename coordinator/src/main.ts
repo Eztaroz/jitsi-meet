@@ -14,6 +14,7 @@ import { keyLookup } from './screenAuth.ts';
 import { createStandbyApi, waitUntilActive, watchActive } from './standby.ts';
 import type { IStore } from './store.ts';
 import { VideoPlayer } from './videoPlayer.ts';
+import { WorkerRegistry } from './workerRegistry.ts';
 import { RecorderBotPool, VideoPlayerPool } from './workers.ts';
 
 const config = loadConfig();
@@ -56,6 +57,10 @@ if (standbyApi) {
 }
 log.info('active: holding the coordinator lock');
 
+// With a list of worker secrets, the workers are the ones that send heartbeats; else a fixed list (ADR 0014).
+const registry = config.workerSecretsFile
+    ? new WorkerRegistry({ file: config.workerSecretsFile, playTimeoutMs: config.videoPlayer?.playTimeoutMs })
+    : undefined;
 let service: CoordinatorService;
 
 try {
@@ -63,7 +68,9 @@ try {
         auditKey: config.auditKey,
         layout: config.layout,
         prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
-        recorderBot: new RecorderBotPool(config.recorderBots.map(w => new RecorderBot(w.url, w.secret, w.id))),
+        recorderBot: new RecorderBotPool(registry
+            ? () => registry.recorderBots()
+            : config.recorderBots.map(w => new RecorderBot(w.url, w.secret, w.id))),
         retentionMs: config.retentionMs,
         retentionSweepMs: config.retentionSweepMs,
         roleMarkers: config.roleMarkers,
@@ -72,8 +79,10 @@ try {
         timeZone: config.timeZone,
         token: config.token,
         videoBaseUrl: config.videoPlayer?.baseUrl,
-        videoPlayer: config.videoPlayer && new VideoPlayerPool(config.videoPlayer.workers.map(
-            w => new VideoPlayer(w.url, w.secret, { id: w.id, playTimeoutMs: config.videoPlayer!.playTimeoutMs })))
+        videoPlayer: config.videoPlayer && new VideoPlayerPool(registry
+            ? () => registry.videoPlayers()
+            : config.videoPlayer.workers.map(
+                w => new VideoPlayer(w.url, w.secret, { id: w.id, playTimeoutMs: config.videoPlayer!.playTimeoutMs })))
     });
 } catch (error) {
     // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).
@@ -100,7 +109,8 @@ const api = createApi({
     service,
 
     // Staff act with their own token from the same issuer, which carries the staff marker.
-    staff: issuer && config.roleMarkers.staff && { ...issuer, marker: config.roleMarkers.staff }
+    staff: issuer && config.roleMarkers.staff && { ...issuer, marker: config.roleMarkers.staff },
+    workers: registry
 });
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));

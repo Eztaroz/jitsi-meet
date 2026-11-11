@@ -65,6 +65,33 @@ services:
             RECORDER_BOT_MAX_CONSULTATIONS: 12
             # Records the video player under its own role.
             RECORDER_BOT_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
+            # Sends heartbeats to the coordinator service through the web server's TLS (ADR 0014), as the first of the
+            # two recorder bot workers. The secret is the one it has in workers.json. The coordinator service reaches
+            # its control API at the advertised address; set WORKER_ADDRESS where host.docker.internal is not the host.
+            RECORDER_BOT_ID: recorder-bot-1
+            RECORDER_BOT_ADVERTISED_URL: http://${WORKER_ADDRESS:-host.docker.internal}:8090
+            RECORDER_BOT_HEARTBEAT_URL: https://localhost:8443/coordinator
+            RECORDER_BOT_BUILD: ${BUILD:-test-deployment}
+            # The web server's certificate here is self-signed; the worker only reaches this test server with it.
+            NODE_TLS_REJECT_UNAUTHORIZED: '0'
+
+    # The second recorder bot worker: its own spool and secret, the evidence storage root shared with the first.
+    recorder-bot-2:
+        extends:
+            file: docker-compose.yml
+            service: recorder-bot
+        volumes:
+            - ./spool/second:/var/lib/recorder-bot/spool
+        environment:
+            RECORDER_BOT_API_PORT: 8095
+            RECORDER_BOT_API_SECRET: recorder-bot-2-test-secret
+            RECORDER_BOT_MAX_CONSULTATIONS: 12
+            RECORDER_BOT_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
+            RECORDER_BOT_ID: recorder-bot-2
+            RECORDER_BOT_ADVERTISED_URL: http://${WORKER_ADDRESS:-host.docker.internal}:8095
+            RECORDER_BOT_HEARTBEAT_URL: https://localhost:8443/coordinator
+            RECORDER_BOT_BUILD: ${BUILD:-test-deployment}
+            NODE_TLS_REJECT_UNAUTHORIZED: '0'
 
     video-player:
         image: video-player:local
@@ -81,6 +108,12 @@ services:
             VIDEO_PLAYER_JITSI_URL: https://localhost:8443
             VIDEO_PLAYER_IGNORE_CERTIFICATE_ERRORS: 'true'
             VIDEO_PLAYER_MAX_ROOMS: 3
+            # Sends heartbeats like the recorder bots (ADR 0014); the secret is the one it has in workers.json.
+            VIDEO_PLAYER_ID: video-player-1
+            VIDEO_PLAYER_ADVERTISED_URL: http://${WORKER_ADDRESS:-host.docker.internal}:8094
+            VIDEO_PLAYER_HEARTBEAT_URL: https://localhost:8443/coordinator
+            VIDEO_PLAYER_BUILD: ${BUILD:-test-deployment}
+            NODE_TLS_REJECT_UNAUTHORIZED: '0'
 
     coordinator:
         image: coordinator:local
@@ -99,6 +132,8 @@ services:
             - ../../coordinator/test-deployment/rooms.json:/etc/coordinator/rooms.json:ro
             # The hospital issuer's public keys, which sign the coordinators in to the screen.
             - ../../recorder-bot/test-deployment/jwt/asap:/etc/coordinator/issuer-keys:ro
+            # The workers' ids and secrets, read again whenever the file changes: edit it in place, no restart.
+            - ../../coordinator/test-deployment/workers.json:/etc/coordinator/workers.json:ro
         environment:
             COORDINATOR_API_SECRET: coordinator-test-secret
             COORDINATOR_PATIENT_MARKER: user.hospital_role=patient
@@ -107,18 +142,17 @@ services:
             COORDINATOR_PROSODY_URL: http://prosody:5280
             COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
             COORDINATOR_ROOMS_FILE: /etc/coordinator/rooms.json
-            COORDINATOR_RECORDER_BOT_SECRET: recorder-bot-test-secret
-            COORDINATOR_RECORDER_BOT_URL: http://host.docker.internal:8090
+            # The workers send heartbeats; the coordinator service hands them work (ADR 0014).
+            COORDINATOR_WORKER_SECRETS_FILE: /etc/coordinator/workers.json
             COORDINATOR_SIGNING_KEY_FILE: /run/keys/private.pem
             COORDINATOR_SIGNING_KID: coordinator-test/key
             COORDINATOR_STAFF_MARKER: user.hospital_role=staff
             COORDINATOR_TOKEN_SUBJECT: coordinator-test
-            COORDINATOR_VIDEO_PLAYER_URL: http://host.docker.internal:8094
-            COORDINATOR_VIDEO_PLAYER_SECRET: video-player-test-secret
             COORDINATOR_VIDEO_BASE_URL: https://localhost:8443/
             COORDINATOR_VIDEO_PLAYER_MARKER: user.hospital_role=video_player
         depends_on:
             - recorder-bot
+            - recorder-bot-2
             - video-player
             - prosody
 
