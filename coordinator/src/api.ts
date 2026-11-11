@@ -8,6 +8,7 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 
 import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { errorCode, log } from './log.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
@@ -41,7 +42,7 @@ const DEFAULT_REPORT_DAYS = 30;
  * @param {string} b - The other.
  * @returns {boolean}
  */
-function sameSecret(a: string, b: string): boolean {
+export function sameSecret(a: string, b: string): boolean {
     const digest = (s: string) => createHash('sha256').update(s).digest();
 
     return timingSafeEqual(digest(a), digest(b));
@@ -185,13 +186,16 @@ function reportTime(value: string | null, fallback: Date): Date {
  *
  * @param {Object} options - Options.
  * @param {CoordinatorService} options.service - The coordinator service.
+ * @param {Function} options.holdsLock - Whether this instance holds the active lock, for the health check; without it
+ * the instance is the only one and always active.
  * @param {ICoordinatorAuth} options.screen - How coordinators sign in; without it there is no screen.
  * @param {string} options.secret - The shared bearer secret.
  * @param {ICoordinatorAuth} options.survey - The hospital's issuer with the patient marker, which a patient's token
  * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ screen, secret, service, staff, survey }: {
+export function createApi({ holdsLock, screen, secret, service, staff, survey }: {
+    holdsLock?: () => boolean;
     screen?: ICoordinatorAuth;
     secret: string;
     service: CoordinatorService;
@@ -405,9 +409,12 @@ export function createApi({ screen, secret, service, staff, survey }: {
         const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
         if (pathname === '/health' && req.method === 'GET') {
-            send(res, 200, {
+            const active = holdsLock ? holdsLock() : true;
+
+            send(res, active ? 200 : 503, {
+                active,
                 openEncounters: service.state.encounters.filter(e => e.stage !== 'done').length,
-                status: 'ok'
+                status: active ? 'ok' : 'standby'
             });
 
             return;
@@ -524,6 +531,10 @@ export function createApi({ screen, secret, service, staff, survey }: {
         handle(req, res).catch(error => {
             if (error instanceof HttpError) {
                 send(res, error.status, { error: error.message });
+            } else if (error instanceof DatabaseError) {
+                // What needs the database was refused before anything was done, so the caller can ask again later.
+                log.warn('refused: the database cannot be written', { error: errorCode(error) });
+                send(res, 503, { error: 'the database cannot be written now; nothing was done' });
             } else {
                 log.error('API request failed', { error: errorCode(error) });
                 send(res, 500, { error: 'internal error' });

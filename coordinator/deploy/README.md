@@ -57,6 +57,12 @@ The service needs no other right: not `GRANT OPTION`, not `FILE`, not `SUPER`, a
 
 The list of workers is not in the database. From then on, back up the MariaDB with the database team's backups, not the `coordinator-data` volume.
 
+### One active instance, with a standby
+
+With MariaDB, run the service on two VMs against the same database: only one is active. Each instance takes a named lock in MariaDB (`GET_LOCK`, named after the schema) on its one connection; the one that holds it is active, and the other waits as standby, trying every 2 seconds. A standby instance has no state in memory and answers only `GET /health` (`503`, `{active: false, status: "standby"}`) and `503` for everything else, so point the load balancer at the instance whose `/health` is `200`. When the active instance stops, or its connection to MariaDB drops, the lock is released and the standby instance becomes active, reading the state the first one wrote. An active instance that finds it no longer holds the lock exits (status 1): run the service with a restart policy, so that it comes back as standby. With SQLite there is a single instance and it is always active.
+
+While MariaDB cannot be written, starting an encounter, changing a stage (by the system, a coordinator or staff) and a move are refused with `503` and `{"error": "the database cannot be written now; nothing was done"}`, before anything is done: the recorder bot is not asked, no participant is sent, nothing is audited.
+
 ## Health questionnaires
 
 A coordinator (from the screen) or the hospital's system sends a patient a short health questionnaire; the patient answers it alone in their own room. The deployment's questionnaires are in the rooms file, beside `centers`: `"questionnaires": [{"id": "lifestyle", "title": "...", "questions": [{"text": "...", "choices": ["Yes", "No"]}]}]`. Ids are unique, and every question must have exactly two non-empty choices: the service refuses to start otherwise and names the questionnaire.
@@ -220,7 +226,7 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 | `GET /questionnaires` | `{questionnaires: [{id, title, questions}]}`: the [health questionnaires](#health-questionnaires) the deployment offers. |
 | `POST /encounters/<id>/questionnaires` with `{"questionnaire": "<catalogue id>"}` | Sends that questionnaire to the encounter's patient, at any stage; several can be sent. `201` and `{id}` (the id of this sending). `400` for a questionnaire that is not in the catalogue, `404` for an unknown encounter, `409` if the encounter is done, `503` if Prosody cannot be asked. Every sending, and every refusal, is in the audit log (`kind: "questionnaire_sent"`, with the `questionnaire` and the `issuer`). |
 | `GET /encounters/<id>/questionnaires` | `{questionnaires: [{id, questionnaire, title, questions, sentAt, sentBy, answers, answeredAt, closedAt}]}`: what was sent during this encounter and nothing of another, oldest first. `answers` is the index (0 or 1) of the chosen choice for each question; none until answered. `closedAt` is set when staff joined the room after it was sent and so it was withdrawn. `404` for an unknown encounter. |
-| `GET /health` | `200` and the number of open encounters. |
+| `GET /health` | `200`, `{active: true, status: "ok", openEncounters}` from the instance that holds the active lock; `503`, `{active: false, status: "standby"}` from a standby instance (see "One active instance, with a standby"). |
 
 Encounters are identified by an opaque id. The HN appears only in the body that starts an encounter and in what `GET /encounters/<id>` returns, never in a path or in the service's logs (ADR 0005).
 
