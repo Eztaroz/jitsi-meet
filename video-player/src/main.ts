@@ -4,6 +4,7 @@
 import { createApi } from './api.ts';
 import { launchPlayer } from './browser.ts';
 import { loadConfig } from './config.ts';
+import { Heartbeat } from './heartbeat.ts';
 import { log } from './log.ts';
 import { Players } from './players.ts';
 
@@ -14,7 +15,15 @@ const players = new Players({
 });
 const api = createApi({ maxRooms: config.maxRooms, players, secret: config.apiSecret });
 
+// Tells the coordinator service this worker is up, so that it is handed waiting videos (ADR 0014).
+const heartbeat = config.heartbeat && new Heartbeat({
+    ...config.heartbeat,
+    secret: config.apiSecret,
+    status: () => ({ capacity: config.maxRooms, running: players.active().length })
+});
+
 api.listen(config.apiPort, () => log.info('control API listening', { port: config.apiPort }));
+heartbeat?.start();
 
 let shuttingDown = false;
 
@@ -30,6 +39,7 @@ async function shutdown(signal: string) {
     }
     shuttingDown = true;
     log.info('shutting down', { signal });
+    heartbeat?.stop();
     api.close();
     await players.shutdown();
     process.exit(0);

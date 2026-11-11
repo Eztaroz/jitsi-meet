@@ -1,0 +1,100 @@
+/**
+ * The heartbeat this worker sends to the coordinator service (ADR 0014): every few seconds, with the worker's own
+ * secret, through the web server's TLS. The coordinator service hands waiting videos only to the workers it heard from
+ * lately. A heartbeat that fails is only logged: the next one is a few seconds away, and the video keeps playing
+ * meanwhile.
+ */
+import { errorCode, log } from './log.ts';
+
+/** How often a heartbeat is sent. The coordinator service takes a worker for lost after three missed ones. */
+export const HEARTBEAT_MS = 5_000;
+
+/** How long a heartbeat may take to be answered. */
+const TIMEOUT_MS = 4_000;
+
+export interface IHeartbeatOptions {
+
+    /** The control API address the coordinator service reaches this worker at. */
+    advertisedUrl: string;
+
+    /** The build this worker runs, so that a deployment can see the new build come up (ADR 0017). */
+    build: string;
+
+    /** The coordinator service's base URL, as the web server proxies it, for example `https://meet.example/coordinator`. */
+    coordinatorUrl: string;
+
+    /** The worker's id on the coordinator service's list. */
+    id: string;
+
+    /** How often to send; for tests. */
+    intervalMs?: number;
+
+    /** The worker's own secret on that list: the same one the coordinator service sends with its requests. */
+    secret: string;
+
+    /** What this worker can run, and runs now. */
+    status: () => { capacity: number; running: number; };
+}
+
+export class Heartbeat {
+    private readonly _options: IHeartbeatOptions;
+    private _timer?: ReturnType<typeof setInterval>;
+
+    /**
+     * Creates the heartbeat. Call {@link start} to start sending.
+     *
+     * @param {IHeartbeatOptions} options - Options.
+     */
+    constructor(options: IHeartbeatOptions) {
+        this._options = options;
+    }
+
+    /**
+     * Sends one heartbeat. It never rejects.
+     *
+     * @returns {Promise<boolean>} Whether the coordinator service accepted it.
+     */
+    async send(): Promise<boolean> {
+        const { advertisedUrl, build, coordinatorUrl, id, secret, status } = this._options;
+
+        try {
+            const { capacity, running } = status();
+            const response = await fetch(`${coordinatorUrl.replace(/\/+$/u, '')}/workers/heartbeat`, {
+                body: JSON.stringify({ build, capacity, id, kind: 'video-player', running, url: advertisedUrl }),
+                headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+                method: 'POST',
+                signal: AbortSignal.timeout(TIMEOUT_MS)
+            });
+
+            if (!response.ok) {
+                log.warn('the coordinator service refused the heartbeat', { status: response.status });
+            }
+
+            return response.ok;
+        } catch (error) {
+            log.warn('could not send a heartbeat', { error: errorCode(error) });
+
+            return false;
+        }
+    }
+
+    /**
+     * Sends a heartbeat now, then one at every interval.
+     *
+     * @returns {void}
+     */
+    start(): void {
+        this.send();
+        this._timer = setInterval(() => this.send(), this._options.intervalMs ?? HEARTBEAT_MS);
+        this._timer.unref();
+    }
+
+    /**
+     * Stops sending.
+     *
+     * @returns {void}
+     */
+    stop(): void {
+        clearInterval(this._timer);
+    }
+}

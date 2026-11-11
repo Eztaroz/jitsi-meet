@@ -225,6 +225,10 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
 | `RECORDER_BOT_VIDEO_PLAYER_MARKER` | none | Which verified identity is the video player (same syntax). The service records it under its own role, `video_player`, and a Review file labels its tile "video" |
 | `RECORDER_BOT_PATIENT_MARKER` | none | Which verified identity is the patient, written the same way |
+| `RECORDER_BOT_HEARTBEAT_URL` | unset | Where to send heartbeats to the coordinator service (ADR 0014): its base URL through the web server's TLS, for example `https://meet.example/coordinator`. Every 5 seconds the worker sends its id, kind, control API address, capacity (`RECORDER_BOT_MAX_CONSULTATIONS`), running count and build, with `RECORDER_BOT_API_SECRET` as its secret: the coordinator service must list that id and secret in its `COORDINATOR_WORKER_SECRETS_FILE`. Unset, none are sent (a fixed list of workers). A failed heartbeat is logged and the next one tried |
+| `RECORDER_BOT_ID` | | The worker's id on that list. Required with `RECORDER_BOT_HEARTBEAT_URL` |
+| `RECORDER_BOT_ADVERTISED_URL` | | The address the coordinator service reaches this control API at, for example `http://vm1:8090`. Required with `RECORDER_BOT_HEARTBEAT_URL` |
+| `RECORDER_BOT_BUILD` | `unknown` | The build this worker runs, shown in the coordinator service's worker list, so that a deployment can see the new build come up (ADR 0017) |
 | `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
 | `RECORDER_BOT_CHROMIUM_PATH` | Playwright's | A Chromium binary to run instead |
 | `RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS` | `false` | Accept any certificate from the web server. Only for test deployments |

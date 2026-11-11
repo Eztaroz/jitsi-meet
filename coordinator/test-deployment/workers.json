@@ -1,0 +1,9 @@
+{
+    "recorderBots": [
+        { "id": "recorder-bot-1", "secret": "recorder-bot-test-secret" },
+        { "id": "recorder-bot-2", "secret": "recorder-bot-2-test-secret" }
+    ],
+    "videoPlayers": [
+        { "id": "video-player-1", "secret": "video-player-test-secret" }
+    ]
+}
