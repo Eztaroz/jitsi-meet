@@ -214,8 +214,9 @@ describe('the coordinator service across a restart', () => {
         await service.startEncounter('B');
         await service.changeStage(first.encounter?.id as string, 'intake', 'system');
 
-        // Each start and each stage change writes the one encounter it changed, not the other.
-        assert.deepEqual(writes, [ [ 'encounter' ], [ 'encounter' ], [ 'encounter' ] ]);
+        // Each start writes the one encounter it made and its consultation, and each stage change the one encounter
+        // it changed, not the other.
+        assert.deepEqual(writes, [ [ 'encounter', 'consultation' ], [ 'encounter', 'consultation' ], [ 'encounter' ] ]);
 
         const before = service.state;
 

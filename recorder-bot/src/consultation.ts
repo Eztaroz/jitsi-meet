@@ -3,7 +3,6 @@
  * module, which decides when the consultation stops. When the bot crashes or loses its connection while the
  * consultation runs, the consultation relaunches it into the same room and the same spool folder.
  */
-import { randomUUID } from 'node:crypto';
 
 import { type IBot, type PageEvent, launchBot } from './bot.ts';
 import type { IConfig } from './config.ts';
@@ -62,7 +61,8 @@ const RUNNING: ReadonlySet<ConsultationStatus> = new Set([ 'starting', 'waiting_
  * A consultation, from the request to record it until its evidence is handled.
  */
 export class Consultation {
-    readonly id = randomUUID();
+    /** Made by the coordinator service (ADR 0016). */
+    readonly id: string;
     readonly hn: string;
 
     /** The patient's room, from their HN. It names where the evidence is kept. */
@@ -112,9 +112,11 @@ export class Consultation {
      * Creates a consultation for an HN. Call {@link start} to launch its bot.
      *
      * @param {string} hn - The patient's HN.
+     * @param {string} id - The consultation's id, made by the coordinator service.
      * @param {IConfig} config - Service settings.
      */
-    constructor(hn: string, config: IConfig) {
+    constructor(hn: string, id: string, config: IConfig) {
+        this.id = id;
         this.hn = hn;
         this.room = roomNameFromHn(hn);
         this.config = config;

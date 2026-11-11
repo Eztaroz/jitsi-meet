@@ -25,6 +25,23 @@ export interface IMoveRecord {
     issuer: string;
 }
 
+/** A consultation: one stretch of a patient's room that a recorder bot records as an evidence recording (ADR 0016). */
+export interface IConsultation {
+
+    /** The encounter the room was opened for. */
+    encounterId: string;
+
+    /** Made by the coordinator service, never by the recorder bot. It names the evidence recording. */
+    id: string;
+
+    /** The worker id of the recorder bot that records it. */
+    recorderBot: string;
+
+    /** Whether it is being recorded. */
+    recording: boolean;
+    startedAt: Date;
+}
+
 /**
  * The record of a move nothing has been kept about yet.
  *
@@ -104,6 +121,15 @@ export class Store {
         )`);
         this._db.exec('CREATE INDEX IF NOT EXISTS surveys_submitted_at ON surveys (submitted_at)');
 
+        this._db.exec(`CREATE TABLE IF NOT EXISTS consultations (
+            id TEXT PRIMARY KEY,
+            encounter_id TEXT NOT NULL,
+            recorder_bot TEXT NOT NULL,
+            recording INTEGER NOT NULL,
+            started_at TEXT NOT NULL
+        )`);
+        this._db.exec('CREATE INDEX IF NOT EXISTS consultations_encounter ON consultations (encounter_id)');
+
         // A database made before stages or pathways gets the columns added.
         const columns = (this._db.prepare('PRAGMA table_info(encounters)').all() as { name: string; }[]).map(c => c.name);
 
@@ -170,6 +196,29 @@ export class Store {
      */
     loadMoveRecords(): Map<string, IMoveRecord> {
         return new Map(this._loadMoves().map(({ move, record }) => [ move.id, record ]));
+    }
+
+    /**
+     * Reads the consultations of an encounter, and so which evidence recordings belong to it.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {IConsultation[]} The oldest first.
+     */
+    consultationsOf(encounterId: string): IConsultation[] {
+        const rows = this._db.prepare('SELECT * FROM consultations WHERE encounter_id = ? ORDER BY started_at, id')
+            .all(encounterId) as {
+                encounter_id: string; id: string; recorder_bot: string; recording: number; started_at: string;
+            }[];
+
+        return rows.map(r => {
+            return {
+                encounterId: r.encounter_id,
+                id: r.id,
+                recorderBot: r.recorder_bot,
+                recording: Boolean(r.recording),
+                startedAt: new Date(r.started_at)
+            };
+        });
     }
 
     /**
@@ -261,6 +310,14 @@ export class Store {
         case 'audit':
             this.addAudit(change.audit);
             break;
+        case 'consultation': {
+            const c = change.consultation;
+
+            this._db.prepare(`INSERT OR REPLACE INTO consultations (id, encounter_id, recorder_bot, recording, started_at)
+                VALUES (?, ?, ?, ?, ?)`)
+                .run(c.id, c.encounterId, c.recorderBot, c.recording ? 1 : 0, c.startedAt.toISOString());
+            break;
+        }
         case 'encounter': {
             const e = change.encounter;
 
@@ -393,12 +450,14 @@ export class Store {
      * @returns {Object} How many of each.
      */
     sweep(cutoff: Date): {
-        audit: number; encounters: number; moves: number; patientRooms: number; staffStations: number; surveys: number;
+        audit: number; consultations: number; encounters: number; moves: number; patientRooms: number;
+        staffStations: number; surveys: number;
     } {
         const at = cutoff.toISOString();
 
         return {
             audit: Number(this._db.prepare('DELETE FROM audit WHERE at < ?').run(at).changes),
+            consultations: Number(this._db.prepare('DELETE FROM consultations WHERE started_at < ?').run(at).changes),
             encounters: Number(this._db.prepare('DELETE FROM encounters WHERE started_at < ?').run(at).changes),
             moves: Number(this._db.prepare('DELETE FROM moves WHERE started_at < ?').run(at).changes),
             patientRooms: Number(this._db.prepare('DELETE FROM patient_rooms WHERE updated_at < ?').run(at).changes),

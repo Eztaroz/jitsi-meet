@@ -54,8 +54,8 @@ import {
     queues,
     step
 } from './rules.ts';
-import { diffState } from './stateChanges.ts';
-import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
+import { type StoreChange, diffState } from './stateChanges.ts';
+import { type IConsultation, type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
 import { destinationClaims } from './tokens.ts';
@@ -358,15 +358,55 @@ export class CoordinatorService {
                 visitNumber: where.visitNumber
             });
 
+            const consultations: StoreChange[] = [];
+
             for (const command of result.commands) {
                 if (command.type === 'record_room') {
-                    await this._opts.recorderBot.recordRoom(command.hn);
+                    consultations.push(await this._recordRoom(command));
                 }
             }
-            this._commit(result.state);
+            this._commit(result.state, consultations);
 
             return result;
         });
+    }
+
+    /**
+     * The consultations of an encounter, and so the evidence recordings that belong to it.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {IConsultation[]|undefined} The oldest first; undefined when there is no such encounter.
+     */
+    consultationsOf(encounterId: string): IConsultation[] | undefined {
+        if (!this._state.encounters.some(e => e.id === encounterId)) {
+            return undefined;
+        }
+
+        return this._opts.store.consultationsOf(encounterId);
+    }
+
+    /**
+     * Asks the recorder bot to record a patient's room as a consultation whose id the coordinator service makes (ADR 0016).
+     *
+     * @param {Object} command - The `record_room` command.
+     * @returns {Promise<StoreChange>} What to keep about the consultation, once the recorder bot accepted the room.
+     */
+    private async _recordRoom(command: Extract<Command, { type: 'record_room'; }>): Promise<StoreChange> {
+        const { recorderBot } = this._opts;
+
+        // The recorder bot answers with the id of the consultation already running in that room, if there is one.
+        const id = await recorderBot.recordRoom(command.hn, randomUUID());
+
+        return {
+            consultation: {
+                encounterId: command.encounterId,
+                id,
+                recorderBot: recorderBot.workerId ?? 'recorder-bot',
+                recording: true,
+                startedAt: new Date()
+            },
+            kind: 'consultation'
+        };
     }
 
     /**
@@ -1459,10 +1499,13 @@ export class CoordinatorService {
      * Records a new state.
      *
      * @param {IState} state - The state.
+     * @param {StoreChange[]} extra - Other writes to save in the same transaction, even when the state is the same.
      * @returns {void}
      */
-    private _commit(state: IState): void {
-        if (state !== this._state) {
+    private _commit(state: IState, extra: StoreChange[] = []): void {
+        if (state === this._state) {
+            this._opts.store.apply(extra);
+        } else {
             const previous = this._state;
 
             this._state = state;
@@ -1471,7 +1514,7 @@ export class CoordinatorService {
             // that a restart would write again.
             const { entries, records } = this._endedMoves();
 
-            this._opts.store.apply(diffState(previous, state, this._records, records, entries));
+            this._opts.store.apply([ ...diffState(previous, state, this._records, records, entries), ...extra ]);
             for (const [ id, record ] of records) {
                 this._records.set(id, record);
             }
@@ -1602,7 +1645,7 @@ export class CoordinatorService {
     private async _run(command: Command, rooms: IRoom[]): Promise<void> {
         switch (command.type) {
         case 'record_room':
-            await this._opts.recorderBot.recordRoom(command.hn);
+            this._opts.store.apply([ await this._recordRoom(command) ]);
             break;
         case 'start_timer':
             this._startTimer(command.moveId, command.timer, new Date(Date.now() + command.afterMs));

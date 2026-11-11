@@ -3,11 +3,12 @@
  */
 import type { IAuditEntry } from './audit.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
-import { type IMoveRecord, newMoveRecord } from './store.ts';
+import { type IConsultation, type IMoveRecord, newMoveRecord } from './store.ts';
 
 /** One write to the store. */
 export type StoreChange =
     | { audit: IAuditEntry; kind: 'audit'; }
+    | { consultation: IConsultation; kind: 'consultation'; }
     | { encounter: IEncounter; kind: 'encounter'; }
     | { kind: 'move'; move: IMove; record: IMoveRecord; }
     | { identityId: string; kind: 'patient_room'; room: string | undefined; }

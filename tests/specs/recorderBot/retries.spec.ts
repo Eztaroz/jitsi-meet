@@ -41,6 +41,12 @@ describe('Recorder bot: safe retries', () => {
         consultationId = body.consultationId;
     });
 
+    it('refuses a request without a consultation id, which the coordinator service makes', async () => {
+        const refused = await postConsultation(uniqueHn('NOID'), undefined, null);
+
+        expect(refused.status).toBe(400);
+    });
+
     it('a repeated request for the same HN returns the same consultation', async () => {
         const again = await postConsultation(hn);
 

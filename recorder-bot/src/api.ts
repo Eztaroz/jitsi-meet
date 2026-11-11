@@ -6,7 +6,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
-import { AtCapacityError, type Consultations } from './consultations.ts';
+import { AtCapacityError, type Consultations, DuplicateConsultationError } from './consultations.ts';
 import { errorCode, log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
 
@@ -77,6 +77,26 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     } catch {
         throw new HttpError(400, 'request body must be JSON');
     }
+}
+
+/** What a consultation id the coordinator service made may look like: it names folders, so no separators or dots first. */
+const CONSULTATION_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/u;
+
+/**
+ * Checks the consultation id of a request: the coordinator service makes it (ADR 0016), the recorder bot never does.
+ *
+ * @param {unknown} body - The request body.
+ * @returns {string} The consultation id.
+ */
+function consultationIdFrom(body: unknown): string {
+    const id = typeof body === 'object' && body !== null ? (body as { consultationId?: unknown; }).consultationId : undefined;
+
+    if (typeof id !== 'string' || !CONSULTATION_ID.test(id)) {
+        throw new HttpError(400, 'consultationId must be a string of at most 128 letters, digits, dots, dashes and underscores, '
+            + 'made by the coordinator service');
+    }
+
+    return id;
 }
 
 /**
@@ -162,13 +182,18 @@ export function createApi({ consultations, maxConsultations, secret }: {
             const hn = hnFrom(body);
 
             refuseStationFields(body);
+
+            const requestedId = consultationIdFrom(body);
             let started;
 
             try {
-                started = consultations.start(hn);
+                started = consultations.start(hn, requestedId);
             } catch (error) {
                 if (error instanceof AtCapacityError) {
                     throw new HttpError(503, 'the recorder bot service is recording as many consultations as it may');
+                }
+                if (error instanceof DuplicateConsultationError) {
+                    throw new HttpError(409, 'a consultation with that id exists');
                 }
                 throw error;
             }
