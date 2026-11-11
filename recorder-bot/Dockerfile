@@ -24,6 +24,9 @@ RUN mkdir -p /var/lib/recorder-bot/spool && chown pwuser:pwuser /var/lib/recorde
 ENV RECORDER_BOT_SPOOL_DIR=/var/lib/recorder-bot/spool
 
 USER pwuser
+# The commit this image is built from, which the worker reports in its heartbeat (ADR 0017); the pipeline passes it.
+ARG BUILD=unknown
+ENV RECORDER_BOT_BUILD=$BUILD
 ENV NODE_ENV=production
 EXPOSE 8090
 CMD ["node", "src/main.ts"]
