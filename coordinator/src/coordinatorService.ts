@@ -11,6 +11,7 @@ import {
     moveEntry,
     questionnaireEntry,
     stageEntry,
+    unrecordedEntry,
     videoEntry
 } from './audit.ts';
 import { signToken } from './jwt.ts';
@@ -204,6 +205,9 @@ export class CoordinatorService {
     private readonly _opts: {
         auditKey: string;
         layout: ILayout;
+
+        /** The recorder bots that have fallen silent; their consultations are taken over (ADR 0016). Unset, none are. */
+        lostRecorderBots?: () => { id: string; lastSeen: Date; }[];
         prosody: Prosody;
         recorderBot: IRecorderBot;
         retentionMs: number;
@@ -228,6 +232,10 @@ export class CoordinatorService {
     /** The running timers of the moves, by move id and timer. */
     private readonly _timers = new Map<string, NodeJS.Timeout>();
     private _retention?: NodeJS.Timeout;
+
+    /** The consultations taken over from a lost worker, by worker, until the worker is told (ADR 0016). */
+    private readonly _takenOver = new Map<string, Set<string>>();
+    private _takeover?: NodeJS.Timeout;
 
     /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
     private readonly _videos = new Map<string, IPlayingVideo>();
@@ -289,6 +297,8 @@ export class CoordinatorService {
                 .catch(error => log.error('could not keep the stations of staff', { error: (error as Error).name }));
         }
 
+        const unrecorded = new Set(this._opts.store.allConsultations().filter(c => !c.recording).map(c => c.encounterId));
+
         return rooms.map(room => {
             const encounter = room.kind === 'patient'
                 ? this._state.encounters.find(e => e.stage !== 'done'
@@ -300,7 +310,13 @@ export class CoordinatorService {
                 return station === undefined ? o : { ...o, station };
             });
 
-            return encounter ? { ...room, encounterId: encounter.id, occupants } : { ...room, occupants };
+            if (!encounter) {
+                return { ...room, occupants };
+            }
+
+            return unrecorded.has(encounter.id)
+                ? { ...room, encounterId: encounter.id, occupants, unrecorded: true }
+                : { ...room, encounterId: encounter.id, occupants };
         });
     }
 
@@ -397,7 +413,8 @@ export class CoordinatorService {
         const { recorderBot } = this._opts;
 
         // The recorder bot answers with the id of the consultation already running in that room, if there is one.
-        const id = await recorderBot.recordRoom(command.hn, randomUUID());
+        const startedAt = new Date();
+        const id = await recorderBot.recordRoom(command.hn, randomUUID(), { startedAt });
 
         return {
             consultation: {
@@ -405,10 +422,106 @@ export class CoordinatorService {
                 id,
                 recorderBot: recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot',
                 recording: true,
-                startedAt: new Date()
+                startedAt
             },
             kind: 'consultation'
         };
+    }
+
+    /**
+     * Hands the consultations whose recorder bot is lost to another recorder bot with room, which joins the room and
+     * records the rest of the same consultation: what was not recorded since the lost worker's last heartbeat is a
+     * gap (ADR 0016). When no recorder bot has room, the consultation stays unrecorded, and the service says so in its
+     * log and its audit log; the coordinator's screen shows it from the consultation.
+     *
+     * @returns {Promise<void>}
+     */
+    takeOverLostConsultations(): Promise<void> {
+        return this._serial(async () => {
+            const lost = new Map((this._opts.lostRecorderBots?.() ?? []).map(w => [ w.id, w.lastSeen ]));
+
+            if (!lost.size) {
+                return;
+            }
+
+            for (const consultation of this._opts.store.allConsultations()) {
+                const gapSince = lost.get(consultation.recorderBot);
+                const encounter = this._state.encounters.find(e => e.id === consultation.encounterId);
+
+                if (!consultation.recording || !gapSince || !encounter || encounter.stage === DONE) {
+                    continue;
+                }
+                await this._takeOver(consultation, encounter.hn, gapSince);
+            }
+        }).catch(error => log.error('could not take over the consultations of a lost recorder bot', { error: (error as Error).name }));
+    }
+
+    /**
+     * Takes one consultation over.
+     *
+     * @param {IConsultation} consultation - The consultation.
+     * @param {string} hn - The patient's HN.
+     * @param {Date} gapSince - When its recorder bot was last heard from.
+     * @returns {Promise<void>}
+     */
+    private async _takeOver(consultation: IConsultation, hn: string, gapSince: Date): Promise<void> {
+        const { recorderBot } = this._opts;
+
+        try {
+            const id = await recorderBot.recordRoom(hn, consultation.id, {
+                gapSince, startedAt: consultation.startedAt, takenFrom: consultation.recorderBot
+            });
+            const taker = recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot';
+
+            this._opts.store.apply([ { consultation: { ...consultation, recorderBot: taker }, kind: 'consultation' } ]);
+            this._takenOver.set(consultation.recorderBot,
+                new Set([ ...this._takenOver.get(consultation.recorderBot) ?? [], consultation.id ]));
+            log.info('took a consultation over from a lost recorder bot', {
+                consultation: consultation.id, from: consultation.recorderBot, to: taker
+            });
+        } catch (error) {
+            if ((error as { code?: string; }).code !== 'at_capacity') {
+                // Nobody could be reached: try again at the next check.
+                log.warn('could not hand a consultation to another recorder bot; will try again', {
+                    consultation: consultation.id, reason: (error as Error).message
+                });
+
+                return;
+            }
+            this._opts.store.apply([ { consultation: { ...consultation, recording: false }, kind: 'consultation' } ]);
+            this._audit(unrecordedEntry({
+                at: new Date(), encounterId: consultation.encounterId, reason: 'no_recorder_bot_has_room'
+            }));
+            log.error('a consultation is not recorded: its recorder bot is lost and no other has room', {
+                consultation: consultation.id, encounter: consultation.encounterId, lostRecorderBot: consultation.recorderBot
+            });
+        }
+    }
+
+    /**
+     * The consultations that were taken over from a worker, once, so that the worker's recorder bot stops them when it
+     * is heard from again (ADR 0016).
+     *
+     * @param {string} workerId - The worker.
+     * @returns {string[]}
+     */
+    takenOverFrom(workerId: string): string[] {
+        const ids = [ ...this._takenOver.get(workerId) ?? [] ];
+
+        this._takenOver.delete(workerId);
+
+        return ids;
+    }
+
+    /**
+     * Checks for lost recorder bots now and then, and takes their consultations over.
+     *
+     * @param {number} [everyMs] - How often.
+     * @returns {void}
+     */
+    startTakeover(everyMs = 5_000): void {
+        this._takeover = setInterval(() => void this.takeOverLostConsultations(), everyMs);
+        this._takeover.unref();
     }
 
     /**
@@ -1483,6 +1596,7 @@ export class CoordinatorService {
      */
     stop(): void {
         clearInterval(this._retention);
+        clearInterval(this._takeover);
         clearTimeout(this._midnight);
         for (const timer of this._timers.values()) {
             clearTimeout(timer);

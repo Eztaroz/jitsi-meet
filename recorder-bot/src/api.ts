@@ -100,6 +100,29 @@ function consultationIdFrom(body: unknown): string {
 }
 
 /**
+ * Checks an optional time in a request, such as when the consultation started.
+ *
+ * @param {unknown} body - The request body.
+ * @param {string} field - The field.
+ * @returns {Date|undefined} The time; undefined when the request has none.
+ */
+function timeFrom(body: unknown, field: string): Date | undefined {
+    const value = typeof body === 'object' && body !== null ? (body as Record<string, unknown>)[field] : undefined;
+
+    if (value === undefined || value === null) {
+        return undefined;
+    }
+
+    const time = typeof value === 'string' ? new Date(value) : undefined;
+
+    if (!time || Number.isNaN(time.getTime())) {
+        throw new HttpError(400, `${field} must be a time in ISO 8601`);
+    }
+
+    return time;
+}
+
+/**
  * Checks the HN of a request.
  *
  * @param {unknown} body - The request body.
@@ -187,7 +210,19 @@ export function createApi({ consultations, maxConsultations, secret }: {
             let started;
 
             try {
-                started = consultations.start(hn, requestedId);
+                const gapSince = timeFrom(body, 'gapSince');
+                const startedAt = timeFrom(body, 'startedAt');
+                const takenFrom = (body as { takenFrom?: unknown; }).takenFrom;
+
+                if (takenFrom !== undefined && takenFrom !== null && (typeof takenFrom !== 'string' || !takenFrom)) {
+                    throw new HttpError(400, 'takenFrom must be the id of a worker');
+                }
+
+                started = consultations.start(hn, requestedId, {
+                    ...gapSince ? { gapSince } : {},
+                    ...startedAt ? { startedAt } : {},
+                    ...takenFrom ? { takenFrom } : {}
+                });
             } catch (error) {
                 if (error instanceof AtCapacityError) {
                     throw new HttpError(503, 'the recorder bot service is recording as many consultations as it may');

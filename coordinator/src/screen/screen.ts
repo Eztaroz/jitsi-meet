@@ -93,6 +93,9 @@
         occupants: IOccupant[];
         open: boolean;
         stage?: string;
+
+        /** The room's consultation is not being recorded: its recorder bot was lost and no other had room. */
+        unrecorded?: boolean;
     }
 
     interface IMove {
@@ -994,6 +997,12 @@
         }
         if (people.length !== room.occupants.length) {
             badges.appendChild(el('span', 'กำลังบันทึก', 'badge rec'));
+        }
+        if (room.unrecorded) {
+            const badge = el('span', 'ไม่ได้บันทึก', 'badge warn');
+
+            badge.title = 'ผู้บันทึกของห้องนี้หยุดทำงาน และไม่มีผู้บันทึกอื่นว่าง';
+            badges.appendChild(badge);
         }
         head.appendChild(badges);
         card.appendChild(head);

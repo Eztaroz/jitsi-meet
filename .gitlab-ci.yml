@@ -82,6 +82,7 @@ test-coordinator:
       --dockerfile "${CI_PROJECT_DIR}/${DOCKERFILE}"
       --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
       --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:${SHORT_SHA}"
+      --build-arg "BUILD=${SHORT_SHA}"
   tags:
     - HOSAPP02
   only:
@@ -250,4 +251,39 @@ central-rollback-redeploy:
     - central-rollback-tag
   when: on_failure
   only:
+    - triggers
+
+# ---- Workers, one at a time (ADR 0017). Kept in this section, with its script in deploy/pipeline/. ----------------------
+# Every build merged to the main branch reaches the recorder bots and the video players one at a time: draining, no
+# consultation cut, health checked within 2 minutes, rolled back and stopped if not. The script is the job; its
+# settings are CI/CD variables (see deploy/pipeline/deployWorkersMain.ts):
+#   COORDINATOR_URL, COORDINATOR_PIPELINE_SECRET (Protected + Masked), WEBHOOK_<ID> of each worker's VM stack
+#   (Protected), and optionally HEALTH_URL_<ID> / HEALTH_SECRET_<ID>, ALLOW_SELF_SIGNED=1.
+# Without COORDINATOR_URL the job is skipped, so a project that has no workers yet keeps building.
+test-deploy-pipeline:
+  stage: test
+  image: node:24-bookworm-slim
+  script:
+    - node --disable-warning=ExperimentalWarning --test deploy/pipeline/test/*.test.ts
+  tags:
+    - HOSAPP02
+  except:
+    - triggers
+
+deploy-workers:
+  stage: deploy
+  image: node:24-bookworm-slim
+  script:
+    - |
+      if [ -z "$COORDINATOR_URL" ]; then
+        echo "COORDINATOR_URL is not set: skipping the deploy of the workers (the images are pushed)"
+        exit 0
+      fi
+    - node --disable-warning=ExperimentalWarning deploy/pipeline/deployWorkersMain.ts
+  tags:
+    - HOSAPP02
+  only:
+    - master
+    - main
+  except:
     - triggers

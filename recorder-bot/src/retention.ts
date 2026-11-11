@@ -13,6 +13,9 @@
  * and leaves alone, and logs, every other folder. Entries whose names start with "." are left alone without a log:
  * the service's own staging and trash folders, and the file server's, such as snapshots.
  *
+ * With several recorder bots writing to one storage root, only the one the coordinator service names sweeps the storage
+ * root and its staging folder (ADR 0014); the others sweep only their own spool, which is on their own VM.
+ *
  * To delete a folder, the sweeper first renames it into a trash folder next to it, `.deleting`, then deletes it; each
  * sweep starts by emptying the trash. So a deletion cut short, by a crash for example, is finished by the next sweep,
  * and never leaves a partial evidence recording in place.
@@ -75,6 +78,7 @@ async function lastChange(folder: string): Promise<number> {
 export class RetentionSweeper {
     private readonly consultations: Consultations;
     private readonly folderRefKey: string;
+    private readonly mayEmptyStorageRoot: () => boolean;
     private readonly retentionMs: number;
     private readonly spoolDir: string;
     private readonly storageRoot: string;
@@ -88,19 +92,23 @@ export class RetentionSweeper {
      * @param {Object} options - Options.
      * @param {Consultations} options.consultations - The consultations this service knows about.
      * @param {string} options.folderRefKey - The key of the references to folders in the logs.
+     * @param {Function} [options.mayEmptyStorageRoot] - Asked at the start of each sweep: whether this recorder bot is
+     * the one that sweeps the storage root. Absent, it always is: a single recorder bot, with nobody to name it.
      * @param {number} options.retentionMs - The retention period, in milliseconds.
      * @param {string} options.spoolDir - The spool.
      * @param {string} options.storageRoot - The evidence storage root.
      */
-    constructor({ consultations, folderRefKey, retentionMs, spoolDir, storageRoot }: {
+    constructor({ consultations, folderRefKey, mayEmptyStorageRoot = () => true, retentionMs, spoolDir, storageRoot }: {
         consultations: Consultations;
         folderRefKey: string;
+        mayEmptyStorageRoot?: () => boolean;
         retentionMs: number;
         spoolDir: string;
         storageRoot: string;
     }) {
         this.consultations = consultations;
         this.folderRefKey = folderRefKey;
+        this.mayEmptyStorageRoot = mayEmptyStorageRoot;
         this.retentionMs = retentionMs;
         this.spoolDir = spoolDir;
         this.storageRoot = storageRoot;
@@ -117,6 +125,10 @@ export class RetentionSweeper {
 
         await this.emptyTrash(this.spoolDir);
         await this.sweepConsultationFolders(this.spoolDir, 'spool', cutoff);
+
+        if (!this.mayEmptyStorageRoot()) {
+            return;
+        }
 
         try {
             await checkStorageRoot(this.storageRoot);

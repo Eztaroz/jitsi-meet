@@ -174,4 +174,34 @@ The scripts are in `scripts/ci/`; `scripts/test/run-tests.sh` tests them against
   `.gitlab-ci.yml` (`PRODUCTION_WEBHOOK`, and for `TEST_` and `PRODUCTION_`: `URL`, `COORDINATOR_SECRET`, `JICOFO_HEALTH_URL`,
   `JVB_HEALTH_URL`).
 
-Roll back by hand by setting `IMAGE_TAG` to a commit hash and updating the stack.
+Roll back by setting `IMAGE_TAG` to a commit hash and updating the stack.
+
+## Deploying the workers (ADR 0017)
+
+Every build merged to the main branch reaches the recorder bots and the video players one at a time, with no consultation cut. The job `deploy-workers` runs `deploy/pipeline/deployWorkersMain.ts` after the images are pushed (`latest` and the commit's first 8 characters, which the images also carry as their build, in `RECORDER_BOT_BUILD` / `VIDEO_PLAYER_BUILD`). For each worker, in order of kind and id, it:
+
+1. does nothing if the worker already runs the build; leaves a lost worker alone;
+2. for a recorder bot, requires at least two recorder bots in service (not lost, not draining); with fewer, the recorder bot is left for the night window;
+3. sets the worker draining (`PUT /workers/<id>/draining` with the pipeline's secret) and polls `GET /workers` until it runs nothing (up to 4 hours; if it still runs something, it sets it taking work again and stops, nothing deployed);
+4. moves the tag `production-<id>` of its image to the build (a registry manifest copy, no daemon) and calls the webhook of its VM's stack, which pulls that tag;
+5. waits up to 2 minutes for a heartbeat with the new build, not lost, and (when `HEALTH_URL_<ID>` is set) a passing health check;
+6. sets it taking work again.
+
+If step 5 fails, the tag goes back to the worker's previous build, the webhook is called again, and the pipeline stops before the next worker (the job fails). If the previous build cannot be restored either, the worker is left draining, for a person. A worker left draining blocks the next deployment, which refuses to start while any worker is draining.
+
+`production` itself moves to the build only after every worker of that image is healthy on it (and none was left for the night window), so the central stack and a new VM follow only good builds.
+
+Set up once, for each worker VM: its stack's `IMAGE_TAG` is `production-<worker id>` (the worker's id in the coordinator service's list; characters other than letters, digits, `_`, `.`, `-` become `-`), and it carries no `RECORDER_BOT_BUILD` of its own. CI/CD variables of the project, none of them in the repository:
+
+| Variable | What |
+|---|---|
+| `COORDINATOR_URL` | The coordinator service's address as the runner reaches it. Unset: the job is skipped |
+| `COORDINATOR_PIPELINE_SECRET` | The pipeline's own secret (the coordinator service's `COORDINATOR_PIPELINE_SECRET`), Protected and Masked |
+| `WEBHOOK_<ID>` | The webhook of the stack of that worker's VM; the id in capitals, other characters `_` (`bot-1` is `WEBHOOK_BOT_1`), Protected |
+| `HEALTH_URL_<ID>`, `HEALTH_SECRET_<ID>` | Optional: the worker's own health check, if the runner can reach it, and its bearer secret |
+| `ALLOW_SELF_SIGNED` | `1` when the coordinator service, Portainer or the registry use a certificate the runner does not know |
+| `ALLOW_SINGLE_RECORDER_BOT` | `1` only in the night window's call (the central deployment), which may deploy the only recorder bot |
+
+The registry must let `REGISTRY_AUTH`'s user push tags. The job runs for as long as consultations take to finish, so the project's job timeout must allow hours. This GitLab has no `resource_group`: the guard against two deployments at once is the refusal to start while a worker is draining.
+
+Test it without Portainer: `node --test deploy/pipeline/test/*.test.ts` runs the script against a fake coordinator service, fake webhooks and a fake registry.

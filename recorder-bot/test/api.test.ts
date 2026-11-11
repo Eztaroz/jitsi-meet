@@ -9,10 +9,12 @@ const SECRET = 'test-secret';
 
 describe('starting a consultation', () => {
     const started: string[] = [];
+    const options: unknown[] = [];
     const fake = {
         active: () => [],
-        start: (hn: string, consultationId: string) => {
+        start: (hn: string, consultationId: string, given?: unknown) => {
             started.push(`${hn}/${consultationId}`);
+            options.push(given);
 
             return { consultation: { snapshot: () => ({ consultationId, status: 'starting' }) }, created: true };
         }
@@ -48,6 +50,34 @@ describe('starting a consultation', () => {
         assert.equal(res.status, 201);
         assert.deepEqual(started, [ '123/made-by-coordinator' ]);
         assert.equal(((await res.json()) as { consultationId: string; }).consultationId, 'made-by-coordinator');
+    });
+
+    test('passes on when the consultation started and, for a takeover, where its gap starts (ADR 0016)', async () => {
+        options.length = 0;
+
+        const res = await post({
+            consultationId: 'c9', gapSince: '2026-05-01T08:29:50.000Z', hn: '123', startedAt: '2026-05-01T08:00:00.000Z'
+        });
+
+        assert.equal(res.status, 201);
+        assert.deepEqual(options, [ {
+            gapSince: new Date('2026-05-01T08:29:50.000Z'), startedAt: new Date('2026-05-01T08:00:00.000Z')
+        } ]);
+    });
+
+    test('passes on the lost worker a takeover comes from, and refuses one that is not an id', async () => {
+        options.length = 0;
+        assert.equal((await post({ consultationId: 'c6', hn: '123', takenFrom: 'bot-1' })).status, 201);
+        assert.deepEqual(options, [ { takenFrom: 'bot-1' } ]);
+        assert.equal((await post({ consultationId: 'c5', hn: '123', takenFrom: 5 })).status, 400);
+    });
+
+    test('starts without them, and refuses a time that is not one', async () => {
+        options.length = 0;
+        assert.equal((await post({ consultationId: 'c8', hn: '123' })).status, 201);
+        assert.deepEqual(options, [ {} ]);
+        assert.equal((await post({ consultationId: 'c7', hn: '123', startedAt: 'yesterday' })).status, 400);
+        assert.equal((await post({ consultationId: 'c7', gapSince: 5, hn: '123' })).status, 400);
     });
 
     for (const body of [ { hn: '123' }, { consultationId: '', hn: '123' }, { consultationId: 7, hn: '123' },

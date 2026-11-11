@@ -22,20 +22,39 @@ const api = createApi({ consultations, maxConsultations: config.maxConsultations
 
 const storage = { consultations, spoolDir: config.spoolDir, storageRoot: config.storageRoot };
 const retrier = new SpoolRetrier(storage);
-const sweeper = new RetentionSweeper({ ...storage, folderRefKey: config.apiSecret, retentionMs: config.retentionMs });
+
+// Tells the coordinator service this worker is up, so that it is handed consultations (ADR 0014).
+const heartbeat = config.heartbeat && new Heartbeat({
+    ...config.heartbeat,
+    onTakenOver: ids => {
+        // The coordinator service gave these consultations to another recorder bot while this one was cut off from it.
+        for (const id of ids) {
+            const consultation = consultations.get(id);
+
+            if (consultation?.isRunning()) {
+                log.warn('stopping a consultation that was taken over', { consultationId: id });
+                consultation.requestStop().catch(() => undefined);
+            }
+        }
+    },
+    secret: config.apiSecret,
+    status: () => ({ capacity: config.maxConsultations, running: consultations.active().length })
+});
+
+// Named by the coordinator service in its answers to the heartbeats: with several recorder bots on one storage root,
+// only one sweeps it (ADR 0014). Without heartbeats there is one recorder bot, and it sweeps.
+const sweeper = new RetentionSweeper({
+    ...storage,
+    folderRefKey: config.apiSecret,
+    mayEmptyStorageRoot: () => !heartbeat || heartbeat.sweeper,
+    retentionMs: config.retentionMs
+});
 
 // Both start with what the service left before it last stopped.
 const housekeeping = [
     new Periodic('store_retry', () => retrier.retryAll(), config.storeRetryMs),
     new Periodic('retention_sweep', () => sweeper.sweep(), config.retentionSweepMs)
 ];
-
-// Tells the coordinator service this worker is up, so that it is handed consultations (ADR 0014).
-const heartbeat = config.heartbeat && new Heartbeat({
-    ...config.heartbeat,
-    secret: config.apiSecret,
-    status: () => ({ capacity: config.maxConsultations, running: consultations.active().length })
-});
 
 api.listen(config.apiPort, () => log.info('control API listening', { port: config.apiPort }));
 log.info('retention period', { retentionDays: config.retentionMs / DAY_MS, sweepSeconds: config.retentionSweepMs / 1000 });

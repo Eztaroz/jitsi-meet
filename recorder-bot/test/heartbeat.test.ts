@@ -11,6 +11,7 @@ import { HEARTBEAT_MS, Heartbeat } from '../src/heartbeat.ts';
 describe('the heartbeat to the coordinator service', () => {
     const received: { authorization?: string; body: Record<string, unknown>; path?: string; }[] = [];
     let answer = 200;
+    let reply = '{}';
     let running = 1;
     let server: Server;
     let url = '';
@@ -27,7 +28,7 @@ describe('the heartbeat to the coordinator service', () => {
                     path: req.url
                 });
                 res.writeHead(answer, { 'content-type': 'application/json' });
-                res.end('{}');
+                res.end(reply);
             });
         });
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -40,11 +41,13 @@ describe('the heartbeat to the coordinator service', () => {
     beforeEach(() => {
         received.length = 0;
         answer = 200;
+        reply = '{}';
         running = 1;
     });
 
+    let clock = 0;
     const make = (coordinatorUrl = url, intervalMs?: number) => new Heartbeat({
-        advertisedUrl: 'http://worker-1:8090', build: 'abc123', coordinatorUrl, id: 'worker-1', intervalMs,
+        advertisedUrl: 'http://worker-1:8090', build: 'abc123', coordinatorUrl, id: 'worker-1', intervalMs, now: () => clock,
         secret: 'worker-1-secret', status: () => ({ capacity: 3, running })
     });
 
@@ -89,10 +92,66 @@ describe('the heartbeat to the coordinator service', () => {
         assert.equal(received.length, count);
     });
 
+    test('stops the consultations the coordinator service says were taken over (ADR 0016)', async () => {
+        const taken: string[][] = [];
+        const heartbeat = new Heartbeat({
+            advertisedUrl: 'http://worker-1:8090', build: 'abc123', coordinatorUrl: url, id: 'worker-1',
+            onTakenOver: ids => taken.push(ids), secret: 'worker-1-secret', status: () => ({ capacity: 3, running })
+        });
+
+        await heartbeat.send();
+        reply = JSON.stringify({ status: 'ok', takenOver: [ 'c1', 'c2' ] });
+        await heartbeat.send();
+        reply = 'not json';
+        assert.equal(await heartbeat.send(), true);
+        assert.deepEqual(taken, [ [ 'c1', 'c2' ] ]);
+    });
+
     test('does not throw when refused or when the coordinator service cannot be reached', async () => {
         answer = 401;
         assert.equal(await make().send(), false);
         assert.equal(await make('http://127.0.0.1:1').send(), false);
+    });
+
+    test('sweeps the evidence storage root only while the coordinator service names it, and for no longer than three heartbeats', async () => {
+        const heartbeat = make();
+
+        assert.equal(heartbeat.sweeper, false);
+
+        await heartbeat.send();
+        assert.equal(heartbeat.sweeper, false);
+
+        reply = '{"status":"ok","sweeper":true}';
+        await heartbeat.send();
+        assert.equal(heartbeat.sweeper, true);
+
+        clock += 3 * HEARTBEAT_MS - 1;
+        assert.equal(heartbeat.sweeper, true);
+        clock += 1;
+        assert.equal(heartbeat.sweeper, false);
+
+        await heartbeat.send();
+        assert.equal(heartbeat.sweeper, true);
+
+        reply = '{"status":"ok","sweeper":false}';
+        await heartbeat.send();
+        assert.equal(heartbeat.sweeper, false);
+    });
+
+    test('stops sweeping when the coordinator service has not named it for three heartbeats', async () => {
+        const heartbeat = make();
+
+        reply = '{"sweeper":true}';
+        await heartbeat.send();
+        assert.equal(heartbeat.sweeper, true);
+
+        // Still named, as far as it knows, until the word runs out: one missed heartbeat is not a loss.
+        answer = 503;
+        await heartbeat.send();
+        assert.equal(heartbeat.sweeper, true);
+
+        clock += 3 * HEARTBEAT_MS;
+        assert.equal(heartbeat.sweeper, false);
     });
 
     test('is set up from the environment', () => {
