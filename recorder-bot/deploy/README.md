@@ -334,7 +334,20 @@ The logs name each deleted folder by its consultation id, with `place` `storage_
 find . -mindepth 1 -maxdepth 2 -printf '%P\n' | while read -r p; do printf '%s %s\n' "$(printf '%s' "$p" | openssl dgst -sha256 -hmac "$RECORDER_BOT_API_SECRET" -r | cut -c1-16)" "$p"; done
 ```
 
-When several services share one storage root, each of them sweeps it; that is safe.
+With several recorder bots on one storage root (see [Several recorder bots on one storage root](#several-recorder-bots-on-one-storage-root)), only one of them sweeps the storage root and its `.incoming` at a time: the one the coordinator service names in its answer to the heartbeats (`sweeper`). When that one is lost, the service names another in its answer to that one's next heartbeat. A recorder bot that is not named sweeps only its own spool, which is on its own VM. The word of the coordinator service holds for three heartbeats: a recorder bot that stops hearing from it stops sweeping, so that two never do at once. A recorder bot sends no heartbeat when `RECORDER_BOT_HEARTBEAT_URL` is unset; it then sweeps, as the only one.
+
+A newly named recorder bot sweeps at its next sweep, up to `RECORDER_BOT_RETENTION_SWEEP_SECONDS` later.
+
+### Several recorder bots on one storage root
+
+Every recorder bot writes its evidence recordings to the same evidence storage root, on shared storage (ADR 0014), and keeps its spool on its own VM. On each worker VM:
+
+1. Mount the same share at the same path, for example an NFS or SMB export of the hospital's file storage at `/mnt/evidence`, in `/etc/fstab` with `_netdev` (and `nofail`, so that the VM boots without it), then `mount /mnt/evidence`.
+2. Set `RECORDER_BOT_STORAGE_ROOT` to that path in the VM's `.env`. The compose file mounts it at the same path inside the container, and propagates later mounts.
+3. Let uid 1001 write to it on every VM. Where the share maps users by uid, map it to the same user everywhere, so that every recorder bot can read and delete what another wrote: any of them may be the one that sweeps.
+4. Create the marker file once, on the share (see [Running it](#running-it)). Every VM sees it.
+5. Leave `RECORDER_BOT_SPOOL_DIR` on the VM's own disk, in the `recorder-bot-spool` volume. Do not put the spool on the share.
+6. Set `RECORDER_BOT_HEARTBEAT_URL`, `RECORDER_BOT_ID` and `RECORDER_BOT_ADVERTISED_URL` on each VM, and list each id and secret in the coordinator service's `COORDINATOR_WORKER_SECRETS_FILE`: without heartbeats, every recorder bot sweeps.
 
 ### Logs
 

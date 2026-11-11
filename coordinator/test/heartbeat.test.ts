@@ -306,6 +306,42 @@ describe('workers send heartbeats to the coordinator service', () => {
         assert.equal((await call('GET', '/workers', { secret: 'wrong' })).status, 401);
     });
 
+    it('names one recorder bot to sweep the evidence storage root, and keeps naming it', async () => {
+        list(workers);
+        assert.equal((await heartbeat(workers[0])).body.sweeper, true);
+        assert.equal((await heartbeat(workers[1])).body.sweeper, false);
+        assert.equal((await heartbeat(workers[0])).body.sweeper, true);
+        assert.equal((await heartbeat(workers[1])).body.sweeper, false);
+    });
+
+    it('names no video player to sweep', async () => {
+        assert.equal((await heartbeat(workers[2])).body.sweeper, undefined);
+        assert.equal((await heartbeat(workers[0])).body.sweeper, true);
+    });
+
+    it('names another recorder bot when the one sweeping is lost, and not the first again when it is back', async () => {
+        list(workers);
+        await heartbeat(workers[0]);
+        assert.equal((await heartbeat(workers[1])).body.sweeper, false);
+
+        clock += LOST_AFTER_MS - 1;
+        assert.equal((await heartbeat(workers[1])).body.sweeper, false);
+
+        clock += 1;
+        assert.equal((await heartbeat(workers[1])).body.sweeper, true);
+        assert.equal((await heartbeat(workers[0])).body.sweeper, false);
+        assert.equal((await heartbeat(workers[1])).body.sweeper, true);
+    });
+
+    it('names another recorder bot when the one sweeping is taken off the list', async () => {
+        list(workers);
+        await heartbeat(workers[0]);
+        await heartbeat(workers[1]);
+
+        list([ workers[1], workers[2] ]);
+        assert.equal((await heartbeat(workers[1])).body.sweeper, true);
+    });
+
     it('can still stop a waiting video after the coordinator service restarts', async () => {
         await heartbeat(workers[0]);
         await heartbeat(workers[2]);

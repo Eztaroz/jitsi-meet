@@ -407,15 +407,17 @@ export function createApi({ holdsLock, screen, secret, service, staff, survey, w
 
         // A worker's heartbeat carries the worker's own secret, not the system's (ADR 0014).
         if (path === '/workers/heartbeat' && req.method === 'POST' && workers) {
+            let reply;
+
             try {
-                workers.heartbeat(scheme === 'Bearer' ? token : undefined, await readJson(req));
+                reply = workers.heartbeat(scheme === 'Bearer' ? token : undefined, await readJson(req));
             } catch (error) {
                 if (error instanceof HttpError && error.status === 401) {
                     res.setHeader('www-authenticate', 'Bearer');
                 }
                 throw error;
             }
-            send(res, 200, { status: 'ok' });
+            send(res, 200, { status: 'ok', ...reply });
 
             return;
         }
