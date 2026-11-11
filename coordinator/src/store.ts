@@ -1,5 +1,5 @@
 /**
- * Persists the rules module's state in SQLite, so that encounters survive a restart.
+ * Persists the rules module's state in SQLite, one change at a time, so that encounters survive a restart.
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,6 +9,7 @@ import type { IAuditEntry } from './audit.ts';
 import { DEFAULT_PATHWAY_ID } from './pathways.ts';
 import type { ISentQuestionnaire } from './questionnaires.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
+import type { StoreChange } from './stateChanges.ts';
 import type { ISurvey } from './surveys.ts';
 
 /** What the coordinator service keeps about a move beside the rules module's state, so that a restart can pick it up. */
@@ -226,64 +227,74 @@ export class Store {
     }
 
     /**
-     * Saves the state, replacing what was saved.
+     * Writes changes, in order, in one transaction: all of them are saved or none.
      *
-     * @param {IState} state - The state.
-     * @param {ReadonlyMap<string, IMoveRecord>} records - What is kept about each move, by move id.
-     * @param {IAuditEntry[]} audit - Audit entries to add in the same transaction, so that an entry and the `audited`
-     * flag that says it was written are saved together or not at all.
+     * @param {StoreChange[]} changes - What to write.
      * @returns {void}
      */
-    save(state: IState, records: ReadonlyMap<string, IMoveRecord> = new Map(), audit: IAuditEntry[] = []): void {
-        const insert = this._db.prepare(`INSERT OR REPLACE INTO encounters
-            (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic, doctor,
-                questionnaires, videos)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-
-        const keptRooms = new Map((this._db.prepare('SELECT * FROM patient_rooms').all() as {
-            identity_id: string; room: string; updated_at: string;
-        }[]).map(r => [ r.identity_id, r ]));
-        const keptStations = new Map((this._db.prepare('SELECT * FROM staff_stations').all() as {
-            identity_id: string; station: string; updated_at: string;
-        }[]).map(r => [ r.identity_id, r ]));
-
+    apply(changes: StoreChange[]): void {
+        if (!changes.length) {
+            return;
+        }
         this._db.exec('BEGIN');
         try {
-            this._db.exec('DELETE FROM moves');
-            for (const m of state.moves) {
-                const record = records.get(m.id) ?? newMoveRecord();
-
-                this._db.prepare('INSERT INTO moves (id, started_at, move, record) VALUES (?, ?, ?, ?)')
-                    .run(m.id, m.startedAt.toISOString(), JSON.stringify(m), JSON.stringify(record));
-            }
-            this._db.exec('DELETE FROM patient_rooms');
-            for (const [ identityId, room ] of Object.entries(state.patientRooms)) {
-                const kept = keptRooms.get(identityId);
-
-                this._db.prepare('INSERT INTO patient_rooms (identity_id, room, updated_at) VALUES (?, ?, ?)')
-                    .run(identityId, room, kept?.room === room ? kept.updated_at : new Date().toISOString());
-            }
-            this._db.exec('DELETE FROM staff_stations');
-            for (const [ identityId, station ] of Object.entries(state.staffStations)) {
-                const kept = keptStations.get(identityId);
-
-                this._db.prepare('INSERT INTO staff_stations (identity_id, station, updated_at) VALUES (?, ?, ?)')
-                    .run(identityId, station, kept?.station === station ? kept.updated_at : new Date().toISOString());
-            }
-            this._db.exec('DELETE FROM encounters');
-            for (const e of state.encounters) {
-                insert.run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
-                    JSON.stringify(e.history), e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null,
-                    e.clinic ?? null, e.doctor ?? null, e.questionnaires?.length ? JSON.stringify(e.questionnaires) : null,
-                    e.videos && Object.keys(e.videos).length ? JSON.stringify(e.videos) : null);
-            }
-            for (const entry of audit) {
-                this.addAudit(entry);
+            for (const change of changes) {
+                this._write(change);
             }
             this._db.exec('COMMIT');
         } catch (error) {
             this._db.exec('ROLLBACK');
             throw error;
+        }
+    }
+
+    /**
+     * Writes one change.
+     *
+     * @param {StoreChange} change - The change.
+     * @returns {void}
+     */
+    private _write(change: StoreChange): void {
+        const now = new Date().toISOString();
+
+        switch (change.kind) {
+        case 'audit':
+            this.addAudit(change.audit);
+            break;
+        case 'encounter': {
+            const e = change.encounter;
+
+            this._db.prepare(`INSERT OR REPLACE INTO encounters
+                (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic,
+                    doctor, questionnaires, videos)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                .run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
+                    JSON.stringify(e.history), e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null,
+                    e.clinic ?? null, e.doctor ?? null, e.questionnaires?.length ? JSON.stringify(e.questionnaires) : null,
+                    e.videos && Object.keys(e.videos).length ? JSON.stringify(e.videos) : null);
+            break;
+        }
+        case 'move':
+            this._db.prepare('INSERT OR REPLACE INTO moves (id, started_at, move, record) VALUES (?, ?, ?, ?)')
+                .run(change.move.id, change.move.startedAt.toISOString(), JSON.stringify(change.move),
+                    JSON.stringify(change.record));
+            break;
+        case 'patient_room':
+            if (change.room === undefined) {
+                this._db.prepare('DELETE FROM patient_rooms WHERE identity_id = ?').run(change.identityId);
+            } else {
+                this._db.prepare('INSERT OR REPLACE INTO patient_rooms (identity_id, room, updated_at) VALUES (?, ?, ?)')
+                    .run(change.identityId, change.room, now);
+            }
+            break;
+        case 'staff_station':
+            if (change.station === undefined) {
+                this._db.prepare('DELETE FROM staff_stations WHERE identity_id = ?').run(change.identityId);
+            } else {
+                this._db.prepare('INSERT OR REPLACE INTO staff_stations (identity_id, station, updated_at) VALUES (?, ?, ?)')
+                    .run(change.identityId, change.station, now);
+            }
+            break;
         }
     }
 
