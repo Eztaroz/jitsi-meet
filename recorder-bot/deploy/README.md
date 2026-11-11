@@ -183,7 +183,17 @@ The prototype measured, on a shared 4-vCPU host without GPU:
 - about one CPU core per recorded 720p video track, since the bot re-encodes each one;
 - about 0.4 GB of RAM per pair of participants recorded.
 
-A consultation with a patient and one staff member records two video tracks, so it needs about two cores. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
+A load test of the Docker deployment on a 4-vCPU, 8 GB VM without GPU (2026-11-11) recorded consultations of a patient and one staff member, each sending 720p from Chrome's fake camera:
+
+| `RECORDER_BOT_MAX_HEIGHT` | Video the bot records | Recorder bot CPU per consultation | Host CPU with 8 consultations |
+|---|---|---|---|
+| `720` | 1280×720 | 2.5 to 3.9 cores: one consultation used the whole host | not reached |
+| `480` | 640×360 | about 0.19 of a core | 42% |
+| `360` | 640×360 | about 0.18 of a core | 48% |
+
+The videobridge forwards one of the layers the sender encodes, 180, 360 or 720 lines high, so `480` records 360 lines, like `360`. With 8 consultations the videobridge used about 0.3 of a core and the host 3.5 GB of RAM. A real camera is harder to encode than the fake one, so leave headroom.
+
+At `720`, a consultation with a patient and one staff member records two video tracks, so it needs about two cores or more. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
 
 Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
 
@@ -216,7 +226,7 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
 | `RECORDER_BOT_VIDEO_PLAYER_MARKER` | none | Which verified identity is the video player (same syntax). The service records it under its own role, `video_player`, and a Review file labels its tile "video" |
 | `RECORDER_BOT_PATIENT_MARKER` | none | Which verified identity is the patient, written the same way |
-| `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
+| `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for. Below 720 it records the 360-line layer and takes a small part of the CPU: see [Capacity](#capacity) |
 | `RECORDER_BOT_CHROMIUM_PATH` | Playwright's | A Chromium binary to run instead |
 | `RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS` | `false` | Accept any certificate from the web server. Only for test deployments |
 
