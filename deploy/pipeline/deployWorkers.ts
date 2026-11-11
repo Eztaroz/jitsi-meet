@@ -12,6 +12,9 @@ export interface IWorkerStatus {
     build: string;
     capacity: number;
     draining: boolean;
+
+    /** How many heartbeats the coordinator service has had from the worker; unset from an older coordinator service. */
+    heartbeats?: number;
     id: string;
     kind: 'recorder-bot' | 'video-player';
     lost: boolean;
@@ -52,6 +55,9 @@ export interface IOptions {
     /** The webhook of the stack of the VM of a worker. */
     webhook: (id: string) => string | undefined;
 }
+
+/** How many heartbeats after a worker was set draining its `running` is trusted. */
+const HEARTBEATS_AFTER_DRAINING = 2;
 
 /** A deployment that stopped: the message says why and what state the workers are left in. */
 export class DeployError extends Error {}
@@ -199,12 +205,20 @@ export async function deployWorkers(options: IOptions): Promise<{ deployed: stri
         log(`${id}: draining`);
         await setDraining(id, true);
 
+        // What the list says of what the worker runs may be a heartbeat from before it was set draining, and a
+        // consultation handed to it just then is not in it. The heartbeat after the next one was sent after the
+        // worker was set draining and after any such consultation started, so it is the first to be trusted.
+        const beatsAtDrain = (await tryList())?.find(w => w.id === id)?.heartbeats;
+
         const drainUntil = Date.now() + drainTimeoutMs;
 
         for (;;) {
             const status = (await tryList())?.find(w => w.id === id);
 
-            if (!status || status.lost || status.running === 0) {
+            const fresh = beatsAtDrain === undefined || status?.heartbeats === undefined
+                || status.heartbeats >= beatsAtDrain + HEARTBEATS_AFTER_DRAINING;
+
+            if (!status || status.lost || status.running === 0 && fresh) {
                 break;
             }
             if (Date.now() >= drainUntil) {

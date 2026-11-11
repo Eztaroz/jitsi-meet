@@ -30,6 +30,9 @@ export interface IWorkerStatus {
     build: string;
     capacity: number;
     draining: boolean;
+
+    /** How many heartbeats this process has had from the worker, so that the pipeline can tell a fresh `running` from an old one. */
+    heartbeats: number;
     id: string;
     kind: WorkerKind;
     lost: boolean;
@@ -50,6 +53,7 @@ export interface IHeartbeatReply {
 interface IHeard {
     build: string;
     capacity: number;
+    heartbeats: number;
     kind: WorkerKind;
     lastSeen: number;
     running: number;
@@ -185,7 +189,7 @@ export class WorkerRegistry {
         }
 
         this._heard.set(entry.id, {
-            build: given.build, capacity, kind: kind!, lastSeen: this._now(), running, url: url.href.replace(/\/+$/u, '')
+            build: given.build, capacity, heartbeats: (this._heard.get(entry.id)?.heartbeats ?? 0) + 1, kind: kind!, lastSeen: this._now(), running, url: url.href.replace(/\/+$/u, '')
         });
 
         const draining = this._draining.has(entry.id);
@@ -256,7 +260,7 @@ export class WorkerRegistry {
         }
 
         return [ ...this._heard ].map(([ id, h ]) => ({
-            build: h.build, capacity: h.capacity, draining: this._draining.has(id), id, kind: h.kind, lost: now - h.lastSeen >= LOST_AFTER_MS,
+            build: h.build, capacity: h.capacity, draining: this._draining.has(id), heartbeats: h.heartbeats, id, kind: h.kind, lost: now - h.lastSeen >= LOST_AFTER_MS,
             running: h.running, url: h.url
         })).sort((a, b) => a.id.localeCompare(b.id));
     }
