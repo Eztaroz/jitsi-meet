@@ -8,8 +8,8 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 
 import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
-import { DatabaseError } from './mariadbClient.ts';
 import { errorCode, log } from './log.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
 import { describeSent } from './questionnaires.ts';

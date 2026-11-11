@@ -82,83 +82,83 @@ function readQuestionnaires(json: string): ISentQuestionnaire[] {
 export interface IStore {
 
     /**
+     * Takes the place of the one active coordinator service, without waiting (ADR 0015).
+     *
+     * @returns {boolean} Whether this instance holds it now: true when it already did, false while another instance does.
+     */
+    acquireActive: () => boolean;
+
+    /** Adds an entry to the audit log. */
+    addAudit: (entry: IAuditEntry) => void;
+
+    /** Keeps a satisfaction survey. */
+    addSurvey: (survey: ISurvey) => void;
+
+    /** Reads every consultation, the oldest first. */
+    allConsultations: () => IConsultation[];
+
+    /**
      * Writes changes, in order, in one transaction: all of them are saved or none.
      *
      * @param {StoreChange[]} changes - What to write.
      * @returns {void}
      */
-    apply(changes: StoreChange[]): void;
-
-    /**
-     * Takes the place of the one active coordinator service, without waiting (ADR 0015).
-     *
-     * @returns {boolean} Whether this instance holds it now: true when it already did, false while another instance does.
-     */
-    acquireActive(): boolean;
-
-    /** Adds an entry to the audit log. */
-    addAudit(entry: IAuditEntry): void;
-
-    /** Keeps a satisfaction survey. */
-    addSurvey(survey: ISurvey): void;
-
-    /** Reads every consultation, the oldest first. */
-    allConsultations(): IConsultation[];
+    apply: (changes: StoreChange[]) => void;
 
     /** Reads the newest audit entries, the newest first. */
-    audit(limit: number): IAuditEntry[];
+    audit: (limit: number) => IAuditEntry[];
 
     /**
      * Checks that a write would be accepted, before anything that cannot be undone is done.
      *
      * @throws {DatabaseError} When the database cannot be reached or written, or the active place was lost.
      */
-    checkWritable(): void;
+    checkWritable: () => void;
 
     /** Closes the database. */
-    close(): void;
+    close: () => void;
 
     /** Reads the consultations with these ids, the oldest first; an id it does not know is left out. */
-    consultationsByIds(ids: string[]): IConsultation[];
+    consultationsByIds: (ids: string[]) => IConsultation[];
 
     /** Reads the consultations that are recording, or the ones that are not, the oldest first. */
-    consultationsByRecording(recording: boolean): IConsultation[];
+    consultationsByRecording: (recording: boolean) => IConsultation[];
 
     /** Reads the consultations of an encounter, the oldest first. */
-    consultationsOf(encounterId: string): IConsultation[];
+    consultationsOf: (encounterId: string) => IConsultation[];
 
     /**
      * Reads the consultations recording now: recording and not ended, of every recorder bot or of the one named, the
      * oldest first.
      */
-    consultationsRecordingNow(recorderBot?: string): IConsultation[];
+    consultationsRecordingNow: (recorderBot?: string) => IConsultation[];
 
     /** Whether this instance holds the active place now. Throws when that cannot be told. */
-    holdsActive(): boolean;
+    holdsActive: () => boolean;
 
     /** Reads the saved state. */
-    load(): IState;
+    load: () => IState;
 
     /** Reads what the coordinator service kept about each saved move, by move id. */
-    loadMoveRecords(): Map<string, IMoveRecord>;
+    loadMoveRecords: () => Map<string, IMoveRecord>;
 
     /** Reads where each patient's own room is, by verified identity id. */
-    patientRooms(): Record<string, string>;
+    patientRooms: () => Record<string, string>;
 
     /** Reads the station of each staff member, by verified identity id. */
-    staffStations(): Record<string, string>;
-
-    /** Deletes what is older than a time, and says how many of each. */
-    sweep(cutoff: Date): ISweepResult;
+    staffStations: () => Record<string, string>;
 
     /** Reads the satisfaction surveys submitted in a period, the oldest first. */
-    surveys(from: Date, to: Date): ISurvey[];
+    surveys: (from: Date, to: Date) => ISurvey[];
+
+    /** Deletes what is older than a time, and says how many of each. */
+    sweep: (cutoff: Date) => ISweepResult;
 
     /** Marks the patients' own rooms as seen now. */
-    touchPatientRooms(seen: Record<string, string>): void;
+    touchPatientRooms: (seen: Record<string, string>) => void;
 
     /** Marks the staff's stations as seen now. */
-    touchStaffStations(seen: Record<string, string>): void;
+    touchStaffStations: (seen: Record<string, string>) => void;
 }
 
 /** How many rows a retention sweep deleted, of each kind. */
@@ -182,7 +182,7 @@ export interface IEncounterRow {
 
 /** A row of the `consultations` table, as either database returns it. */
 export interface IConsultationRow {
-    ended_at: string | null; encounter_id: string; id: string; recorder_bot: string; recording: number; started_at: string;
+    encounter_id: string; ended_at: string | null; id: string; recorder_bot: string; recording: number; started_at: string;
 }
 
 /**

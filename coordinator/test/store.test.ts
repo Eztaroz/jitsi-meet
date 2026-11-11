@@ -5,10 +5,10 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, it } from 'node:test';
 
-import { type IMove, initialState, step } from '../src/rules.ts';
-import { MariaDbClient, DatabaseError } from '../src/mariadbClient.ts';
+import { DatabaseError, MariaDbClient } from '../src/mariadbClient.ts';
 import { type IMariaDbConfig, MariaDbStore } from '../src/mariadbStore.ts';
 import { type IMigration, MIGRATIONS, applyMigrations } from '../src/migrations.ts';
+import { type IMove, initialState, step } from '../src/rules.ts';
 import { diffState } from '../src/stateChanges.ts';
 import { Store, newMoveRecord } from '../src/store.ts';
 import type { ISurvey } from '../src/surveys.ts';

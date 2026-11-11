@@ -3,9 +3,9 @@
  * coordinator service, which decides from its state in memory and calls its store synchronously, can use the driver,
  * which is asynchronous. One connection, so that a named lock taken on it is held until it closes.
  */
+import { type Connection, createConnection } from 'mariadb';
 import { type MessagePort, workerData } from 'node:worker_threads';
 
-import { type Connection, createConnection } from 'mariadb';
 
 import type { IMariaDbConfig } from './mariadbStore.ts';
 
