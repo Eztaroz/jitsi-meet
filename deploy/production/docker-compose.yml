@@ -16,15 +16,12 @@ services:
     web:
         image: jitsi/web:${JITSI_IMAGE_VERSION:?set JITSI_IMAGE_VERSION in .env}
         restart: unless-stopped
-        ports:
-            - '${HTTP_PORT:-80}:80'
-            - '${HTTPS_PORT:-443}:443'
+        # Plain HTTP on the internal network only: the front web server ends TLS and is the one that publishes 80 and 443.
+        expose:
+            - '80'
         volumes:
             # The web image writes its generated configuration here.
             - ./config/web:/config
-            # The TLS certificate (full chain) and key, which the image's nginx reads from /config/keys.
-            - ${TLS_CERT_FILE:?set TLS_CERT_FILE in .env}:/config/keys/cert.crt:ro
-            - ${TLS_KEY_FILE:?set TLS_KEY_FILE in .env}:/config/keys/cert.key:ro
             # Prosody fetches public keys from here: http://web/.well-known/asap/<sha256 of the key id>.pem is where
             # the hospital issuer's keys and the coordinator service's key are, and the one key server of the
             # coordinator API is http://web/.well-known/coordinator/. Both read-only: whoever can write to the first
@@ -60,6 +57,8 @@ services:
         environment:
             <<: *jwt-auth
             DISABLE_DEEP_LINKING: 'true'
+            # TLS is the front web server's.
+            DISABLE_HTTPS: 1
             ENABLE_BREAKOUT_ROOMS: 'false'
             ENABLE_CLOSE_PAGE: 'false'
             ENABLE_IPV6: ${ENABLE_IPV6:-0}
@@ -75,6 +74,26 @@ services:
             meet.jitsi:
         depends_on:
             - jvb
+
+    # The front web server (ADR 0017): ends TLS, forwards to the web server, and shows the maintenance page while the web
+    # server restarts. It is in the central stack and its configuration is in its image, so a change to it is deployed in
+    # the night window with the rest.
+    front:
+        image: ${FRONT_IMAGE:?set FRONT_IMAGE in .env}
+        restart: unless-stopped
+        ports:
+            - '${HTTP_PORT:-80}:80'
+            - '${HTTPS_PORT:-443}:443'
+        volumes:
+            # The TLS certificate (full chain) and key.
+            - ${TLS_CERT_FILE:?set TLS_CERT_FILE in .env}:/etc/tele-meet/certs/cert.crt:ro
+            - ${TLS_KEY_FILE:?set TLS_KEY_FILE in .env}:/etc/tele-meet/certs/cert.key:ro
+        environment:
+            TZ: ${TZ:-Asia/Bangkok}
+        networks:
+            meet.jitsi:
+                aliases:
+                    - front
 
     prosody:
         image: jitsi/prosody:${JITSI_IMAGE_VERSION}
