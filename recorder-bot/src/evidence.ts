@@ -8,7 +8,9 @@
  * in the spool and the move is retried (see spool.ts).
  */
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { appendFile, cp, lstat, mkdir, readFile, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -39,6 +41,9 @@ export const INCOMING_DIR = '.incoming';
 export const STORAGE_ROOT_MARKER = '.recorder-bot-storage-root';
 
 const MANIFEST = 'manifest.json';
+
+/** How many times a writer of the consultation manifest writes it again when another writer changed the parts meanwhile. */
+const MANIFEST_ATTEMPTS = 5;
 const RAW_DIR = 'raw';
 
 /**
@@ -238,15 +243,13 @@ interface IPartSummary {
 }
 
 /**
- * Writes the manifest of a consultation made of the parts stored under its folder: which parts there are, and every
- * gap in them. It is made again from the parts each time one is stored, so that it lists those stored so far, whichever
- * recorder bot stores last; a part still on a lost VM's spool is not in it until that VM stores it, and the manifest says it is
- * missing, so that the evidence recording is incomplete until then (ADR 0016).
+ * Lists the parts stored under a consultation's folder, as the consultation's manifest says them: which parts there are,
+ * every gap in them, and which are still awaited from a lost VM's spool (ADR 0016).
  *
  * @param {string} folder - The consultation's folder in the storage root.
- * @returns {Promise<void>}
+ * @returns {Promise<Object|undefined>} The manifest's content; undefined when no part has a manifest yet.
  */
-async function writeConsultationManifest(folder: string): Promise<void> {
+async function summariseConsultation(folder: string) {
     const parts: IPartSummary[] = [];
     const awaiting = new Set<string>();
     let consultation: { consultationId: string; consultationStart: string; room: string; } | undefined;
@@ -281,17 +284,15 @@ async function writeConsultationManifest(folder: string): Promise<void> {
         });
     }
     if (!consultation) {
-        return;
+        return undefined;
     }
     parts.sort((a, b) => a.start.localeCompare(b.start) || a.part.localeCompare(b.part));
-
-    const tmp = path.join(folder, `${MANIFEST}.${process.pid}.tmp`);
 
     // A part a recorder bot knew was missing, and that has not been stored yet, is still in a lost worker's spool.
     const stored = new Set(parts.flatMap(p => [ p.part, p.folder ]));
     const missingParts = [ ...awaiting ].filter(part => !stored.has(part)).sort();
 
-    await writeJson(tmp, {
+    return {
         complete: missingParts.length === 0,
         consultationId: consultation.consultationId,
         missingParts,
@@ -300,8 +301,68 @@ async function writeConsultationManifest(folder: string): Promise<void> {
         parts: parts.map(({ gaps: _gaps, ...p }) => p),
         room: consultation.room,
         start: consultation.consultationStart
-    });
-    await rename(tmp, path.join(folder, MANIFEST));
+    };
+}
+
+/**
+ * Writes the manifest of a consultation made of the parts stored under its folder: which parts there are, and every
+ * gap in them. It is made again from the parts each time one is stored, so that it lists those stored so far, whichever
+ * recorder bot stores last; a part still on a lost VM's spool is not in it until that VM stores it, and the manifest says it is
+ * missing, so that the evidence recording is incomplete until then (ADR 0016).
+ *
+ * Recorder bots on different VMs write it at the same time, to a folder they share, and listing the parts then
+ * replacing the manifest is not one step: a writer that listed before another part arrived may replace the manifest
+ * after the writer of that part did. So each writer uses a temporary file of its own (the host and a random
+ * name: process ids repeat from one VM or container to another), and lists the parts again after the replacement,
+ * writing again until the manifest says what is stored.
+ *
+ * @param {string} folder - The consultation's folder in the storage root.
+ * @returns {Promise<void>}
+ */
+async function writeConsultationManifest(folder: string): Promise<void> {
+    for (let attempt = 0; attempt < MANIFEST_ATTEMPTS; attempt++) {
+        const manifest = await summariseConsultation(folder);
+
+        if (!manifest) {
+            return;
+        }
+
+        const tmp = path.join(folder, `${MANIFEST}.${hostname()}.${randomUUID()}.tmp`);
+
+        try {
+            await writeJson(tmp, manifest);
+            await renameOver(tmp, path.join(folder, MANIFEST));
+        } finally {
+            await rm(tmp, { force: true }).catch(() => undefined);
+        }
+
+        // Stable: no part arrived, or was written, while this one was replacing the manifest.
+        if (JSON.stringify(await summariseConsultation(folder)) === JSON.stringify(manifest)) {
+            return;
+        }
+    }
+    log.warn('the consultation manifest kept changing while it was written; the last write stands', { folder: path.basename(folder) });
+}
+
+/**
+ * Renames a file over another. Another writer replacing the same target at the same moment makes Windows refuse
+ * for an instant, so those refusals are tried again a few times.
+ *
+ * @param {string} from - The file.
+ * @param {string} to - What it becomes.
+ * @returns {Promise<void>}
+ */
+async function renameOver(from: string, to: string): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+        try {
+            return await rename(from, to);
+        } catch (error) {
+            if (attempt >= 5 || ![ 'EPERM', 'EBUSY', 'EACCES' ].includes(String(errorCode(error)))) {
+                throw error;
+            }
+            await new Promise(resolve => setTimeout(resolve, 10 * (attempt + 1)));
+        }
+    }
 }
 
 /**
