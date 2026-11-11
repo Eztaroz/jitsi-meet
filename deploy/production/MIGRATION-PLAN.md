@@ -63,7 +63,7 @@ These were written from the documentation and the test deployment, and not run: 
 
 | Assumption | Check |
 |---|---|
-| `web` reads its certificate from `/config/keys/cert.crt` and `cert.key` when they are mounted | `docker compose exec web ls -l /config/keys`; `openssl s_client -connect <test name>:443` shows the hospital's certificate |
+| `front` reads its certificate from `/etc/tele-meet/certs/cert.crt` and `cert.key` when they are mounted, and `web` speaks plain HTTP behind it (`DISABLE_HTTPS`) | `docker compose exec front ls -l /etc/tele-meet/certs`; `openssl s_client -connect <test name>:443` shows the hospital's certificate; `docker compose stop web` shows the maintenance page at the same address (503, header `X-Maintenance`), `docker compose start web` brings the service back |
 | The image variables `TURN_HOST`, `TURN_PORT`, `TURNS_HOST`, `TURNS_PORT`, `TURN_CREDENTIALS` configure Prosody's `external_services` | `docker compose exec prosody grep -A6 external_service /config/conf.d/*.cfg.lua` shows UDP 3478 and TLS 5349 with a secret; a client gets TURN credentials |
 | `coturn/coturn:4.6.3` exists and accepts the rendered `turnserver.conf` | `docker compose logs coturn`; test with Trickle ICE (relay candidates over UDP and over TLS 5349) |
 | `ENABLE_CLOSE_PAGE=false` is understood by the image | The left page (`static/left.html`) shows after hanging up |

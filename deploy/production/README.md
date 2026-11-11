@@ -25,6 +25,7 @@ It is the production counterpart of `coordinator/test-deployment` (which layers 
 | `scripts/preflight.sh` | Checks, changes nothing, what must be true before starting |
 | `coordinator/rooms.example.json` | The centers, stations, pathways, questionnaires and videos: copy it to `coordinator/rooms.json` and edit it |
 | `coturn/turnserver.conf.template` | coturn, with the old server's settings |
+| `front/` | The front web server's image: nginx that ends TLS and shows the maintenance page (`maintenance/index.html`) while the web server restarts |
 | `nginx/videos.conf`, `custom-config.js` | Served videos and the client's role markers |
 | `keys/` | Public keys the web server serves to Prosody (`asap/`, `coordinator-public/`), and the coordinator service's private key (`coordinator-private/`) |
 | `videos/` | The waiting video files, at `/videos/` |
@@ -37,6 +38,7 @@ Needs Docker with the Compose plugin, a clone of this repository at the release 
 
    ```sh
    make all
+   docker build -f deploy/production/front/Dockerfile -t front:<version> .
    docker build -t recorder-bot:<version> recorder-bot/
    docker build -t coordinator:<version> coordinator/
    docker build -t video-player:<version> video-player/
@@ -82,7 +84,7 @@ The first start of the Jitsi containers generates their configuration under `con
 
 | Port | Open to | For |
 |---|---|---|
-| TCP 443 (and 80, which redirects) | Users and the hospital's systems | The web client, BOSH and websockets, `/coordinator/` |
+| TCP 443 (and 80, which redirects), on the front web server | Users and the hospital's systems | The web client, BOSH and websockets, `/coordinator/` |
 | UDP 10000 | Users | Media through the videobridge |
 | UDP 3478, TCP 5349 | Users | coturn (STUN/TURN, TURN over TLS) |
 | `127.0.0.1:8090`, `:8094` | This host only | The recorder bot's and the video player's control APIs, for health checks |
@@ -99,6 +101,16 @@ The old server had no firewall; this host should have one that allows only the r
 - **Certificates:** one certificate serves the web server and coturn. After renewing it in place, `docker compose restart web coturn`. `scripts/preflight.sh` warns 30 days ahead of expiry; run it from a daily check, because the old server's coturn certificate expired unnoticed.
 - **Secrets:** a change to a service's API secret needs the same change in whoever calls it (`RECORDER_BOT_API_SECRET` is also the coordinator's; `COORDINATOR_API_SECRET` is the hospital system's).
 
+## The front web server and the maintenance page
+
+The `front` service (ADR 0017) is the only one that publishes ports 80 and 443. It ends TLS with the hospital's certificate and forwards everything, websockets included, to `web`, which speaks plain HTTP on the internal network (`DISABLE_HTTPS=1`). Prosody and the bots still reach `web` directly, on the internal network.
+
+While `web` restarts (it is stopped, being recreated, or does not answer within 3 seconds) `front` answers every request with the maintenance page, `maintenance/index.html`, with status `503`, `Retry-After: 60` and the header `X-Maintenance: 1`. Nothing changes for the user: same address, and the service is back as soon as `web` answers. A `5xx` that `web` itself sends is passed on, not replaced.
+
+- **Health:** `curl -sk https://<host>/front-health` answers `ok` from `front` alone. For `web`, check that the page is served and carries no `X-Maintenance` header: `curl -skI https://<host>/ | grep -i x-maintenance` must print nothing.
+- **Change the page** by editing `maintenance/index.html` (its CONFIG block holds the dates and the contact), and the nginx settings in `front/front.conf`. Both are baked into the image, so a change reaches production only when the new `front` image is deployed with the central stack, **in the night window (22:00 to 05:00) only**: restarting `front` cuts every connection. The pipeline builds `front` like the other images, and the 22:00 trigger redeploys the stack.
+- **Try it** on the test deployment (outside any consultation): `docker compose stop web` (or restart it from Portainer), open the address: the maintenance page; start `web`: the service, with no change of address.
+
 ## Not for this deployment
 
 - The mobile apps (ADR 0010): Prosody refuses a client that does not announce it can be moved, so users open the link in a phone's browser.
@@ -107,7 +119,7 @@ The old server had no firewall; this host should have one that allows only the r
 ## Portainer and GitLab CI
 
 `docker-compose.portainer.yml` is this deployment as a Portainer stack that is updated by GitLab CI. It mounts nothing from the
-repository: the images carry the web build (`web/Dockerfile`), the nginx settings, the Prosody plugins (`prosody/Dockerfile`)
+repository: the images carry the front web server's configuration (`front/Dockerfile`), the web build (`web/Dockerfile`), the nginx settings, the Prosody plugins (`prosody/Dockerfile`)
 and the services. The generated configuration of the docker-jitsi-meet services is in named volumes. What stays on the Docker
 host, under `DATA_DIR`: `keys/` (`asap`, `coordinator-public`, `coordinator-private/private.pem`), `coordinator/rooms.json`,
 `coturn/turnserver.conf` (rendered by `scripts/generate-secrets.sh`) and `videos/`. Run the scripts once, in `DATA_DIR`.
@@ -116,6 +128,7 @@ host, under `DATA_DIR`: `keys/` (`asap`, `coordinator-public`, `coordinator-priv
 push to the default branch (GitLab)
   → test-coordinator
   → image-coordinator, image-recorder-bot, image-video-player, image-prosody   (kaniko; :latest and :<commit>)
+  → image-front                       (nginx: TLS and the maintenance page)
   → image-web                         (on its own runner: webpack needs about 4 GB)
 22:00, a cron job calls the pipeline trigger with DEPLOY_CENTRAL=1
   → deploy-stack: POST to the stack's webhook → Portainer pulls the new images and redeploys
