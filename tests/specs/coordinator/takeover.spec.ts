@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-
 import { v4 as uuidv4 } from 'uuid';
 
 import { Participant } from '../../helpers/Participant';
@@ -207,7 +206,8 @@ describe('Coordinator: a lost recorder bot\'s consultation is taken over', () =>
     });
 
     it('reports nothing as unrecorded while another recorder bot has room', async () => {
-        const entries = await getAudit();
+        // Only this encounter's: the audit is shared with the specs, and the runs, before this one.
+        const entries = (await getAudit()).filter(e => e.encounterId === encounterId);
 
         expect(entries.some(e => e.kind === 'consultation_unrecorded')).toBe(false);
     });
