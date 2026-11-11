@@ -25,7 +25,7 @@ import {
     type ISentQuestionnaire,
     parseAnswers
 } from './questionnaires.ts';
-import type { RecorderBot } from './recorderBot.ts';
+import type { IRecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
 import {
     type ILayout,
@@ -205,7 +205,7 @@ export class CoordinatorService {
         auditKey: string;
         layout: ILayout;
         prosody: Prosody;
-        recorderBot: RecorderBot;
+        recorderBot: IRecorderBot;
         retentionMs: number;
         retentionSweepMs: number;
         roleMarkers: IRoleMarkers;
@@ -401,7 +401,7 @@ export class CoordinatorService {
             consultation: {
                 encounterId: command.encounterId,
                 id,
-                recorderBot: recorderBot.workerId ?? 'recorder-bot',
+                recorderBot: recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot',
                 recording: true,
                 startedAt: new Date()
             },

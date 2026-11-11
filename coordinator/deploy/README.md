@@ -9,8 +9,9 @@ It is for the hospital's internal network only, and is reached through the web s
 | Variable | Meaning |
 |---|---|
 | `COORDINATOR_API_SECRET` (required) | The bearer secret the hospital's system sends. Treat it like a password. |
-| `COORDINATOR_RECORDER_BOT_URL` (required) | The recorder bot service's base URL. |
-| `COORDINATOR_RECORDER_BOT_SECRET` (required) | The recorder bot service's `RECORDER_BOT_API_SECRET`. |
+| `COORDINATOR_RECORDER_BOT_URL` (required, unless `COORDINATOR_WORKERS_FILE` lists recorder bots) | The recorder bot service's base URL. With one recorder bot, set this and the next. |
+| `COORDINATOR_RECORDER_BOT_SECRET` (required, as above) | The recorder bot service's `RECORDER_BOT_API_SECRET`. |
+| `COORDINATOR_WORKERS_FILE` | A JSON file listing the workers, for more than one of a kind: `{"recorderBots": [{"id": "bot-1", "url": "http://vm1:8090", "secret": "..."}], "videoPlayers": [{"id": "vp-1", "url": "http://vm1:8094", "secret": "..."}]}`. A kind left out keeps the single worker of the settings above. Ids are unique across both lists. Each new consultation goes to the recorder bot with the most room (its `/health` capacity minus its active consultations), and each waiting video to the video player with the most room. A worker that does not answer or answers that it is full is skipped, and tried last for 10 seconds; a request is refused with `503` only when no worker of its kind takes it. The list is read at start-up (ADR 0014; heartbeats come later). Keep the file out of the repository: it holds the workers' secrets. |
 | `COORDINATOR_PROSODY_URL` (required) | Prosody's HTTP base URL, where the coordinator API module listens (below). |
 | `COORDINATOR_SIGNING_KID` (required) | The service's key id. |
 | `COORDINATOR_SIGNING_KEY_FILE` (required) | The PEM private key file. Prosody must have the public key (below). Keep it like the hospital issuer's key: whoever holds it can call Prosody's coordinator API. |
