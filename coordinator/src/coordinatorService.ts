@@ -54,6 +54,7 @@ import {
     queues,
     step
 } from './rules.ts';
+import { diffState } from './stateChanges.ts';
 import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
@@ -1462,13 +1463,15 @@ export class CoordinatorService {
      */
     private _commit(state: IState): void {
         if (state !== this._state) {
+            const previous = this._state;
+
             this._state = state;
 
             // The entries and the `audited` flags are saved in one transaction, so that a crash cannot leave an entry
             // that a restart would write again.
             const { entries, records } = this._endedMoves();
 
-            this._opts.store.save(this._state, records, entries);
+            this._opts.store.apply(diffState(previous, state, this._records, records, entries));
             for (const [ id, record ] of records) {
                 this._records.set(id, record);
             }
@@ -1476,12 +1479,18 @@ export class CoordinatorService {
     }
 
     /**
-     * Saves the state and what is kept about each move.
+     * Saves what is kept about a move.
      *
+     * @param {string} moveId - The move.
      * @returns {void}
      */
-    private _persist(): void {
-        this._opts.store.save(this._state, this._records);
+    private _persist(moveId: string): void {
+        const move = this._state.moves.find(m => m.id === moveId);
+        const record = this._records.get(moveId);
+
+        if (move && record) {
+            this._opts.store.apply([ { kind: 'move', move, record } ]);
+        }
     }
 
     /**
@@ -1497,7 +1506,7 @@ export class CoordinatorService {
         const record = this._records.get(moveId) ?? newMoveRecord();
 
         this._records.set(moveId, { ...record, deadlines: { ...record.deadlines, [timer]: deadline } });
-        this._persist();
+        this._persist(moveId);
         clearTimeout(this._timers.get(key));
 
         const handle = setTimeout(() => {
