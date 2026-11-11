@@ -184,6 +184,8 @@ The bot copies each video track as the sender encoded it, so a video track no lo
 
 where the measured cores per consultation is taken from the load test below, with real cameras, and the headroom covers what a synthetic test does not show: cameras that change resolution, a shared screen, and several consultations finalising at once. Leave at least 25% of the cores free.
 
+`RECORDER_BOT_MAX_HEIGHT` caps the video the bot asks the videobridge for. The videobridge forwards the 180, 360 or 720 line layer, so any cap below 720 records the 360-line layer. Because the bot copies video without decoding it, `720` is also cheap: a prototype load test of copied 720p (Chrome fake camera, 4-vCPU test VM) took about 0.18 of a core per consultation, 48% of the host with 8 consultations. A cap now saves storage and bandwidth, not CPU. With the earlier decode-and-encode path (before the copy), 720 needed 2.5 to 3.9 cores per consultation and 360 about 0.18.
+
 Measured results (the load test is run by hand on the test VM: 1 to 8 consultations, 5 minutes per level, 720p; record the build and the date with each row):
 
 | Date | Build | Cameras | Consultations | CPU per consultation | Notes |
@@ -229,7 +231,7 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_ID` | | The worker's id on that list. Required with `RECORDER_BOT_HEARTBEAT_URL` |
 | `RECORDER_BOT_ADVERTISED_URL` | | The address the coordinator service reaches this control API at, for example `http://vm1:8090`. Required with `RECORDER_BOT_HEARTBEAT_URL` |
 | `RECORDER_BOT_BUILD` | `unknown` | The build this worker runs, shown in the coordinator service's worker list, so that a deployment can see the new build come up (ADR 0017) |
-| `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for |
+| `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for. Below 720 it records the 360-line layer: see [Capacity](#capacity) |
 | `RECORDER_BOT_CHROMIUM_PATH` | Playwright's | A Chromium binary to run instead |
 | `RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS` | `false` | Accept any certificate from the web server. Only for test deployments |
 
