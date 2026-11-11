@@ -80,6 +80,14 @@ export const MIGRATIONS: IMigration[] = [
                 KEY consultations_started_at (started_at)
             ) ${TABLE}`
         ]
+    },
+    {
+        id: 2,
+        name: 'when a consultation ended, so that an ended one is never taken over',
+        statements: [
+            'ALTER TABLE consultations ADD COLUMN ended_at VARCHAR(30) NULL',
+            'CREATE INDEX consultations_recorder_bot ON consultations (recorder_bot)'
+        ]
     }
 ];
 

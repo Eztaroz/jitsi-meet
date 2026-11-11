@@ -5,14 +5,14 @@ import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import { createApi } from '../src/api.ts';
 import { CoordinatorService } from '../src/coordinatorService.ts';
 import type { Prosody } from '../src/prosody.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
 import { Store } from '../src/store.ts';
-import { LOST_AFTER_MS, WorkerRegistry } from '../src/workerRegistry.ts';
+import { HEARTBEAT_MS, LOST_AFTER_MS, WorkerRegistry } from '../src/workerRegistry.ts';
 import { RecorderBotPool } from '../src/workers.ts';
 
 const SECRET = 'system-secret';
@@ -155,6 +155,17 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         (await call('GET', `/encounters/${encounterId}/consultations`)).body.consultations[0];
 
     /**
+     * Moves both the registry's clock and the service's on.
+     *
+     * @param {number} ms - How far.
+     * @returns {void}
+     */
+    function pass(ms: number): void {
+        clock += ms;
+        mock.timers.tick(ms);
+    }
+
+    /**
      * Both bots send a heartbeat, an encounter starts on bot-1 (the one with more room), and bot-1 then goes silent
      * for as long as it takes to be lost, while bot-2 keeps sending.
      *
@@ -167,7 +178,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         const started = await call('POST', '/encounters', { hn: 'HN/1' });
 
         assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-1');
-        clock += LOST_AFTER_MS;
+        pass(LOST_AFTER_MS);
         await beat(bots[1]);
 
         return started.body.id;
@@ -175,6 +186,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
 
     beforeEach(async () => {
         clock = Date.parse('2026-05-01T08:00:00Z');
+        mock.timers.enable({ apis: [ 'Date' ], now: clock });
         dir = mkdtempSync(join(tmpdir(), 'takeover-'));
         prosodyRooms = [];
         bots = [ await fakeBot('bot-1', 5), await fakeBot('bot-2', 2) ];
@@ -182,6 +194,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
     });
 
     afterEach(() => {
+        mock.timers.reset();
         service.stop();
         server.close();
         server.closeAllConnections();
@@ -285,7 +298,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         await service.takeOverLostConsultations();
         assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-1', 'not yet: it may be about to speak');
 
-        clock += LOST_AFTER_MS;
+        pass(LOST_AFTER_MS);
         await beat(bots[1]);
         await service.takeOverLostConsultations();
 
@@ -302,7 +315,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-1');
 
         writeFileSync(join(dir, 'workers.json'), JSON.stringify({ recorderBots: [ { id: bots[1].id, secret: bots[1].secret } ] }));
-        clock += LOST_AFTER_MS;
+        pass(LOST_AFTER_MS);
         await beat(bots[1]);
         await service.takeOverLostConsultations();
 
@@ -337,5 +350,117 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
 
         assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ]);
         assert.deepEqual((await beat(bots[1])).body.takenOver, []);
+    });
+
+    it('takes over only the consultations still recording, not the ones that ended', async () => {
+        // bot-2 has no room yet, so that every consultation starts on bot-1.
+        bots[1].capacity = 0;
+        await beat(bots[0]);
+        await beat(bots[1]);
+
+        const encounters: string[] = [];
+
+        for (const hn of [ 'HN/1', 'HN/2', 'HN/3', 'HN/4' ]) {
+            encounters.push((await call('POST', '/encounters', { hn })).body.id);
+        }
+
+        const [ live, ...ended ] = await Promise.all(encounters.map(consultationOf));
+
+        assert.deepEqual([ live, ...ended ].map(c => c.recorderBot), [ 'bot-1', 'bot-1', 'bot-1', 'bot-1' ]);
+
+        // Everyone left three of the rooms: bot-1 runs only the first consultation now, and says so.
+        bots[0].running = [ live.id ];
+        pass(2 * HEARTBEAT_MS + 1);
+        await beat(bots[0]);
+
+        // Then bot-1 is lost, while bot-2 has room for two.
+        bots[1].capacity = 2;
+        pass(LOST_AFTER_MS);
+        await beat(bots[1]);
+        await service.takeOverLostConsultations();
+
+        assert.deepEqual(bots[1].asked.map(a => a.consultationId), [ live.id ]);
+        assert.equal((await consultationOf(encounters[0])).recorderBot, 'bot-2');
+        for (const encounterId of encounters.slice(1)) {
+            const consultation = await consultationOf(encounterId);
+
+            assert.equal(consultation.recorderBot, 'bot-1');
+            assert.ok(consultation.endedAt, 'it ended');
+        }
+
+        const unrecorded = (await call('GET', '/audit?limit=50')).body.entries
+            .filter((e: { kind: string; }) => e.kind === 'consultation_unrecorded');
+
+        assert.deepEqual(unrecorded, []);
+    });
+
+    it('marks ended a consultation the recorder bot\'s heartbeat no longer lists, once it is not just handed out', async () => {
+        await beat(bots[0]);
+        await beat(bots[1]);
+
+        const first = (await call('POST', '/encounters', { hn: 'HN/1' })).body.id;
+        const second = (await call('POST', '/encounters', { hn: 'HN/2' })).body.id;
+
+        assert.deepEqual([ (await consultationOf(first)).recorderBot, (await consultationOf(second)).recorderBot ], [ 'bot-1', 'bot-1' ]);
+        bots[0].running = [ (await consultationOf(second)).id ];
+
+        // A heartbeat sent just before the recorder bot took a consultation does not list it yet.
+        await beat(bots[0]);
+        assert.equal((await consultationOf(first)).endedAt, undefined);
+
+        pass(2 * HEARTBEAT_MS + 1);
+        await beat(bots[0]);
+
+        assert.equal((await consultationOf(first)).endedAt, new Date(clock).toISOString());
+        assert.equal((await consultationOf(second)).endedAt, undefined);
+    });
+
+    it('marks nothing ended for a heartbeat that does not list its consultations (an older recorder bot)', async () => {
+        await beat(bots[0]);
+
+        const encounterId = (await call('POST', '/encounters', { hn: 'HN/1' })).body.id;
+        const { body, status } = await call('POST', '/workers/heartbeat', {
+            build: 'b1', capacity: 5, id: 'bot-1', kind: 'recorder-bot', running: 0, url: bots[0].url
+        }, bots[0].secret);
+
+        assert.equal(status, 200);
+        assert.deepEqual(body.takenOver, []);
+        pass(2 * HEARTBEAT_MS + 1);
+        await call('POST', '/workers/heartbeat', {
+            build: 'b1', capacity: 5, id: 'bot-1', kind: 'recorder-bot', running: 0, url: bots[0].url
+        }, bots[0].secret);
+
+        assert.equal((await consultationOf(encounterId)).endedAt, undefined);
+    });
+
+    it('does not mark ended a consultation just taken over, which the taker\'s heartbeat does not list yet', async () => {
+        const encounterId = await loseBot1();
+
+        await service.takeOverLostConsultations();
+        assert.equal((await consultationOf(encounterId)).recorderBot, 'bot-2');
+
+        // Sent by bot-2 before it took the consultation over, which started long ago, and arriving after.
+        await call('POST', '/workers/heartbeat', {
+            build: 'b1', capacity: 2, consultations: [], id: 'bot-2', kind: 'recorder-bot', running: 0, url: bots[1].url
+        }, bots[1].secret);
+
+        assert.equal((await consultationOf(encounterId)).endedAt, undefined);
+
+        pass(2 * HEARTBEAT_MS + 1);
+        await beat(bots[1]);
+        assert.equal((await consultationOf(encounterId)).endedAt, undefined, 'it lists it now');
+    });
+
+    it('keeps telling the lost worker to stop a consultation that was taken over, after it ended on the taker', async () => {
+        const encounterId = await loseBot1();
+        const { id } = await consultationOf(encounterId);
+
+        await service.takeOverLostConsultations();
+        bots[1].running = [];
+        pass(2 * HEARTBEAT_MS + 1);
+        await beat(bots[1]);
+        assert.ok((await consultationOf(encounterId)).endedAt, 'it ended on bot-2');
+
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ]);
     });
 });

@@ -49,8 +49,9 @@ function statementOf(change: StoreChange, now: string): IStatement {
         const c = change.consultation;
 
         return {
-            params: [ c.id, c.encounterId, c.recorderBot, c.recording ? 1 : 0, c.startedAt.toISOString() ],
-            sql: 'REPLACE INTO consultations (id, encounter_id, recorder_bot, recording, started_at) VALUES (?, ?, ?, ?, ?)'
+            params: [ c.id, c.encounterId, c.recorderBot, c.recording ? 1 : 0, c.startedAt.toISOString(), c.endedAt?.toISOString() ?? null ],
+            sql: `REPLACE INTO consultations (id, encounter_id, recorder_bot, recording, started_at, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?)`
         };
     }
     case 'encounter': {
@@ -218,6 +219,22 @@ export class MariaDbStore implements IStore {
     consultationsByRecording(recording: boolean): IConsultation[] {
         return this._client.select<IConsultationRow>(
             'SELECT * FROM consultations WHERE recording = ? ORDER BY started_at, id', [ recording ? 1 : 0 ]
+        ).map(consultationOfRow);
+    }
+
+    /**
+     * Reads the consultations recording now: recording and not ended.
+     *
+     * @param {string} [recorderBot] - Only those of this recorder bot; unset, those of every recorder bot.
+     * @returns {IConsultation[]} The oldest first.
+     */
+    consultationsRecordingNow(recorderBot?: string): IConsultation[] {
+        return (recorderBot === undefined
+            ? this._client.select<IConsultationRow>(
+                'SELECT * FROM consultations WHERE recording = 1 AND ended_at IS NULL ORDER BY started_at, id')
+            : this._client.select<IConsultationRow>(
+                'SELECT * FROM consultations WHERE recording = 1 AND ended_at IS NULL AND recorder_bot = ? ORDER BY started_at, id',
+                [ recorderBot ])
         ).map(consultationOfRow);
     }
 

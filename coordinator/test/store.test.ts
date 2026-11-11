@@ -53,6 +53,28 @@ describe('a SQLite database made by an older release', () => {
         assert.deepEqual(encounter.stageStartedAt, T0);
         assert.deepEqual(encounter.history, [ { at: T0, stage: 'waiting' } ]);
     });
+
+    it('opens a database made before consultations could end, and keeps when one ends', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'store-'));
+        const old = new DatabaseSync(join(dir, 'coordinator.sqlite'));
+
+        old.exec(`CREATE TABLE consultations (id TEXT PRIMARY KEY, encounter_id TEXT NOT NULL, recorder_bot TEXT NOT NULL,
+            recording INTEGER NOT NULL, started_at TEXT NOT NULL)`);
+        old.prepare('INSERT INTO consultations VALUES (?, ?, ?, ?, ?)').run('c1', 'e1', 'bot-1', 1, T0.toISOString());
+        old.close();
+
+        const store = new Store(dir);
+        const before = { encounterId: 'e1', id: 'c1', recorderBot: 'bot-1', recording: true, startedAt: T0 };
+        const endedAt = new Date(T0.getTime() + 60_000);
+
+        try {
+            assert.deepEqual(store.consultationsOf('e1'), [ before ]);
+            store.apply([ { consultation: { ...before, endedAt }, kind: 'consultation' } ]);
+            assert.deepEqual(store.consultationsOf('e1'), [ { ...before, endedAt } ]);
+        } finally {
+            store.close();
+        }
+    });
 });
 
 for (const backend of databases) {
@@ -299,6 +321,37 @@ for (const backend of databases) {
             assert.deepEqual(store.consultationsByRecording(false), [ consultation('c2', 'e2', false) ]);
         });
 
+        it('keeps when a consultation ended, across a restart', async () => {
+            const open = await fresh();
+            const store = open();
+            const endedAt = new Date(T0.getTime() + 60_000);
+
+            store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' },
+                { consultation: consultation('c2', 'e2'), kind: 'consultation' } ]);
+            store.apply([ { consultation: { ...consultation('c1', 'e1'), endedAt }, kind: 'consultation' } ]);
+            store.close();
+
+            const loaded = open();
+
+            assert.deepEqual(loaded.consultationsOf('e1'), [ { ...consultation('c1', 'e1'), endedAt } ]);
+            assert.deepEqual(loaded.consultationsOf('e2'), [ consultation('c2', 'e2') ]);
+        });
+
+        it('reads the consultations recording now: recording and not ended, of every recorder bot or of one', async () => {
+            const store = (await fresh())();
+            const endedAt = new Date(T0.getTime() + 60_000);
+            const onBot2 = { ...consultation('c4', 'e4'), recorderBot: 'bot-2' };
+
+            store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' },
+                { consultation: { ...consultation('c2', 'e2'), endedAt }, kind: 'consultation' },
+                { consultation: consultation('c3', 'e3', false), kind: 'consultation' },
+                { consultation: onBot2, kind: 'consultation' } ]);
+
+            assert.deepEqual(store.consultationsRecordingNow(), [ consultation('c1', 'e1'), onBot2 ]);
+            assert.deepEqual(store.consultationsRecordingNow('bot-1'), [ consultation('c1', 'e1') ]);
+            assert.deepEqual(store.consultationsRecordingNow('bot-3'), []);
+        });
+
         it('reads consultations by their ids, leaving out ids it does not know', async () => {
             const store = (await fresh())();
 
@@ -353,6 +406,32 @@ describe('the MariaDB schema', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIA
             assert.deepEqual(applyMigrations(client, [ ...MIGRATIONS, next ]), []);
         } finally {
             client.close();
+        }
+    });
+
+    it('brings a database made before consultations could end up to date, keeping its consultations', async () => {
+        await wipeMariaDb(config);
+
+        const client = new MariaDbClient(config);
+
+        try {
+            applyMigrations(client, MIGRATIONS.filter(m => m.id === 1));
+            client.query('INSERT INTO consultations (id, encounter_id, recorder_bot, recording, started_at) VALUES (?, ?, ?, ?, ?)',
+                [ 'c1', 'e1', 'bot-1', 1, T0.toISOString() ]);
+        } finally {
+            client.close();
+        }
+
+        const store = new MariaDbStore(config);
+        const before = { encounterId: 'e1', id: 'c1', recorderBot: 'bot-1', recording: true, startedAt: T0 };
+
+        try {
+            assert.deepEqual(store.migrationsApplied, MIGRATIONS.filter(m => m.id > 1).map(m => m.id));
+            assert.deepEqual(store.consultationsRecordingNow(), [ before ]);
+            store.apply([ { consultation: { ...before, endedAt: new Date(T0.getTime() + 60_000) }, kind: 'consultation' } ]);
+            assert.deepEqual(store.consultationsRecordingNow(), []);
+        } finally {
+            store.close();
         }
     });
 

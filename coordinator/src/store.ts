@@ -32,6 +32,12 @@ export interface IConsultation {
     /** The encounter the room was opened for. */
     encounterId: string;
 
+    /**
+     * When the coordinator service learned that the consultation ended: its recorder bot no longer runs it (nobody
+     * joined, everyone left, or it was stopped). Unset while it has not ended. An ended consultation is never taken over.
+     */
+    endedAt?: Date;
+
     /** Made by the coordinator service, never by the recorder bot. It names the evidence recording. */
     id: string;
 
@@ -121,6 +127,12 @@ export interface IStore {
     /** Reads the consultations of an encounter, the oldest first. */
     consultationsOf(encounterId: string): IConsultation[];
 
+    /**
+     * Reads the consultations recording now: recording and not ended, of every recorder bot or of the one named, the
+     * oldest first.
+     */
+    consultationsRecordingNow(recorderBot?: string): IConsultation[];
+
     /** Whether this instance holds the active place now. Throws when that cannot be told. */
     holdsActive(): boolean;
 
@@ -170,7 +182,7 @@ export interface IEncounterRow {
 
 /** A row of the `consultations` table, as either database returns it. */
 export interface IConsultationRow {
-    encounter_id: string; id: string; recorder_bot: string; recording: number; started_at: string;
+    ended_at: string | null; encounter_id: string; id: string; recorder_bot: string; recording: number; started_at: string;
 }
 
 /**
@@ -219,7 +231,8 @@ export function consultationOfRow(r: IConsultationRow): IConsultation {
         id: r.id,
         recorderBot: r.recorder_bot,
         recording: Boolean(r.recording),
-        startedAt: new Date(r.started_at)
+        startedAt: new Date(r.started_at),
+        ...r.ended_at ? { endedAt: new Date(r.ended_at) } : {}
     };
 }
 
@@ -331,6 +344,14 @@ export class Store implements IStore {
         )`);
         this._db.exec('CREATE INDEX IF NOT EXISTS consultations_encounter ON consultations (encounter_id)');
 
+        // A database made before consultations could end gets the column added.
+        const consultationColumns = (this._db.prepare('PRAGMA table_info(consultations)').all() as { name: string; }[])
+            .map(c => c.name);
+
+        if (!consultationColumns.includes('ended_at')) {
+            this._db.exec('ALTER TABLE consultations ADD COLUMN ended_at TEXT');
+        }
+
         // A database made before stages or pathways gets the columns added.
         const columns = (this._db.prepare('PRAGMA table_info(encounters)').all() as { name: string; }[]).map(c => c.name);
 
@@ -407,6 +428,21 @@ export class Store implements IStore {
     consultationsByRecording(recording: boolean): IConsultation[] {
         const rows = this._db.prepare('SELECT * FROM consultations WHERE recording = ? ORDER BY started_at, id')
             .all(recording ? 1 : 0) as unknown as IConsultationRow[];
+
+        return rows.map(consultationOfRow);
+    }
+
+    /**
+     * Reads the consultations recording now: recording and not ended.
+     *
+     * @param {string} [recorderBot] - Only those of this recorder bot; unset, those of every recorder bot.
+     * @returns {IConsultation[]} The oldest first.
+     */
+    consultationsRecordingNow(recorderBot?: string): IConsultation[] {
+        const rows = (recorderBot === undefined
+            ? this._db.prepare('SELECT * FROM consultations WHERE recording = 1 AND ended_at IS NULL ORDER BY started_at, id').all()
+            : this._db.prepare(`SELECT * FROM consultations WHERE recording = 1 AND ended_at IS NULL AND recorder_bot = ?
+                ORDER BY started_at, id`).all(recorderBot)) as unknown as IConsultationRow[];
 
         return rows.map(consultationOfRow);
     }
@@ -499,9 +535,9 @@ export class Store implements IStore {
         case 'consultation': {
             const c = change.consultation;
 
-            this._db.prepare(`INSERT OR REPLACE INTO consultations (id, encounter_id, recorder_bot, recording, started_at)
-                VALUES (?, ?, ?, ?, ?)`)
-                .run(c.id, c.encounterId, c.recorderBot, c.recording ? 1 : 0, c.startedAt.toISOString());
+            this._db.prepare(`INSERT OR REPLACE INTO consultations (id, encounter_id, recorder_bot, recording, started_at, ended_at)
+                VALUES (?, ?, ?, ?, ?, ?)`)
+                .run(c.id, c.encounterId, c.recorderBot, c.recording ? 1 : 0, c.startedAt.toISOString(), c.endedAt?.toISOString() ?? null);
             break;
         }
         case 'encounter': {
