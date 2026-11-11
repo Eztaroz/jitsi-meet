@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { createApi } from './api.ts';
 import { DAY_MS, loadConfig } from './config.ts';
 import { Consultations } from './consultations.ts';
+import { Heartbeat } from './heartbeat.ts';
 import { log } from './log.ts';
 import { Periodic } from './periodic.ts';
 import { RetentionSweeper } from './retention.ts';
@@ -29,11 +30,19 @@ const housekeeping = [
     new Periodic('retention_sweep', () => sweeper.sweep(), config.retentionSweepMs)
 ];
 
+// Tells the coordinator service this worker is up, so that it is handed consultations (ADR 0014).
+const heartbeat = config.heartbeat && new Heartbeat({
+    ...config.heartbeat,
+    secret: config.apiSecret,
+    status: () => ({ capacity: config.maxConsultations, running: consultations.active().length })
+});
+
 api.listen(config.apiPort, () => log.info('control API listening', { port: config.apiPort }));
 log.info('retention period', { retentionDays: config.retentionMs / DAY_MS, sweepSeconds: config.retentionSweepMs / 1000 });
 for (const task of housekeeping) {
     task.start();
 }
+heartbeat?.start();
 
 let shuttingDown = false;
 
@@ -49,6 +58,7 @@ async function shutdown(signal: string) {
     }
     shuttingDown = true;
     log.info('shutting down', { signal });
+    heartbeat?.stop();
     api.close();
     await Promise.all(housekeeping.map(task => task.stop()));
     await consultations.shutdown();

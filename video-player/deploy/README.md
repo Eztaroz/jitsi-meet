@@ -20,6 +20,10 @@ Build the image with `docker build -t video-player:<version> video-player/` and 
 | `VIDEO_PLAYER_API_SECRET` | required | The bearer secret every control API request must carry |
 | `VIDEO_PLAYER_JITSI_URL` | required | The Jitsi web server's base URL (the compose file uses `PUBLIC_URL`) |
 | `VIDEO_PLAYER_API_PORT` | 8091 | The control API port |
+| `VIDEO_PLAYER_HEARTBEAT_URL` | unset | Where to send heartbeats to the coordinator service (ADR 0014): its base URL through the web server's TLS, for example `https://meet.example/coordinator`. Every 5 seconds the worker sends its id, kind, control API address, capacity (`VIDEO_PLAYER_MAX_ROOMS`), running count and build, with `VIDEO_PLAYER_API_SECRET` as its secret: the coordinator service must list that id and secret in its `COORDINATOR_WORKER_SECRETS_FILE`. Unset, none are sent. A failed heartbeat is logged and the next one tried |
+| `VIDEO_PLAYER_ID` | | The worker's id on that list. Required with `VIDEO_PLAYER_HEARTBEAT_URL` |
+| `VIDEO_PLAYER_ADVERTISED_URL` | | The address the coordinator service reaches this control API at. Required with `VIDEO_PLAYER_HEARTBEAT_URL` |
+| `VIDEO_PLAYER_BUILD` | `unknown` | The build this worker runs, shown in the coordinator service's worker list |
 | `VIDEO_PLAYER_MAX_ROOMS` | 2 | How many rooms to play in at once. Each is one headless browser; count them with the recorder bot's when sizing |
 | `VIDEO_PLAYER_CHROMIUM_PATH` | Playwright's | The Chromium binary |
 | `VIDEO_PLAYER_IGNORE_CERTIFICATE_ERRORS` | off | Accept the web server's certificate without checking it. Test deployments only |

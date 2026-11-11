@@ -23,6 +23,12 @@ export interface IConfig {
     /** The Chromium binary to run; Playwright's own when unset. */
     chromiumPath?: string;
 
+    /**
+     * Where to send heartbeats to the coordinator service (ADR 0014); unset, none are sent. The worker's id on the
+     * service's list, its build and the address the service reaches the control API at.
+     */
+    heartbeat?: { advertisedUrl: string; build: string; coordinatorUrl: string; id: string; };
+
     /** How long the bot stays in a room every human has left, in milliseconds (ADR 0003). */
     emptyRoomGraceMs: number;
 
@@ -147,6 +153,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
         botJid: required(env, 'RECORDER_BOT_JID'),
         botPassword: required(env, 'RECORDER_BOT_PASSWORD'),
         chromiumPath: env.RECORDER_BOT_CHROMIUM_PATH?.trim() || undefined,
+        heartbeat: env.RECORDER_BOT_HEARTBEAT_URL?.trim()
+            ? {
+                advertisedUrl: required(env, 'RECORDER_BOT_ADVERTISED_URL').replace(/\/+$/, ''),
+                build: env.RECORDER_BOT_BUILD?.trim() || 'unknown',
+                coordinatorUrl: env.RECORDER_BOT_HEARTBEAT_URL.trim().replace(/\/+$/, ''),
+                id: required(env, 'RECORDER_BOT_ID')
+            }
+            : undefined,
         emptyRoomGraceMs: integer(env, 'RECORDER_BOT_EMPTY_ROOM_GRACE_SECONDS', DEFAULT_EMPTY_ROOM_MS / 1000) * 1000,
         firstJoinWaitMs: integer(env, 'RECORDER_BOT_FIRST_JOIN_WAIT_SECONDS', DEFAULT_FIRST_JOIN_MS / 1000) * 1000,
         ignoreCertificateErrors: flag(env, 'RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS'),
