@@ -51,7 +51,8 @@ test-coordinator:
         node -e "require('net').connect(3306, 'mariadb').on('connect', () => process.exit(0)).on('error', () => process.exit(1))" && break
         sleep 2
       done
-    - node --disable-warning=ExperimentalWarning --test test/*.test.ts
+    # One file at a time: the store, copy and standby suites share the MariaDB schema and drop its tables before each test.
+    - node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.ts
   tags:
     - HOSAPP02
   except:

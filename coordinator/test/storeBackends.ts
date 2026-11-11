@@ -1,7 +1,8 @@
 /**
  * The databases the store suite runs against: SQLite always, and MariaDB when `COORDINATOR_TEST_MARIADB` names one, as
  * `mariadb://user:password@host:port/schema`. The suite drops every table of that schema before each test, so point it
- * at a schema made for tests, never at a real one. The pipeline gives it a MariaDB service container.
+ * at a schema made for tests, never at a real one, and run the test files one at a time (`--test-concurrency=1`, as
+ * `npm test` does): the suites that use it share the schema. The pipeline gives it a MariaDB service container.
  */
 import { createConnection } from 'mariadb';
 import { mkdtempSync } from 'node:fs';
