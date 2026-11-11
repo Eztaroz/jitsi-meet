@@ -200,7 +200,7 @@ Set up once, for each worker VM: its stack's `IMAGE_TAG` is `production-<worker 
 | `WEBHOOK_<ID>` | The webhook of the stack of that worker's VM; the id in capitals, other characters `_` (`bot-1` is `WEBHOOK_BOT_1`), Protected |
 | `HEALTH_URL_<ID>`, `HEALTH_SECRET_<ID>` | Optional: the worker's own health check, if the runner can reach it, and its bearer secret |
 | `ALLOW_SELF_SIGNED` | `1` when the coordinator service, Portainer or the registry use a certificate the runner does not know |
-| `ALLOW_SINGLE_RECORDER_BOT` | `1` only in the night window's call (the central deployment), which may deploy the only recorder bot |
+| `ALLOW_SINGLE_RECORDER_BOT` | `1` only in the night window's call: the `deploy-workers-night` job of the trigger pipeline sets it, after the central services, so that workers left over and a lone recorder bot are deployed at night |
 
 The registry must let `REGISTRY_AUTH`'s user push tags. The job runs for as long as consultations take to finish, so the project's job timeout must allow hours. This GitLab has no `resource_group`: the guard against two deployments at once is the refusal to start while a worker is draining.
 
