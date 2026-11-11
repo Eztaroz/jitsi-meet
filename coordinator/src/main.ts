@@ -5,14 +5,23 @@ import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
 import { CoordinatorService } from './coordinatorService.ts';
 import { log } from './log.ts';
+import { openStore } from './openStore.ts';
 import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
 import { keyLookup } from './screenAuth.ts';
-import { Store } from './store.ts';
+import type { IStore } from './store.ts';
 import { VideoPlayer } from './videoPlayer.ts';
 
 const config = loadConfig();
-const store = new Store(config.dataDir);
+let store: IStore;
+
+try {
+    store = openStore(config);
+} catch (error) {
+    // The database cannot be reached, or its schema cannot be brought up to date: there is no state to decide from.
+    log.error('refusing to start: cannot open the store', { reason: (error as Error).message });
+    process.exit(1);
+}
 let service: CoordinatorService;
 
 try {

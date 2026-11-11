@@ -97,7 +97,7 @@ The old server had no firewall; this host should have one that allows only the r
 - **Health:** `curl -s http://127.0.0.1:8090/health`, `curl -s http://127.0.0.1:8094/health`, and `curl -sk https://<host>/coordinator/health` with the bearer secret `COORDINATOR_API_SECRET`.
 - **Logs:** `docker compose logs -f --tail 200 <service>`.
 - **Update:** build the new images, change their tags in `.env`, `docker compose up -d`. A recorder bot being replaced has a minute to finalise the consultations in progress; do it between visits. After a change to a Prosody module, restart `prosody`, then `jicofo` and `jvb`.
-- **Back up:** the `coordinator-data` volume (encounters, audit log, surveys), the `recorder-bot-spool` volume while evidence recordings wait in it, `.env`, `keys/coordinator-private/`, `coordinator/rooms.json`.
+- **Back up:** the `coordinator-data` volume (encounters, audit log, surveys) unless the coordinator service keeps its state in the hospital's MariaDB (`COORDINATOR_MARIADB_HOST` in `.env`; then the database team's backups hold it, see `coordinator/deploy/README.md`, "State in MariaDB"), the `recorder-bot-spool` volume while evidence recordings wait in it, `.env`, `keys/coordinator-private/`, `coordinator/rooms.json`.
 - **Certificates:** one certificate serves the web server and coturn. After renewing it in place, `docker compose restart web coturn`. `scripts/preflight.sh` warns 30 days ahead of expiry; run it from a daily check, because the old server's coturn certificate expired unnoticed.
 - **Secrets:** a change to a service's API secret needs the same change in whoever calls it (`RECORDER_BOT_API_SECRET` is also the coordinator's; `COORDINATOR_API_SECRET` is the hospital system's).
 

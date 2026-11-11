@@ -15,5 +15,8 @@
     },
     "engines": {
         "node": ">=22.18.0"
+    },
+    "dependencies": {
+        "mariadb": "3.5.5"
     }
 }

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 
+import type { IMariaDbConfig } from './mariadbStore.ts';
 import { DONE, WAITING, pathwaysOf } from './pathways.ts';
 import { loadQuestionnaires } from './questionnaires.ts';
 import {
@@ -31,8 +32,11 @@ export interface IConfig {
     /** The key of the references to patients' rooms in the audit log (`COORDINATOR_AUDIT_KEY`; the API secret by default). */
     auditKey: string;
 
-    /** The directory holding the database; mount a volume here. */
+    /** The directory holding the SQLite database; mount a volume here. Not used when `database` is set. */
     dataDir: string;
+
+    /** The MariaDB that keeps the state, when `COORDINATOR_MARIADB_HOST` is set (ADR 0015). Unset, SQLite in `dataDir` does. */
+    database?: IMariaDbConfig;
 
     /** The center, its stations and each station's lounge (`COORDINATOR_ROOMS_FILE`). */
     layout: ILayout;
@@ -100,6 +104,22 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 /**
+ * Reads where the MariaDB is. The user needs rights on its own schema only (`coordinator/deploy/README.md`).
+ *
+ * @param {NodeJS.ProcessEnv} env - The environment.
+ * @returns {IMariaDbConfig}
+ */
+export function mariaDbConfig(env: NodeJS.ProcessEnv): IMariaDbConfig {
+    return {
+        database: required(env, 'COORDINATOR_MARIADB_DATABASE'),
+        host: required(env, 'COORDINATOR_MARIADB_HOST'),
+        password: required(env, 'COORDINATOR_MARIADB_PASSWORD'),
+        port: Number(env.COORDINATOR_MARIADB_PORT ?? 3306),
+        user: required(env, 'COORDINATOR_MARIADB_USER')
+    };
+}
+
+/**
  * Loads the settings.
  *
  * @param {NodeJS.ProcessEnv} env - The environment.
@@ -127,6 +147,7 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
         dataDir: env.COORDINATOR_DATA_DIR?.trim() || '/var/lib/coordinator',
+        ...env.COORDINATOR_MARIADB_HOST?.trim() ? { database: mariaDbConfig(env) } : {},
         auditKey: env.COORDINATOR_AUDIT_KEY?.trim() || required(env, 'COORDINATOR_API_SECRET'),
         retentionMs: Number(env.COORDINATOR_RETENTION_DAYS ?? 90) * 24 * 60 * 60 * 1000,
         retentionSweepMs: Number(env.COORDINATOR_RETENTION_SWEEP_SECONDS ?? 3600) * 1000,
