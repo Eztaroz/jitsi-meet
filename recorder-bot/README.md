@@ -21,7 +21,7 @@ This is a standalone package, like `tests/`. It has its own dependencies, runs o
 | `src/roomName.ts` | The room name for an HN, normalised as jitsi-meet normalises a URL room name. |
 | `src/review.ts`, `src/reviewPlan.ts`, `src/reviewRender.ts` | The `npm run review` command, which makes a Review file of one evidence recording: the plan (where each tile goes, which file fills it when, the gaps) and its rendering with ffmpeg. |
 | `src/config.ts`, `src/log.ts` | Settings from the environment, and the JSON-lines logger. |
-| `../static/recorder-bot.html`, `../static/recorder-bot.js` | The bot page. The deployment's web server serves it with the rest of the web build; it joins with the deployed lib-jitsi-meet, records each remote track with its own `MediaRecorder`, and reports what happens to the service. |
+| `../static/recorder-bot.html`, `../static/recorder-bot.js` | The bot page. The deployment's web server serves it with the rest of the web build; it joins with the deployed lib-jitsi-meet, records each remote audio track with its own `MediaRecorder`, copies each remote video track as the sender encoded it (AV1, VP9 or VP8, through a WebRTC Encoded Transform, written as an IVF stream that the service remuxes to WebM without re-encoding; a track it cannot copy falls back to `MediaRecorder` and is logged as a recorder error), and reports what happens to the service. |
 | `Dockerfile` | The service's container image. |
 | `deploy/` | The operator guide, the nginx snippet for HNs with `/`, and a compose file for docker-jitsi-meet deployments. |
 | `test-deployment/` | A local deployment of this fork with the service, for the WebdriverIO suite's `specs/recorderBot` tests. |
