@@ -132,17 +132,15 @@ export class MariaDbStore implements IStore {
     /**
      * Whether the lock is held by this very connection: after a dropped and remade connection it is not.
      *
+     * @throws {DatabaseError} When the database cannot be asked: that is not an answer, and the caller decides how
+     * long it may stay unknown.
      * @returns {boolean}
      */
     holdsActive(): boolean {
-        try {
-            const rows = this._client.select<{ held: number | null; }>(
-                'SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS held', [ this._lockName ]);
+        const rows = this._client.select<{ held: number | null; }>(
+            'SELECT IS_USED_LOCK(?) = CONNECTION_ID() AS held', [ this._lockName ]);
 
-            return rows[0]?.held === 1;
-        } catch {
-            return false;
-        }
+        return rows[0]?.held === 1;
     }
 
     /**
@@ -192,6 +190,34 @@ export class MariaDbStore implements IStore {
     consultationsOf(encounterId: string): IConsultation[] {
         return this._client.select<IConsultationRow>(
             'SELECT * FROM consultations WHERE encounter_id = ? ORDER BY started_at, id', [ encounterId ]
+        ).map(consultationOfRow);
+    }
+
+    /**
+     * Reads the consultations with these ids.
+     *
+     * @param {string[]} ids - The ids.
+     * @returns {IConsultation[]} The oldest first; an id it does not know is left out.
+     */
+    consultationsByIds(ids: string[]): IConsultation[] {
+        if (!ids.length) {
+            return [];
+        }
+
+        return this._client.select<IConsultationRow>(
+            `SELECT * FROM consultations WHERE id IN (${ids.map(() => '?').join(', ')}) ORDER BY started_at, id`, ids
+        ).map(consultationOfRow);
+    }
+
+    /**
+     * Reads the consultations that are recording, or the ones that are not.
+     *
+     * @param {boolean} recording - Which.
+     * @returns {IConsultation[]} The oldest first.
+     */
+    consultationsByRecording(recording: boolean): IConsultation[] {
+        return this._client.select<IConsultationRow>(
+            'SELECT * FROM consultations WHERE recording = ? ORDER BY started_at, id', [ recording ? 1 : 0 ]
         ).map(consultationOfRow);
     }
 

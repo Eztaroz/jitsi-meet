@@ -87,6 +87,51 @@ describe('watching that the lock is still held', () => {
     });
 });
 
+describe('watching the lock while the database cannot be asked', () => {
+    /**
+     * A store whose answers to "do you hold the lock" are given in order, then the last one repeats.
+     *
+     * @param {(boolean|Error)[]} answers - A boolean, or an error for a question that could not be answered.
+     * @returns {IStore} The store.
+     */
+    const asking = (answers: (boolean | Error)[]) => {
+        let i = 0;
+
+        return {
+            holdsActive: () => {
+                const answer = answers[Math.min(i++, answers.length - 1)];
+
+                if (answer instanceof Error) {
+                    throw answer;
+                }
+
+                return answer;
+            }
+        } as unknown as IStore;
+    };
+    const watch = async (store: IStore) => {
+        let lost = 0;
+        const timer = watchActive(store, { intervalMs: 1, onLost: () => lost++ });
+
+        await new Promise(resolve => setTimeout(resolve, 60));
+        clearInterval(timer);
+
+        return lost;
+    };
+
+    it('keeps the active place through a few questions that fail, as long as the database then says it is held', async () => {
+        assert.equal(await watch(asking([ new Error('down'), new Error('down'), true ])), 0);
+    });
+
+    it('gives the place up only when the database keeps failing', async () => {
+        assert.equal(await watch(asking([ new Error('down') ])), 1);
+    });
+
+    it('gives the place up at once when the database says another connection holds it', async () => {
+        assert.equal(await watch(asking([ true, false ])), 1);
+    });
+});
+
 describe('the API of a standby instance', () => {
     it('answers its health with that it is standby, and nothing else', async () => {
         const server = createStandbyApi('secret');

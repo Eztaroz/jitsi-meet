@@ -3,7 +3,7 @@
  * consultation. It is meant for the hospital's internal network only, and every request must carry the shared bearer
  * secret.
  */
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 
 import { AtCapacityError, type Consultations, DuplicateConsultationError } from './consultations.ts';
@@ -83,7 +83,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 const CONSULTATION_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/u;
 
 /**
- * Checks the consultation id of a request: the coordinator service makes it (ADR 0016), the recorder bot never does.
+ * Checks the consultation id of a request: the coordinator service makes it (ADR 0016); the recorder bot makes one only for an older coordinator service.
  *
  * @param {unknown} body - The request body.
  * @returns {string} The consultation id.
@@ -91,6 +91,13 @@ const CONSULTATION_ID = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/u;
 function consultationIdFrom(body: unknown): string {
     const id = typeof body === 'object' && body !== null ? (body as { consultationId?: unknown; }).consultationId : undefined;
 
+    // Workers are deployed when the code changes, the coordinator service at night: until then the older coordinator
+    // service sends no id, and the consultation must still start. It gets an id made here, which it keeps from the answer.
+    if (id === undefined) {
+        log.warn('a consultation was requested without an id; made one');
+
+        return randomUUID();
+    }
     if (typeof id !== 'string' || !CONSULTATION_ID.test(id)) {
         throw new HttpError(400, 'consultationId must be a string of at most 128 letters, digits, dots, dashes and underscores, '
             + 'made by the coordinator service');

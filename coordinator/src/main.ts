@@ -67,7 +67,7 @@ try {
     service = new CoordinatorService({
         auditKey: config.auditKey,
         layout: config.layout,
-        lostRecorderBots: registry && (() => registry.lostRecorderBots()),
+        lostRecorderBots: registry && (claimed => registry.lostRecorderBots(claimed)),
         prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
         recorderBot: new RecorderBotPool(registry
             ? () => registry.recorderBots()

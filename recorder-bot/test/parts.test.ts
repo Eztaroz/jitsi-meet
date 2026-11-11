@@ -88,6 +88,21 @@ describe('an evidence recording made of the parts of more than one recorder bot 
         assert.deepEqual(manifest.gaps, [ { end: '2026-05-01T08:31:00.000Z', start: '2026-05-01T08:29:50.000Z' } ]);
     });
 
+    test('lists every part when several recorder bots store theirs at the same moment, and leaves no temporary file', async () => {
+        const parts = Array.from({ length: 12 }, (_, i) => `bot-${String(i).padStart(2, '0')}`);
+
+        await Promise.all(parts.map((part, i) => recordPart(part, {
+            end: `2026-05-01T09:${String(10 + i)}:00Z`, start: `2026-05-01T08:${String(10 + i)}:01Z`
+        })));
+
+        const folder = path.join(storage, 'hn%2f1', '20260501T080000.000Z');
+        const manifest = JSON.parse(await readFile(path.join(folder, 'manifest.json'), 'utf8'));
+
+        assert.deepEqual(manifest.parts.map((p: { part: string; }) => p.part), parts);
+        assert.equal(manifest.complete, true);
+        assert.deepEqual((await readdir(folder)).filter(name => name.endsWith('.tmp')), []);
+    });
+
     describe('while a lost worker\'s part is still in its spool', () => {
         const manifestPath = () => path.join(storage, 'hn%2f1', '20260501T080000.000Z', 'manifest.json');
 

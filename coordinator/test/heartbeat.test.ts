@@ -301,8 +301,8 @@ describe('workers send heartbeats to the coordinator service', () => {
 
         assert.equal(status, 200);
         assert.deepEqual(body.workers, [
-            { build: 'abc123', capacity: 2, id: 'bot-1', kind: 'recorder-bot', draining: false, lost: true, running: 1, url: workers[0].url },
-            { build: 'build-7', capacity: 2, id: 'vp-1', kind: 'video-player', draining: false, lost: false, running: 1, url: workers[2].url }
+            { build: 'abc123', capacity: 2, id: 'bot-1', kind: 'recorder-bot', draining: false, heartbeats: 1, lost: true, running: 1, url: workers[0].url },
+            { build: 'build-7', capacity: 2, id: 'vp-1', kind: 'video-player', draining: false, heartbeats: 2, lost: false, running: 1, url: workers[2].url }
         ]);
         assert.equal((await call('GET', '/workers', { secret: 'wrong' })).status, 401);
     });

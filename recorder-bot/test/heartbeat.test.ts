@@ -64,6 +64,14 @@ describe('the heartbeat to the coordinator service', () => {
         } ]);
     });
 
+    test('names the consultations it runs, so that the coordinator service can tell it which were taken over', async () => {
+        await new Heartbeat({
+            advertisedUrl: 'http://worker-1:8090', build: 'abc123', coordinatorUrl: url, id: 'worker-1',
+            secret: 'worker-1-secret', status: () => ({ capacity: 3, consultations: [ 'c1', 'c2' ], running: 2 })
+        }).send();
+        assert.deepEqual(received[0].body.consultations, [ 'c1', 'c2' ]);
+    });
+
     test('reports how many it runs now', async () => {
         const heartbeat = make();
 

@@ -15,6 +15,9 @@ import type { IStore } from './store.ts';
 /** How often a standby instance tries for the lock, and an active one checks that it still has it. */
 export const LOCK_POLL_MS = 2000;
 
+/** How many questions in a row may fail before the active place is given up. */
+export const UNKNOWN_LIMIT = 3;
+
 /**
  * Waits until this instance holds the active place.
  *
@@ -62,8 +65,28 @@ export function watchActive(store: IStore, { intervalMs = LOCK_POLL_MS, onLost }
     onLost: () => void;
 }): NodeJS.Timeout {
     let reported = false;
+    let unknown = 0;
     const timer = setInterval(() => {
-        if (!reported && !store.holdsActive()) {
+        if (reported) {
+            return;
+        }
+
+        let holds: boolean;
+
+        try {
+            holds = store.holdsActive();
+            unknown = 0;
+        } catch (error) {
+            // Cannot tell is not lost: the place is kept through a few failed questions, which a restart of the
+            // database or a network blip may cause, and given up only when the database stays out of reach.
+            if (++unknown < UNKNOWN_LIMIT) {
+                log.warn('cannot tell whether this instance still holds the active place', { reason: (error as Error).message });
+
+                return;
+            }
+            holds = false;
+        }
+        if (!holds) {
             reported = true;
             onLost();
         }

@@ -9,6 +9,9 @@ import { type IVideoPlayer, VideoPlayerUnavailableError } from './videoPlayer.ts
 /** How long a worker that did not answer, or was full, is tried last. */
 export const SKIP_MS = 10_000;
 
+/** How many consultations a recorder bot pool remembers the worker of: the service reads it right after handing one out. */
+export const MAX_REMEMBERED = 1000;
+
 /** A worker as the pool sees it. */
 export interface IWorker {
 
@@ -120,7 +123,16 @@ export class RecorderBotPool extends Pool<IRecorderBotWorker> {
         const { result, worker } = await this._assign(w => w.recordRoom(hn, consultationId, options),
             error => error instanceof RecorderBotUnavailableError, code => new RecorderBotUnavailableError(code));
 
+        this._recording.delete(result);
         this._recording.set(result, worker.id);
+
+        // The oldest go first; what is kept about a consultation is the stored row, not this.
+        for (const old of this._recording.keys()) {
+            if (this._recording.size <= MAX_REMEMBERED) {
+                break;
+            }
+            this._recording.delete(old);
+        }
 
         return result;
     }

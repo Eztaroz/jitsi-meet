@@ -18,6 +18,7 @@ import { VideoPlayerUnavailableError } from '../src/videoPlayer.ts';
 import {
     type IRecorderBotWorker,
     type IVideoPlayerWorker,
+    MAX_REMEMBERED,
     RecorderBotPool,
     VideoPlayerPool
 } from '../src/workers.ts';
@@ -250,6 +251,18 @@ describe('the coordinator service hands consultations and waiting videos to a li
         }
 
         assert.match((await call('POST', '/encounters', { hn: 'HN/5' })).body.error, /at_capacity/u);
+    });
+
+    it('remembers only the latest consultations, so that the memory of the recorder bots does not grow without end', async () => {
+        const worker: IRecorderBotWorker = { id: 'bot-x', recordRoom: async (_hn, id) => id, room: async () => 1 };
+        const pool = new RecorderBotPool([ worker ]);
+
+        for (let i = 0; i < MAX_REMEMBERED + 50; i++) {
+            await pool.recordRoom('HN/1', `c${i}`);
+        }
+
+        assert.equal(pool.workerOf('c0'), undefined);
+        assert.equal(pool.workerOf(`c${MAX_REMEMBERED + 49}`), 'bot-x');
     });
 
     it('remembers which recorder bot records each consultation', async () => {

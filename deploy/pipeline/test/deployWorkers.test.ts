@@ -19,6 +19,12 @@ class Fake {
 
     /** Looks of the list after which a draining worker runs nothing. */
     busyLooks: Record<string, number> = {};
+
+    /**
+     * Workers that start a consultation just before they were set draining, which the coordinator service learns only
+     * from a heartbeat sent after that. It counts the looks at the list since the worker was set draining.
+     */
+    lateStart: Record<string, number> = {};
     server!: Server;
     url = '';
 
@@ -44,6 +50,16 @@ class Fake {
         }
         if (path === '/workers' && req.method === 'GET') {
             for (const w of this.workers) {
+                if (w.draining && w.id in this.lateStart) {
+                    const since = ++this.lateStart[w.id];
+
+                    // The first look sees the heartbeat of before: no news. Each look after it is one more heartbeat,
+                    // and the third look is the first to say what the worker really runs, until it ends at the sixth.
+                    w.heartbeats = (w.heartbeats ?? 0) + (since > 1 ? 1 : 0);
+                    w.running = since >= 3 && since < 6 ? 1 : 0;
+                }
+            }
+            for (const w of this.workers) {
                 if (w.draining && (this.busyLooks[w.id] ?? 0) > 0 && --this.busyLooks[w.id] === 0) {
                     w.running = 0;
                 }
@@ -67,6 +83,10 @@ class Fake {
 
         if (hook) {
             const id = hook[1];
+
+            if (id in this.lateStart && this.lateStart[id] < 6) {
+                this.events.push(`CUT ${id}`);
+            }
             const tag = this.tags.get(workerTag(id))!;
 
             this.events.push(`webhook ${id}`);
@@ -166,6 +186,16 @@ describe('deployWorkers', () => {
 
         assert.equal(fake.worker('player-1').running, 0);
         assert.ok(fake.events.indexOf('webhook player-1') > fake.events.indexOf('drain player-1'));
+    });
+
+    it('does not trust a heartbeat from before the worker was set draining: it waits for later ones', async () => {
+        fake.workers = [ make('player-1', 'video-player', { heartbeats: 10, running: 0 }) ];
+        fake.lateStart['player-1'] = 0;
+
+        await run();
+
+        assert.ok(!fake.events.includes('CUT player-1'), 'the consultation that started just before was not cut');
+        assert.ok(fake.events.includes('webhook player-1'));
     });
 
     it('does not deploy to a worker that already runs the build', async () => {

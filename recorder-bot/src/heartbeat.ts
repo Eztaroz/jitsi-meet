@@ -41,8 +41,8 @@ export interface IHeartbeatOptions {
     /** The worker's own secret on that list: the same one the coordinator service sends with its requests. */
     secret: string;
 
-    /** What this worker can run, and runs now. */
-    status: () => { capacity: number; running: number; };
+    /** What this worker can run, and runs now, with the ids of the consultations it runs. */
+    status: () => { capacity: number; consultations?: string[]; running: number; };
 }
 
 export class Heartbeat {
@@ -79,9 +79,9 @@ export class Heartbeat {
         const { advertisedUrl, build, coordinatorUrl, id, secret, status } = this._options;
 
         try {
-            const { capacity, running } = status();
+            const { capacity, consultations, running } = status();
             const response = await fetch(`${coordinatorUrl.replace(/\/+$/u, '')}/workers/heartbeat`, {
-                body: JSON.stringify({ build, capacity, id, kind: 'recorder-bot', running, url: advertisedUrl }),
+                body: JSON.stringify({ build, capacity, consultations, id, kind: 'recorder-bot', running, url: advertisedUrl }),
                 headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
                 method: 'POST',
                 signal: AbortSignal.timeout(TIMEOUT_MS)

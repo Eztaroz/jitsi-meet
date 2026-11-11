@@ -289,6 +289,26 @@ for (const backend of databases) {
             assert.deepEqual(loaded.consultationsOf('nope'), []);
         });
 
+        it('reads only the consultations that are, or are not, recording', async () => {
+            const store = (await fresh())();
+
+            store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' },
+                { consultation: consultation('c2', 'e2', false), kind: 'consultation' } ]);
+
+            assert.deepEqual(store.consultationsByRecording(true), [ consultation('c1', 'e1') ]);
+            assert.deepEqual(store.consultationsByRecording(false), [ consultation('c2', 'e2', false) ]);
+        });
+
+        it('reads consultations by their ids, leaving out ids it does not know', async () => {
+            const store = (await fresh())();
+
+            store.apply([ { consultation: consultation('c1', 'e1'), kind: 'consultation' },
+                { consultation: consultation('c2', 'e2'), kind: 'consultation' } ]);
+
+            assert.deepEqual(store.consultationsByIds([ 'c2', 'nope' ]), [ consultation('c2', 'e2') ]);
+            assert.deepEqual(store.consultationsByIds([]), []);
+        });
+
         it('sweeps the consultations older than the retention period', async () => {
             const open = await fresh();
             const store = open();
@@ -350,6 +370,38 @@ describe('the MariaDB schema', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIA
         } finally {
             store.close();
         }
+    });
+});
+
+describe('a MariaDB call that timed out', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIADB is not set' }, () => {
+    it('does not hand its late answer to the next call', () => {
+        const client = new MariaDbClient(testMariaDb() as IMariaDbConfig, { callTimeoutMs: 300 });
+
+        try {
+            assert.throws(() => client.select('SELECT SLEEP(1) AS slow'), DatabaseError);
+
+            // The database finishes the slow statement after the call gave up, so its answer is already waiting.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+            assert.deepEqual(client.select('SELECT 7 AS seven'), [ { seven: 7 } ]);
+            assert.deepEqual(client.select('SELECT 8 AS eight'), [ { eight: 8 } ]);
+        } finally {
+            client.close();
+        }
+    });
+});
+
+describe('asking a MariaDB whether it holds the active place', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIADB is not set' }, () => {
+    it('throws, rather than saying no, when the database cannot be asked', async () => {
+        const config = testMariaDb() as IMariaDbConfig;
+
+        await wipeMariaDb(config);
+
+        const store = new MariaDbStore(config);
+
+        assert.equal(store.acquireActive(), true);
+        assert.equal(store.holdsActive(), true);
+        store.close();
+        assert.throws(() => store.holdsActive(), DatabaseError);
     });
 });
 

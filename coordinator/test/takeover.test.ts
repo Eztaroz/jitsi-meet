@@ -95,10 +95,10 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
      *
      * @returns {Promise<void>}
      */
-    function boot(): Promise<void> {
+    function boot(listed: IFakeBot[] = bots): Promise<void> {
         const file = join(dir, 'workers.json');
 
-        writeFileSync(file, JSON.stringify({ recorderBots: bots.map(b => ({ id: b.id, secret: b.secret })) }));
+        writeFileSync(file, JSON.stringify({ recorderBots: listed.map(b => ({ id: b.id, secret: b.secret })) }));
         store = new Store(dir);
 
         const registry = new WorkerRegistry({ file, now: () => clock });
@@ -106,7 +106,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         service = new CoordinatorService({
             auditKey: 'audit-key',
             layout: { centers: [] },
-            lostRecorderBots: () => registry.lostRecorderBots(),
+            lostRecorderBots: claimed => registry.lostRecorderBots(claimed),
             prosody: { rooms: async () => ({ rooms: prosodyRooms }) } as unknown as Prosody,
             recorderBot: new RecorderBotPool(() => registry.recorderBots()),
             retentionMs: 90 * 24 * 3600_000,
@@ -148,7 +148,8 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
     }
 
     const beat = (bot: IFakeBot) => call('POST', '/workers/heartbeat', {
-        build: 'b1', capacity: bot.capacity, id: bot.id, kind: 'recorder-bot', running: bot.running.length, url: bot.url
+        build: 'b1', capacity: bot.capacity, consultations: [ ...bot.running ], id: bot.id, kind: 'recorder-bot',
+        running: bot.running.length, url: bot.url
     }, bot.secret);
     const consultationOf = async (encounterId: string) =>
         (await call('GET', `/encounters/${encounterId}/consultations`)).body.consultations[0];
@@ -264,6 +265,68 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         await service.takeOverLostConsultations();
 
         assert.equal((await service.rooms()).find(r => r.encounterId === encounterId)?.unrecorded, true);
+    });
+
+    it('takes over, after a restart of the coordinator, the consultation of a worker it was never heard from', async () => {
+        await beat(bots[0]);
+        await beat(bots[1]);
+
+        const started = await call('POST', '/encounters', { hn: 'HN/1' });
+
+        assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-1');
+
+        // A new process over the same stored data: its registry has heard nobody yet, and bot-1 never speaks again.
+        service.stop();
+        server.close();
+        server.closeAllConnections();
+        store.close();
+        await boot();
+        await beat(bots[1]);
+        await service.takeOverLostConsultations();
+        assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-1', 'not yet: it may be about to speak');
+
+        clock += LOST_AFTER_MS;
+        await beat(bots[1]);
+        await service.takeOverLostConsultations();
+
+        assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-2');
+        assert.equal(bots[1].asked.at(-1)?.takenFrom, 'bot-1');
+    });
+
+    it('takes over the consultation of a worker whose line was removed from the list', async () => {
+        await beat(bots[0]);
+        await beat(bots[1]);
+
+        const started = await call('POST', '/encounters', { hn: 'HN/1' });
+
+        assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-1');
+
+        writeFileSync(join(dir, 'workers.json'), JSON.stringify({ recorderBots: [ { id: bots[1].id, secret: bots[1].secret } ] }));
+        clock += LOST_AFTER_MS;
+        await beat(bots[1]);
+        await service.takeOverLostConsultations();
+
+        assert.equal((await consultationOf(started.body.id)).recorderBot, 'bot-2');
+    });
+
+    it('keeps telling the lost worker until it stops the consultation, even over a lost reply or a restart', async () => {
+        const encounterId = await loseBot1();
+        const { id } = await consultationOf(encounterId);
+
+        await service.takeOverLostConsultations();
+
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ]);
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ], 'the first answer may have been lost');
+
+        service.stop();
+        server.close();
+        server.closeAllConnections();
+        store.close();
+        await boot();
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [ id ], 'a restart forgets nothing');
+
+        bots[0].running = [];
+        assert.deepEqual((await beat(bots[0])).body.takenOver, [], 'it stopped');
     });
 
     it('tells the lost worker, when it is heard again, that its consultation was taken over', async () => {

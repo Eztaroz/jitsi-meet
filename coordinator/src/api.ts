@@ -418,7 +418,11 @@ export function createApi({ holdsLock, pipelineSecret, screen, secret, service, 
 
                 reply = workers.heartbeat(scheme === 'Bearer' ? token : undefined, heartbeat);
                 // The answer tells a worker that was cut off which of its consultations were taken over (ADR 0016).
-                takenOver = service.takenOverFrom(String((heartbeat as { id?: unknown; }).id));
+                const { consultations, id } = heartbeat as { consultations?: unknown; id?: unknown; };
+
+                takenOver = Array.isArray(consultations)
+                    ? service.takenOverFrom(String(id), consultations.filter((c): c is string => typeof c === 'string').slice(0, 1000))
+                    : [];
             } catch (error) {
                 if (error instanceof HttpError && error.status === 401) {
                     res.setHeader('www-authenticate', 'Bearer');

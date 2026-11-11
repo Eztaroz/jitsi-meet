@@ -23,6 +23,7 @@ stages:
   - promote
   - verify
   - rollback
+  - workers
 
 # The coordinator service's tests run its store suite against SQLite and, through COORDINATOR_TEST_MARIADB, against this
 # MariaDB service container (ADR 0015). The container lives for the job only and holds nothing but test data; its user
@@ -286,4 +287,26 @@ deploy-workers:
     - master
     - main
   except:
+    - triggers
+
+# The night window also deploys the workers a day's pushes left behind, and the only recorder bot when there is just one
+# (ADR 0017): it may be cut now, and `ALLOW_SINGLE_RECORDER_BOT` says so. Its stage is the last, after the rollback, so
+# that a worker that fails never rolls the central services back, and it does not run when the central deployment failed.
+deploy-workers-night:
+  <<: *central-only
+  stage: workers
+  image: node:24-bookworm-slim
+  variables:
+    ALLOW_SINGLE_RECORDER_BOT: "1"
+  script:
+    - |
+      if [ -z "$COORDINATOR_URL" ]; then
+        echo "COORDINATOR_URL is not set: skipping the deploy of the workers"
+        exit 0
+      fi
+    - node --disable-warning=ExperimentalWarning deploy/pipeline/deployWorkersMain.ts
+  dependencies: []
+  tags:
+    - HOSAPP02
+  only:
     - triggers
