@@ -353,6 +353,23 @@ describe('the MariaDB schema', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIA
     });
 });
 
+describe('a MariaDB call that timed out', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIADB is not set' }, () => {
+    it('does not hand its late answer to the next call', () => {
+        const client = new MariaDbClient(testMariaDb() as IMariaDbConfig, { callTimeoutMs: 300 });
+
+        try {
+            assert.throws(() => client.select('SELECT SLEEP(1) AS slow'), DatabaseError);
+
+            // The database finishes the slow statement after the call gave up, so its answer is already waiting.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
+            assert.deepEqual(client.select('SELECT 7 AS seven'), [ { seven: 7 } ]);
+            assert.deepEqual(client.select('SELECT 8 AS eight'), [ { eight: 8 } ]);
+        } finally {
+            client.close();
+        }
+    });
+});
+
 describe('a MariaDB that cannot be reached', () => {
     it('refuses to open, with an error the caller can show', () => {
         assert.throws(() => new MariaDbStore({ database: 'x', host: '127.0.0.1', password: 'x', port: 1, user: 'x' }), DatabaseError);

@@ -19,14 +19,19 @@ export type Request =
     | { op: 'close'; }
     | { op: 'query'; statement: IStatement; };
 
+/** A request as sent: the client numbers each one, and the answer carries the number back. */
+export type NumberedRequest = Request & { id: number; };
+
 /** What one statement gave: the rows of a select, or how many rows an insert, update or delete changed. */
 export type StatementResult = { affectedRows: number; } | { rows: Record<string, unknown>[]; };
 
 export type Response =
-    | { error: { code?: string; fatal?: boolean; message: string; }; ok: false; }
-    | { ok: true; results: StatementResult[]; };
+    | { error: { code?: string; fatal?: boolean; message: string; }; id: number; ok: false; }
+    | { id: number; ok: true; results: StatementResult[]; };
 
 const { config, port, signal } = workerData as { config: IMariaDbConfig; port: MessagePort; signal: Int32Array; };
+/** A statement the database has not finished by now is abandoned, a little before the client gives up waiting. */
+const QUERY_TIMEOUT_MS = 25_000;
 let connection: Connection | undefined;
 
 /**
@@ -40,6 +45,7 @@ async function connected(): Promise<Connection> {
             bigIntAsNumber: true,
             charset: 'utf8mb4',
             connectTimeout: 10_000,
+            queryTimeout: QUERY_TIMEOUT_MS,
             database: config.database,
             decimalAsNumber: true,
             host: config.host,
@@ -108,22 +114,22 @@ async function handle(request: Request): Promise<StatementResult[]> {
     }
 }
 
-port.on('message', async (request: Request) => {
+port.on('message', async (request: NumberedRequest) => {
     let response: Response;
 
     try {
-        response = { ok: true, results: await handle(request) };
+        response = { id: request.id, ok: true, results: await handle(request) };
     } catch (error) {
         const { code, fatal, message } = error as { code?: string; fatal?: boolean; message: string; };
 
         if (fatal) {
             connection = undefined;
         }
-        response = { error: { code, fatal, message }, ok: false };
+        response = { error: { code, fatal, message }, id: request.id, ok: false };
     }
 
     // The answer is in the port's queue before the caller is woken.
     port.postMessage(response);
-    Atomics.store(signal, 0, 1);
+    Atomics.add(signal, 0, 1);
     Atomics.notify(signal, 0);
 });

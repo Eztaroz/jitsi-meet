@@ -11,6 +11,13 @@ import type { IStatement, Request, Response, StatementResult } from './mariadbWo
 /** How long a call waits for the database before it fails. */
 const CALL_TIMEOUT_MS = 30_000;
 
+/** What the client can be told besides where the database is. */
+export interface IMariaDbClientOptions {
+
+    /** How long a call waits for the database before it fails. */
+    callTimeoutMs?: number;
+}
+
 /** What MariaDB refused, or that it could not be reached. */
 export class DatabaseError extends Error {
     readonly code?: string;
@@ -23,7 +30,9 @@ export class DatabaseError extends Error {
 }
 
 export class MariaDbClient {
+    private readonly _callTimeoutMs: number;
     private _closed = false;
+    private _nextId = 1;
     private readonly _port: MessagePort;
     private readonly _signal: Int32Array;
     private readonly _worker: Worker;
@@ -32,8 +41,10 @@ export class MariaDbClient {
      * Starts the worker. The connection is made by the first call.
      *
      * @param {IMariaDbConfig} config - Where the database is.
+     * @param {IMariaDbClientOptions} options - How long a call may wait.
      */
-    constructor(config: IMariaDbConfig) {
+    constructor(config: IMariaDbConfig, options: IMariaDbClientOptions = {}) {
+        this._callTimeoutMs = options.callTimeoutMs ?? CALL_TIMEOUT_MS;
         const { port1, port2 } = new MessageChannel();
 
         this._port = port1;
@@ -110,19 +121,39 @@ export class MariaDbClient {
         if (this._closed) {
             throw new DatabaseError('the database is closed');
         }
-        Atomics.store(this._signal, 0, 0);
-        this._port.postMessage(request);
+        const id = this._nextId++;
+        const deadline = Date.now() + this._callTimeoutMs;
 
-        if (Atomics.wait(this._signal, 0, 0, CALL_TIMEOUT_MS) === 'timed-out') {
-            throw new DatabaseError('the database did not answer in time');
+        this._port.postMessage({ ...request, id });
+
+        // The worker counts each answer it posts. An answer to an earlier call that timed out may still arrive; it
+        // carries another id and is dropped, so a late answer is never taken for this call's.
+        let response: Response | undefined;
+
+        while (!response) {
+            const seen = Atomics.load(this._signal, 0);
+            let received = receiveMessageOnPort(this._port);
+
+            while (received) {
+                const message = received.message as Response;
+
+                if (message.id === id) {
+                    response = message;
+                    break;
+                }
+                received = receiveMessageOnPort(this._port);
+            }
+            if (response) {
+                break;
+            }
+
+            const left = deadline - Date.now();
+
+            if (left <= 0 || Atomics.wait(this._signal, 0, seen, left) === 'timed-out') {
+                throw new DatabaseError('the database did not answer in time');
+            }
         }
 
-        const received = receiveMessageOnPort(this._port);
-        const response = received?.message as Response | undefined;
-
-        if (!response) {
-            throw new DatabaseError('the database gave no answer');
-        }
         if (!response.ok) {
             throw new DatabaseError(response.error.message, response.error.code);
         }
