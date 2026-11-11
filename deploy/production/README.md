@@ -130,9 +130,12 @@ push to the default branch (GitLab)
   → image-coordinator, image-recorder-bot, image-video-player, image-prosody   (kaniko; :latest and :<commit>)
   → image-front                       (nginx: TLS and the maintenance page)
   → image-web                         (on its own runner: webpack needs about 4 GB)
-22:00, a cron job calls the pipeline trigger with DEPLOY_CENTRAL=1
-  → deploy-stack: POST to the stack's webhook → Portainer pulls the new images and redeploys
-deploy-stack-now (by hand): the same, at once
+22:00, a cron job calls the pipeline trigger with DEPLOY_CENTRAL=1 (every job below refuses outside 22:00-05:00)
+  → deploy-stack: the test stack's webhook, then every health check, reported
+  → central-promote: :production of coordinator, prosody, web and front moves to this commit's build
+  → central-verify: the production central stack's webhook, then every health check, 2 minutes at most
+  → (only on a failure) central-rollback-tag, central-rollback-redeploy: :production back to the previous build, redeployed
+deploy-stack-now (by hand): the test stack, at once, at any hour
 ```
 
 Set up once:
@@ -149,6 +152,27 @@ Set up once:
    ```sh
    0 22 * * * curl -sS -X POST -F token="$(cat ~/.gitlab-trigger-token)" -F ref=master        -F "variables[DEPLOY_CENTRAL]=1" "$GITLAB_URL/api/v4/projects/<project id>/trigger/pipeline"
    ```
+
+### The night deployment of the central services (ADR 0017)
+
+The scripts are in `scripts/ci/`; `scripts/test/run-tests.sh` tests them against local fake servers and a fake `crane`
+(needs sh, curl and node; it touches no registry and no Portainer).
+
+- **Window:** `night-window.sh` allows 22:00 to 05:00 Bangkok time (UTC+7, computed, as the images have no time zone data).
+  `promote-central.sh` and `redeploy-central.sh` call it, so a trigger started at noon deploys nothing. A rollback and the
+  manual `deploy-stack-now` do not check it.
+- **Healthy** (`central-health.sh`, every 5 seconds for 2 minutes, one line per check): the coordinator service's health is
+  200 and `active` (it holds the database lock); `/front-health` answers; the page and `/config.js` are served without the
+  `X-Maintenance` header; Prosody's BOSH endpoint (`/http-bind`) answers; Jicofo's and the videobridge's own health checks
+  answer 200; and the coordinator service can list `/rooms`. A check without its variable fails, it is never skipped.
+- **Rollback:** `promote-central.sh` records the digest `production` had (`central-previous.env`, an artifact) before it moves
+  the four images; if `central-verify` fails, `rollback-central.sh` moves `production` back and the stack is redeployed, and
+  the pipeline stays failed. Jicofo and the videobridge are upstream images pinned by `JITSI_IMAGE_VERSION`: the stack is one
+  step, and a change of that version is rolled back by changing it in the stack's environment.
+- **Set up once, on the production central stack:** `IMAGE_TAG=production`. Jicofo's and the videobridge's health ports
+  (8888, 8080) are published on `HOST_INTERNAL_IP` only; the runner must reach them there. CI/CD variables: see the header of
+  `.gitlab-ci.yml` (`PRODUCTION_WEBHOOK`, and for `TEST_` and `PRODUCTION_`: `URL`, `COORDINATOR_SECRET`, `JICOFO_HEALTH_URL`,
+  `JVB_HEALTH_URL`).
 
 Roll back by setting `IMAGE_TAG` to a commit hash and updating the stack.
 
