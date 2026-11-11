@@ -15,7 +15,7 @@ import {
     type Timer,
     createConsultationLifecycle
 } from './consultationLifecycle.ts';
-import { EvidenceRecording, evidenceLocation } from './evidence.ts';
+import { EvidenceRecording, evidenceLocation, partOf } from './evidence.ts';
 import { participantIdentity } from './identity.ts';
 import { errorCode, log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
@@ -38,6 +38,9 @@ export interface IConsultationOptions {
 
     /** When the consultation started: it names the consultation's folder in the evidence storage root. */
     startedAt?: Date;
+
+    /** For a consultation taken over: the id of the lost worker, whose part is still on its spool (ADR 0016). */
+    takenFrom?: string;
 }
 
 /** What the control API reports about a consultation. */
@@ -93,6 +96,9 @@ export class Consultation {
 
     /** For a takeover: where the gap starts, until the bot is in the room and the gap is in the timeline. */
     private gapSince?: Date;
+
+    /** The parts of the consultation that other recorder bots have yet to store: the lost worker's, on a takeover. */
+    private readonly awaitingParts: string[];
     private readonly lifecycle: IConsultationLifecycle;
     private readonly timeline: TimelineEntry[] = [];
     private readonly timers = new Map<Timer, ReturnType<typeof setTimeout>>();
@@ -140,7 +146,8 @@ export class Consultation {
         this.hn = hn;
         this.consultationStart = options.startedAt ?? this.startedAt;
         this.gapSince = options.gapSince;
-        this.part = config.heartbeat?.id.replace(/[^\w.-]/gu, '_');
+        this.part = config.heartbeat ? partOf(config.heartbeat.id) : undefined;
+        this.awaitingParts = options.takenFrom ? [ partOf(options.takenFrom) ] : [];
         this.room = roomNameFromHn(hn);
         this.config = config;
         this.lifecycle = createConsultationLifecycle({
@@ -568,6 +575,7 @@ export class Consultation {
                 meetingId: this.meetingId,
                 participants: this.lifecycle.participants(),
                 part: this.part,
+                awaitingParts: this.awaitingParts,
                 room: this.room,
                 staffVisits: this.lifecycle.staffVisits(),
                 start: this.startedAt,

@@ -212,10 +212,16 @@ export function createApi({ consultations, maxConsultations, secret }: {
             try {
                 const gapSince = timeFrom(body, 'gapSince');
                 const startedAt = timeFrom(body, 'startedAt');
+                const takenFrom = (body as { takenFrom?: unknown; }).takenFrom;
+
+                if (takenFrom !== undefined && takenFrom !== null && (typeof takenFrom !== 'string' || !takenFrom)) {
+                    throw new HttpError(400, 'takenFrom must be the id of a worker');
+                }
 
                 started = consultations.start(hn, requestedId, {
                     ...gapSince ? { gapSince } : {},
-                    ...startedAt ? { startedAt } : {}
+                    ...startedAt ? { startedAt } : {},
+                    ...takenFrom ? { takenFrom } : {}
                 });
             } catch (error) {
                 if (error instanceof AtCapacityError) {

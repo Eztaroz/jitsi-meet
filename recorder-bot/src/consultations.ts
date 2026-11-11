@@ -33,6 +33,7 @@ export class Consultations {
      * @param {string} id - The consultation's id, made by the coordinator service.
      * @param {Object} [options] - What the coordinator service says of a consultation it hands over (ADR 0016).
      * @param {Date} [options.gapSince] - For a takeover, when the lost recorder bot was last heard from.
+     * @param {string} [options.takenFrom] - For a takeover, the id of the lost worker, whose part is still missing.
      * @param {Date} [options.startedAt] - When the consultation started, which names its folder.
      * @returns {Object} The consultation, and whether it was started by this call.
      * @throws {AtCapacityError} When the service already runs as many consultations as it may.
