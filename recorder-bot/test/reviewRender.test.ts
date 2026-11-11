@@ -30,6 +30,21 @@ const hasFfmpeg = (() => {
 })();
 
 /**
+ * Whether this machine's ffmpeg can make video of a codec, to build the test evidence with.
+ *
+ * @param {Codec} codec - The codec.
+ * @returns {boolean}
+ */
+function canMake(codec: Codec): boolean {
+    try {
+        return execFileSync('ffmpeg', [ '-hide_banner', '-encoders' ], { encoding: 'utf8' })
+            .includes(` ${ENCODERS[codec][1]} `);
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Returns the ISO time `seconds` after the consultation started.
  *
  * @param {number} seconds - Offset from the start.
@@ -59,17 +74,28 @@ const PEOPLE = [
 /** The bot crashed at 5 seconds and was back at 6. */
 const GAPS = [ { start: at(5), end: at(6) } ];
 
+/** The codecs the recorder bot copies from the sender, as ffprobe names them, and the ffmpeg encoder that makes each. */
+const ENCODERS = {
+    av1: [ '-c:v', 'libaom-av1', '-cpu-used', '8', '-b:v', '100k' ],
+    vp8: [ '-c:v', 'libvpx', '-b:v', '100k' ],
+    vp9: [ '-c:v', 'libvpx-vp9', '-b:v', '100k' ]
+} as const;
+
+type Codec = keyof typeof ENCODERS;
+
 /**
  * Builds a small evidence recording, as the recorder bot finalises one, with ffmpeg's test sources.
  *
  * @param {string} folder - Where.
+ * @param {Function} codecOf - The codec of the video file made for the nth video span (from 0), as the sender used it.
  * @returns {Promise<void>}
  */
-async function buildEvidence(folder: string): Promise<void> {
+async function buildEvidence(folder: string, codecOf: (nth: number) => Codec = () => 'vp8'): Promise<void> {
     await mkdir(folder, { recursive: true });
 
     const files: Array<{
         bytes: number;
+        codec?: string;
         duration: number;
         endpointId: string;
         kind: string;
@@ -78,23 +104,26 @@ async function buildEvidence(folder: string): Promise<void> {
         stop: string;
     }> = [];
     let count = 0;
+    let nth = 0;
 
     for (const person of PEOPLE) {
         for (const span of person.spans) {
             const duration = span.to - span.from;
             const video = `${String(++count).padStart(2, '0')}-${span.endpoint}-video.webm`;
             const audio = `${String(++count).padStart(2, '0')}-${span.endpoint}-audio.webm`;
+            const codec = codecOf(nth++);
 
             await execFileAsync('ffmpeg', [
                 '-hide_banner', '-loglevel', 'error', '-y',
                 '-f', 'lavfi', '-i', `testsrc=size=160x120:rate=15:duration=${duration}`,
                 '-f', 'lavfi', '-i', `sine=frequency=440:duration=${duration}`,
-                '-map', '0:v', '-c:v', 'libvpx', '-b:v', '100k', path.join(folder, video),
+                '-map', '0:v', ...ENCODERS[codec], path.join(folder, video),
                 '-map', '1:a', '-c:a', 'libopus', path.join(folder, audio)
             ]);
             for (const [ name, kind ] of [ [ video, 'video' ], [ audio, 'audio' ] ]) {
                 files.push({
                     bytes: (await stat(path.join(folder, name))).size,
+                    ...kind === 'video' ? { codec } : {},
                     duration,
                     endpointId: span.endpoint,
                     kind,
@@ -175,6 +204,33 @@ describe('outsideGaps', () => {
     });
 });
 
+/**
+ * Renders an evidence recording and checks the result is the whole consultation as one H.264 MP4 with sound, and that
+ * every video span reached the picture: a tile whose codec ffmpeg could not decode would fail the render.
+ *
+ * @param {string} folder - The evidence recording.
+ * @param {string} output - The Review file.
+ * @returns {Promise<void>}
+ */
+async function assertRendered(folder: string, output: string): Promise<void> {
+    const { code, stderr } = await review(folder, output);
+
+    assert.equal(code, 0, stderr);
+
+    const { stdout } = await execFileAsync('ffprobe', [
+        '-v', 'error', '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height', '-of', 'json', output
+    ]);
+    const probe = JSON.parse(stdout) as {
+        format: { duration: string; };
+        streams: Array<{ codec_name: string; codec_type: string; height?: number; width?: number; }>;
+    };
+
+    assert.ok(Math.abs(Number(probe.format.duration) - LENGTH) < 0.3, `duration ${probe.format.duration}`);
+    assert.deepEqual(
+        probe.streams.map(s => [ s.codec_type, s.codec_name, s.width, s.height ]).sort(),
+        [ [ 'audio', 'aac', undefined, undefined ], [ 'video', 'h264', 1280, 720 ] ]);
+}
+
 describe('npm run review', { skip: !hasFfmpeg && 'ffmpeg and ffprobe are not on PATH' }, () => {
     let work: string;
     let evidence: string;
@@ -211,6 +267,33 @@ describe('npm run review', { skip: !hasFfmpeg && 'ffmpeg and ffprobe are not on 
         assert.deepEqual(probe.streams.filter(s => s.codec_type === 'audio').map(s => s.codec_name), [ 'aac' ]);
         assert.deepEqual(await hashes(evidence), untouched);
         assert.deepEqual(await readdir(work).then(names => names.filter(n => n.endsWith('.part'))), []);
+    });
+
+    for (const codec of [ 'av1', 'vp9', 'vp8' ] as const) {
+        test(`renders a Review file from ${codec} video tracks`, {
+            skip: !canMake(codec) && `ffmpeg has no ${codec} encoder`
+        }, async () => {
+            const folder = path.join(work, `only-${codec}`);
+
+            await buildEvidence(folder, () => codec);
+            await assertRendered(folder, path.join(work, `only-${codec}.mp4`));
+        });
+    }
+
+    test('renders a Review file from AV1, VP9 and VP8 tracks mixed in one consultation', {
+        skip: !(canMake('av1') && canMake('vp9') && canMake('vp8')) && 'ffmpeg lacks an AV1, VP9 or VP8 encoder'
+    }, async () => {
+        const codecs: Codec[] = [ 'av1', 'vp9', 'vp8', 'av1', 'vp9' ];
+        const folder = path.join(work, 'mixed');
+
+        await buildEvidence(folder, nth => codecs[nth % codecs.length]);
+
+        const manifest = JSON.parse(await readFile(path.join(folder, 'manifest.json'), 'utf8')) as {
+            files: Array<{ codec?: string; }>;
+        };
+
+        assert.deepEqual([ ...new Set(manifest.files.flatMap(file => file.codec ?? [])) ].sort(), [ 'av1', 'vp8', 'vp9' ]);
+        await assertRendered(folder, path.join(work, 'mixed.mp4'));
     });
 
     test('refuses a folder that is not a finalised evidence recording', async () => {
