@@ -25,14 +25,8 @@ services:
             - ../../coordinator/test-deployment/videos.conf:/config/nginx-custom/videos.conf:ro
 
     prosody:
-        # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service.
-        volumes:
-            - ../../resources/prosody-plugins/mod_coordinator_api.lua:/prosody-plugins-custom/mod_coordinator_api.lua:ro
-            - ../../resources/prosody-plugins/mod_muc_require_move_support.lua:/prosody-plugins-custom/mod_muc_require_move_support.lua:ro
-            - ../../resources/prosody-plugins/mod_muc_patient_never_moderator.lua:/prosody-plugins-custom/mod_muc_patient_never_moderator.lua:ro
-            - ../../resources/prosody-plugins/patient_marker.lib.lua:/prosody-plugins-custom/patient_marker.lib.lua:ro
-            # Refuses the end of a patient's room for everyone; reads the MUC component's muc_patient_marker.
-            - ../../resources/prosody-plugins/mod_end_conference.lua:/prosody-plugins-custom/mod_end_conference.lua:ro
+        # Prosody's HTTP port (5280) is exposed on the internal network only, for the coordinator service. The fork's
+        # plugins are mounted by the recorder bot's file, in every variant.
         environment:
             ENABLE_BREAKOUT_ROOMS: 'false'
             # Refuses a client that does not announce that it obeys moves, apart from the hosts listed in
