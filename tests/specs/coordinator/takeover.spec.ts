@@ -18,7 +18,6 @@ import {
     type IManifest,
     type ITimelineEntry,
     docker,
-    evidenceUnavailableReason,
     getHiddenIds,
     patientLinkRoom,
     uniqueHn,
@@ -117,7 +116,10 @@ describe('Coordinator: a lost recorder bot\'s consultation is taken over', () =>
     });
 
     it('setup', async () => {
-        const unavailable = coordinatorUnavailableReason() ?? evidenceUnavailableReason();
+        // The coordinator runs on the JWT variant only, where the recorder bot's own specs skip: so the evidence is
+        // checked here without evidenceUnavailableReason, which would always skip this suite.
+        const unavailable = coordinatorUnavailableReason()
+            ?? (config.recorderBot.storageRoot ? undefined : 'RECORDER_BOT_STORAGE_ROOT is not set');
 
         if (unavailable || Object.keys(workerContainers()).length < 2) {
             ctx.skipSuiteTests = unavailable ?? 'COORDINATOR_WORKER_CONTAINERS is not set';
