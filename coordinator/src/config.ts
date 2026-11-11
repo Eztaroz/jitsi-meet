@@ -73,6 +73,12 @@ export interface IConfig {
      */
     workerSecretsFile?: string;
 
+    /**
+     * The pipeline's own secret (`COORDINATOR_PIPELINE_SECRET`): it alone sets a worker draining. Unset, nobody can.
+     * It is not a worker's secret and not the hospital system's.
+     */
+    pipelineSecret?: string;
+
     /** The service's key id and its PEM private key; Prosody has the public key (ADR 0009). */
     signingKey: { kid: string; privateKey: string; };
 
@@ -205,6 +211,7 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
             issuer: env.COORDINATOR_TOKEN_ISSUER?.trim() || 'coordinator',
             subject: required(env, 'COORDINATOR_TOKEN_SUBJECT')
         },
+        pipelineSecret: env.COORDINATOR_PIPELINE_SECRET?.trim() || undefined,
         signingKey: {
             kid: required(env, 'COORDINATOR_SIGNING_KID'),
             privateKey: readFileSync(required(env, 'COORDINATOR_SIGNING_KEY_FILE'), 'utf8')

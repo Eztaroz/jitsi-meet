@@ -17,6 +17,7 @@ import { LOST_AFTER_MS, WorkerRegistry } from '../src/workerRegistry.ts';
 import { RecorderBotPool, VideoPlayerPool } from '../src/workers.ts';
 
 const SECRET = 'system-secret';
+const PIPELINE = 'pipeline-secret';
 const { privateKey } = generateKeyPairSync('rsa', {
     modulusLength: 2048,
     privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
@@ -155,7 +156,7 @@ describe('workers send heartbeats to the coordinator service', () => {
             videoBaseUrl: 'https://meet.example/',
             videoPlayer: new VideoPlayerPool(() => registry.videoPlayers())
         });
-        server = createApi({ secret: SECRET, service, workers: registry });
+        server = createApi({ pipelineSecret: PIPELINE, secret: SECRET, service, workers: registry });
 
         return new Promise<void>(resolve => {
             server.listen(0, '127.0.0.1', () => {
@@ -300,10 +301,87 @@ describe('workers send heartbeats to the coordinator service', () => {
 
         assert.equal(status, 200);
         assert.deepEqual(body.workers, [
-            { build: 'abc123', capacity: 2, id: 'bot-1', kind: 'recorder-bot', lost: true, running: 1, url: workers[0].url },
-            { build: 'build-7', capacity: 2, id: 'vp-1', kind: 'video-player', lost: false, running: 1, url: workers[2].url }
+            { build: 'abc123', capacity: 2, id: 'bot-1', kind: 'recorder-bot', draining: false, lost: true, running: 1, url: workers[0].url },
+            { build: 'build-7', capacity: 2, id: 'vp-1', kind: 'video-player', draining: false, lost: false, running: 1, url: workers[2].url }
         ]);
         assert.equal((await call('GET', '/workers', { secret: 'wrong' })).status, 401);
+    });
+
+    const drain = (id: string, draining: unknown, secret = PIPELINE) =>
+        call('PUT', `/workers/${id}/draining`, { body: { draining }, secret });
+
+    it('lets only the pipeline set a worker draining or clear it', async () => {
+        await heartbeat(workers[0]);
+
+        assert.equal((await drain('bot-1', true, SECRET)).status, 403);
+        assert.equal((await drain('bot-1', true, workers[0].secret)).status, 401);
+        assert.equal((await drain('bot-1', true, 'wrong')).status, 401);
+        assert.equal((await call('GET', '/workers')).body.workers[0].draining, false);
+
+        assert.deepEqual((await drain('bot-1', true)).body, { draining: true, id: 'bot-1' });
+        assert.equal((await call('GET', '/workers')).body.workers[0].draining, true);
+        assert.equal((await drain('bot-1', false, SECRET)).status, 403);
+        assert.equal((await call('GET', '/workers')).body.workers[0].draining, true);
+        assert.equal((await drain('bot-1', false)).status, 200);
+        assert.equal((await call('GET', '/workers')).body.workers[0].draining, false);
+    });
+
+    it('refuses to set draining on a worker that is not on the list, or with a body that is not a boolean', async () => {
+        assert.equal((await drain('nobody', true)).status, 404);
+        assert.equal((await drain('bot-1', 'yes')).status, 400);
+        assert.equal((await call('PUT', '/workers/bot-1/draining', { secret: PIPELINE })).status, 400);
+    });
+
+    it('lets the pipeline list the workers to wait for their running count', async () => {
+        await heartbeat(workers[0]);
+        assert.equal((await call('GET', '/workers', { secret: PIPELINE })).body.workers[0].id, 'bot-1');
+    });
+
+    it('tells a worker in its heartbeat answer whether it is draining', async () => {
+        assert.equal((await heartbeat(workers[0])).body.draining, false);
+        await drain('bot-1', true);
+        assert.deepEqual((await heartbeat(workers[0])).body, { draining: true, status: 'ok', sweeper: true });
+        await drain('bot-1', false);
+        assert.equal((await heartbeat(workers[0])).body.draining, false);
+    });
+
+    it('hands no new consultation to a draining recorder bot, and no waiting video to a draining video player', async () => {
+        list(workers);
+        await heartbeat(workers[0]);
+        await heartbeat(workers[1]);
+        await heartbeat(workers[2]);
+
+        const first = (await encounter('HN/1')).id;
+
+        assert.equal(await recordedBy(first), 'bot-2');
+        await drain('bot-2', true);
+        await drain('vp-1', true);
+
+        const second = (await encounter('HN/2')).id;
+
+        assert.equal(await recordedBy(second), 'bot-1');
+        assert.equal((await call('POST', `/encounters/${second}/video`)).status, 503);
+        assert.deepEqual(workers[2].running, []);
+        assert.equal((await call('POST', '/encounters', { body: { hn: 'HN/3' } })).status, 201);
+        assert.equal((await call('POST', '/encounters', { body: { hn: 'HN/4' } })).status, 503);
+
+        await drain('bot-2', false);
+        assert.equal((await call('POST', '/encounters', { body: { hn: 'HN/5' } })).status, 201);
+    });
+
+    it('lets a consultation and a video that run on a draining worker end normally', async () => {
+        await heartbeat(workers[0]);
+        await heartbeat(workers[2]);
+
+        const { id } = await encounter('HN/1');
+
+        assert.equal((await call('POST', `/encounters/${id}/video`)).status, 200);
+        await drain('bot-1', true);
+        await drain('vp-1', true);
+
+        assert.deepEqual(workers[2].running, [ 'HN/1' ]);
+        assert.equal((await call('POST', `/encounters/${id}/video/stop`)).status, 200);
+        assert.deepEqual(workers[2].running, []);
     });
 
     it('names one recorder bot to sweep the evidence storage root, and keeps naming it', async () => {
