@@ -55,7 +55,7 @@ import {
     step
 } from './rules.ts';
 import { type StoreChange, diffState } from './stateChanges.ts';
-import { type IConsultation, type IMoveRecord, type Store, newMoveRecord } from './store.ts';
+import { type IConsultation, type IMoveRecord, type IStore, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
 import { destinationClaims } from './tokens.ts';
@@ -213,7 +213,7 @@ export class CoordinatorService {
 
         /** How old, in milliseconds, a snapshot of the rooms may be for staff reads; 1000 when unset, 0 for none. */
         staffReadRoomsMs?: number;
-        store: Store;
+        store: IStore;
         timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
 

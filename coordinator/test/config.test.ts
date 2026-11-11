@@ -153,6 +153,23 @@ describe('the settings', () => {
         })), /COORDINATOR_VIDEO_PLAYER_MARKER/u);
     });
 
+    it('keep the state in SQLite, in the data directory, unless a MariaDB host is set', () => {
+        assert.equal(loadConfig(env()).database, undefined);
+    });
+
+    it('keep the state in MariaDB when its host is set, and refuse a half-set one', () => {
+        const mariadb = {
+            COORDINATOR_MARIADB_DATABASE: 'coordinator', COORDINATOR_MARIADB_HOST: 'db.internal',
+            COORDINATOR_MARIADB_PASSWORD: 'pw', COORDINATOR_MARIADB_USER: 'coordinator'
+        };
+
+        assert.deepEqual(loadConfig(env(mariadb)).database,
+            { database: 'coordinator', host: 'db.internal', password: 'pw', port: 3306, user: 'coordinator' });
+        assert.equal(loadConfig(env({ ...mariadb, COORDINATOR_MARIADB_PORT: '3307' })).database?.port, 3307);
+        assert.throws(() => loadConfig(env({ ...mariadb, COORDINATOR_MARIADB_PASSWORD: '' })), /COORDINATOR_MARIADB_PASSWORD must be set/u);
+        assert.throws(() => loadConfig(env({ ...mariadb, COORDINATOR_MARIADB_DATABASE: undefined })), /COORDINATOR_MARIADB_DATABASE must be set/u);
+    });
+
     it('have no video player without its URL, and refuse a half-set one', () => {
         assert.equal(loadConfig(env()).videoPlayer, undefined);
         assert.throws(() => loadConfig(env({ COORDINATOR_VIDEO_PLAYER_URL: 'http://vp:8091' })), /COORDINATOR_VIDEO_BASE_URL must be set/u);
