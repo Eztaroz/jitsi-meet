@@ -66,6 +66,12 @@ export interface IEvidenceInput {
 interface IManifestFile {
     bytes: number;
 
+    /**
+     * What a video file holds, as ffprobe names it: "av1", "vp9" or "vp8", the codec the sender used when the track was
+     * copied. Absent for audio, and when the codec could not be read back.
+     */
+    codec?: string;
+
     /** In seconds; null when the file could not be read back, or was never written because no media arrived. */
     duration: number | null;
     endpointId: string;
@@ -118,6 +124,24 @@ async function durationOf(file: string): Promise<number | null> {
         return Number.isFinite(duration) ? duration : null;
     } catch {
         return null;
+    }
+}
+
+/**
+ * Reads the codec of a video file.
+ *
+ * @param {string} file - The file.
+ * @returns {Promise<string|undefined>} The codec's name, or undefined when ffprobe cannot tell.
+ */
+async function videoCodecOf(file: string): Promise<string | undefined> {
+    try {
+        const { stdout } = await execFileAsync('ffprobe', [
+            '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', file
+        ]);
+
+        return stdout.trim() || undefined;
+    } catch {
+        return undefined;
     }
 }
 
@@ -420,6 +444,8 @@ export class EvidenceRecording {
             await rename(raw, final);
         }
 
-        return { ...entry, bytes: await sizeOf(final), duration: await durationOf(final) };
+        const codec = track.kind === 'video' ? await videoCodecOf(final) : undefined;
+
+        return { ...entry, bytes: await sizeOf(final), ...codec ? { codec } : {}, duration: await durationOf(final) };
     }
 }

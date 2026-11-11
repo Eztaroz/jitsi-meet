@@ -455,6 +455,9 @@ export function waitForEvidence(consultationId: string, timeout = 30_000): Promi
 /** One media file of an evidence recording, as its manifest lists it. */
 export interface IEvidenceFile {
     bytes: number;
+
+    /** What a video file holds, as ffprobe names it. Absent for audio. */
+    codec?: string;
     duration: number | null;
     endpointId: string;
     kind: 'audio' | 'video';
@@ -564,6 +567,9 @@ export function findEvidence(storageRoot: string, consultationId: string): strin
 /** What playing a media file all the way through shows. */
 export interface IPlayback {
 
+    /** The video stream's codec as ffprobe names it, such as "av1", "vp9" or "vp8". Empty for audio. */
+    codec: string;
+
     /** The container's duration, in seconds. */
     duration: number;
 
@@ -595,6 +601,7 @@ export function playMedia(file: string): IPlayback {
     }
 
     return {
+        codec: probe([ '-select_streams', 'v:0', '-show_entries', 'stream=codec_name' ]),
         duration: Number(probe([ '-show_entries', 'format=duration' ])),
         heights
     };

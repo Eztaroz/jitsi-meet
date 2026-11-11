@@ -159,6 +159,29 @@ describe('Recorder bot: evidence recording', () => {
         }
     });
 
+    it('every video file holds the sender\'s codec, at the resolution it was forwarded, and decodes cleanly', () => {
+        const videos = manifest.files.filter(f => f.kind === 'video');
+
+        expect(videos.length).toBe(joins.length);
+
+        for (const file of videos) {
+            // playMedia decodes the whole file and fails at the first error.
+            const { codec, heights } = playMedia(evidencePath(consultation.evidenceLocation ?? '', file.name));
+
+            // The browsers send AV1, VP9 or VP8; the manifest names what the file holds.
+            expect([ 'av1', 'vp9', 'vp8' ]).toContain(codec);
+            expect(file.codec).toBe(codec);
+
+            // Every frame has the resolution of a layer the videobridge forwarded: none is empty.
+            expect(heights.length).toBeGreaterThan(0);
+            expect(Math.min(...heights)).toBeGreaterThan(0);
+        }
+
+        for (const file of manifest.files.filter(f => f.kind === 'audio')) {
+            expect(file.codec).toBeUndefined();
+        }
+    });
+
     it('a change of video resolution stays inside one playable file, and the timeline records it', () => {
         const video = manifest.files.find(f => f.endpointId === joins[0].endpointId && f.kind === 'video');
         const { heights } = playMedia(evidencePath(consultation.evidenceLocation ?? '', video?.name));
