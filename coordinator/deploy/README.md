@@ -29,7 +29,34 @@ It is for the hospital's internal network only, and is reached through the web s
 | `COORDINATOR_COORDINATOR_MARKER` | The claim that marks a coordinator, written like the role markers. Default `user.hospital_role=coordinator`. |
 | `COORDINATOR_VIDEO_PLAYER_URL`, `COORDINATOR_VIDEO_PLAYER_SECRET`, `COORDINATOR_VIDEO_BASE_URL`, `COORDINATOR_VIDEO_PLAYER_MARKER` | Turn the waiting videos on. The first two are the [video player service](../../video-player/deploy/README.md)'s base URL and its `VIDEO_PLAYER_API_SECRET`; set together with the base URL of the web server that hosts the video files (for example `https://meet.example/`), which each video's `file` in the rooms file is resolved against. The marker, written like the role markers, is the claim the service puts in the token the video player joins a room with (for example `user.hospital_role=video_player`); set the same in the recorder bot's `RECORDER_BOT_VIDEO_PLAYER_MARKER` and in the mod that guards the patient's room. `COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS` (default 45) is how long to wait for the video player to start a video, which includes a Chromium cold start; when it runs out the service tells the video player to stop that room, so nothing plays unseen. Without the URL there are no videos. The rooms file lists them, see "Waiting videos" below. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
-| `COORDINATOR_DATA_DIR` | Where the database is. Default `/var/lib/coordinator`; mount a volume there. |
+| `COORDINATOR_DATA_DIR` | Where the SQLite database is. Default `/var/lib/coordinator`; mount a volume there. Not used when `COORDINATOR_MARIADB_HOST` is set. |
+| `COORDINATOR_MARIADB_HOST`, `COORDINATOR_MARIADB_PORT` (default 3306), `COORDINATOR_MARIADB_DATABASE`, `COORDINATOR_MARIADB_USER`, `COORDINATOR_MARIADB_PASSWORD` | Keep the state in the hospital's MariaDB instead of SQLite. Setting the host turns it on, and then the other three are required. See "State in MariaDB" below. |
+
+## State in MariaDB
+
+By default the service keeps its encounters, moves, audit log, satisfaction surveys and consultations in SQLite, in `COORDINATOR_DATA_DIR`: enough for a deployment on one host. To keep them in the hospital's MariaDB instead, so that losing the service's VM loses nothing (ADR 0015), set `COORDINATOR_MARIADB_HOST`, `_PORT`, `_DATABASE`, `_USER` and `_PASSWORD`. The service refuses to start when the database cannot be reached.
+
+**The database team makes the schema and the user.** It must be a schema of its own on the MariaDB of the service's own VM, never one of the hospital system's databases, and the user may change that schema and nothing else:
+
+```sql
+CREATE DATABASE coordinator CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+CREATE USER 'coordinator'@'<the service's host>' IDENTIFIED BY '<a password the team keeps in the deployment's secrets>';
+GRANT ALL PRIVILEGES ON coordinator.* TO 'coordinator'@'<the service's host>';
+```
+
+The service needs no other right: not `GRANT OPTION`, not `FILE`, not `SUPER`, and nothing on any other schema. Table rights on its own schema (create, alter, index, select, insert, update, delete) are what it uses.
+
+**Schema migrations.** The service applies its own numbered migrations (`coordinator/src/migrations.ts`) when it starts and records each one in the table `schema_migrations`, so nobody runs a script at a release. A start with nothing new applies nothing. Two instances starting together take turns, so the second finds nothing to do. MariaDB cannot roll back a schema change: a migration that fails half-way stops the start, and is not recorded.
+
+**Moving a deployment from SQLite.** Do it once, with the service stopped, so that nothing is written to the file meanwhile:
+
+1. Stop the coordinator service. Keep its `coordinator-data` volume: it is the way back.
+2. Run the copy where the volume and the MariaDB settings are, for example from the service's own image:
+   `docker run --rm -v coordinator-data:/var/lib/coordinator -e COORDINATOR_MARIADB_HOST=... -e COORDINATOR_MARIADB_PORT=3306 -e COORDINATOR_MARIADB_DATABASE=coordinator -e COORDINATOR_MARIADB_USER=coordinator -e COORDINATOR_MARIADB_PASSWORD=... <the coordinator image> node --disable-warning=ExperimentalWarning src/copySqliteToMariadb.ts`
+   It applies the migrations, then copies every encounter, move, audit entry, survey and consultation, and the patients' own rooms and the staff's stations, and prints how many of each. It refuses a database that already holds any, so a second run copies nothing and cannot write the audit log twice. Without the volume's path as an argument it reads `COORDINATOR_DATA_DIR`.
+3. Set the `COORDINATOR_MARIADB_*` settings of the service and start it. From then on the SQLite file is no longer read or written: keep it until the backups of the MariaDB are proven, then delete it.
+
+The list of workers is not in the database. From then on, back up the MariaDB with the database team's backups, not the `coordinator-data` volume.
 
 ## Health questionnaires
 

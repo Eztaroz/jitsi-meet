@@ -21,11 +21,30 @@ stages:
   - build
   - deploy
 
+# The coordinator service's tests run its store suite against SQLite and, through COORDINATOR_TEST_MARIADB, against this
+# MariaDB service container (ADR 0015). The container lives for the job only and holds nothing but test data; its user
+# owns one schema, as the service's own user does in production. The suite drops the tables of that schema before each test.
 test-coordinator:
   stage: test
   image: node:24-bookworm-slim
+  services:
+    - name: mariadb:11.4
+      alias: mariadb
+  variables:
+    MARIADB_DATABASE: coordinator_test
+    MARIADB_USER: coordinator_test
+    MARIADB_PASSWORD: throwaway-test-only
+    MARIADB_ROOT_PASSWORD: throwaway-test-only
+    COORDINATOR_TEST_MARIADB: mariadb://coordinator_test:throwaway-test-only@mariadb:3306/coordinator_test
   script:
     - cd coordinator
+    - npm ci
+    # The service container takes a few seconds to accept connections.
+    - |
+      for i in $(seq 1 60); do
+        node -e "require('net').connect(3306, 'mariadb').on('connect', () => process.exit(0)).on('error', () => process.exit(1))" && break
+        sleep 2
+      done
     - node --disable-warning=ExperimentalWarning --test test/*.test.ts
   tags:
     - HOSAPP02

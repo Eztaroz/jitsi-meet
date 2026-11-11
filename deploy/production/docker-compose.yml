@@ -294,6 +294,13 @@ services:
             COORDINATOR_COORDINATOR_MARKER: ${COORDINATOR_MARKER:-user.hospital_role=coordinator}
             COORDINATOR_DATA_DIR: /var/lib/coordinator
             COORDINATOR_ISSUER_KEYS: /etc/coordinator/issuer-keys
+            # The state is kept in SQLite in COORDINATOR_DATA_DIR, unless the hospital's database team has made a schema for it
+            # on its MariaDB: set COORDINATOR_MARIADB_HOST in .env and the service keeps its state there (ADR 0015).
+            COORDINATOR_MARIADB_DATABASE: ${COORDINATOR_MARIADB_DATABASE:-}
+            COORDINATOR_MARIADB_HOST: ${COORDINATOR_MARIADB_HOST:-}
+            COORDINATOR_MARIADB_PASSWORD: ${COORDINATOR_MARIADB_PASSWORD:-}
+            COORDINATOR_MARIADB_PORT: ${COORDINATOR_MARIADB_PORT:-3306}
+            COORDINATOR_MARIADB_USER: ${COORDINATOR_MARIADB_USER:-}
             COORDINATOR_PATIENT_MARKER: ${PATIENT_MARKER:-user.hospital_role=patient}
             COORDINATOR_PROSODY_URL: http://prosody:5280
             COORDINATOR_RECORDER_BOT_SECRET: ${RECORDER_BOT_API_SECRET}
