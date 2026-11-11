@@ -14,7 +14,7 @@ import { keyLookup } from './screenAuth.ts';
 import { createStandbyApi, waitUntilActive, watchActive } from './standby.ts';
 import type { IStore } from './store.ts';
 import { VideoPlayer } from './videoPlayer.ts';
-import { WorkerRegistry } from './workerRegistry.ts';
+import { HEARTBEAT_MS, WorkerRegistry } from './workerRegistry.ts';
 import { RecorderBotPool, VideoPlayerPool } from './workers.ts';
 
 const config = loadConfig();
@@ -63,6 +63,10 @@ const registry = config.workerSecretsFile
     : undefined;
 let service: CoordinatorService;
 
+// Just after a start the heartbeats have not told of the workers yet: work waits for them a heartbeat period, rather
+// than being refused (ADR 0014).
+const waitForWorkers = { waitForWorkersUntil: registry ? Date.now() + HEARTBEAT_MS + 1_000 : 0 };
+
 try {
     service = new CoordinatorService({
         auditKey: config.auditKey,
@@ -71,7 +75,7 @@ try {
         prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
         recorderBot: new RecorderBotPool(registry
             ? () => registry.recorderBots()
-            : config.recorderBots.map(w => new RecorderBot(w.url, w.secret, w.id))),
+            : config.recorderBots.map(w => new RecorderBot(w.url, w.secret, w.id)), waitForWorkers),
         retentionMs: config.retentionMs,
         retentionSweepMs: config.retentionSweepMs,
         roleMarkers: config.roleMarkers,
@@ -83,7 +87,8 @@ try {
         videoPlayer: config.videoPlayer && new VideoPlayerPool(registry
             ? () => registry.videoPlayers()
             : config.videoPlayer.workers.map(
-                w => new VideoPlayer(w.url, w.secret, { id: w.id, playTimeoutMs: config.videoPlayer!.playTimeoutMs })))
+                w => new VideoPlayer(w.url, w.secret, { id: w.id, playTimeoutMs: config.videoPlayer!.playTimeoutMs })),
+            waitForWorkers)
     });
 } catch (error) {
     // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).

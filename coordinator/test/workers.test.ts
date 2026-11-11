@@ -335,6 +335,26 @@ describe('the pools', () => {
         assert.deepEqual(await pool.playingRooms(), [ 'HN/2' ]);
     });
 
+    it('wait, just after the coordinator service starts, for the first heartbeat to tell of a worker', async () => {
+        const bot = fakeRecorder('rb-1', 2);
+        let known: IRecorderBotWorker[] = [];
+        const pool = new RecorderBotPool(() => known, { waitForWorkersUntil: Date.now() + 2_000 });
+
+        setTimeout(() => {
+            known = [ bot.worker ];
+        }, 300);
+
+        assert.equal(await pool.recordRoom('HN1', 'c1'), 'c1');
+        assert.equal(pool.workerOf('c1'), 'rb-1');
+    });
+
+    it('say unreachable, and not at capacity, when no worker is known', async () => {
+        await assert.rejects(new RecorderBotPool(() => [], { waitForWorkersUntil: Date.now() - 1 }).recordRoom('HN1', 'c1'),
+            { code: 'unreachable' });
+        await assert.rejects(new VideoPlayerPool(() => []).play({ room: 'r', token: 't', videoUrl: 'u' }),
+            { code: 'unreachable' });
+    });
+
     it('do not skip a worker over a video that is already playing in the room', async () => {
         const player = fakeVideoPlayer('vp-1', 2);
 
