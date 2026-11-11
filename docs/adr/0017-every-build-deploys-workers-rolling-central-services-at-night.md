@@ -18,7 +18,7 @@ Every change merged to the main branch on the hospital's GitLab is built into im
 ## Consequences
 
 - This GitLab has no pipeline schedules, so a cron job on one of the telemedicine service's VMs starts the night window's pipeline through GitLab's pipeline trigger. The health checks and the rollback stay in the pipeline, in one place.
-- Each image is pushed with two tags: `latest`, which the test deployment follows for end-to-end tests run by hand, and `production`, which production follows. A rollback moves `production` back to the previous build.
+- Each image is pushed with two tags: `latest`, which the test deployment follows for end-to-end tests run by hand, and `production`, which production follows. A rollback moves `production` back to the previous build. A worker's VM follows a tag of its own, `production-<worker id>`, so that the pipeline can move one worker to a build while the others stay; `production` moves once every worker is healthy on the build.
 - After each step the pipeline checks that the service is healthy. If it is not healthy within 2 minutes, the pipeline rolls that step back and stops. Healthy is what the services report, not a test conference:
   - a worker: its heartbeat reaches the coordinator service with the new build, and its own health check passes;
   - the coordinator service: its health check passes and it holds the database lock (ADR 0015);

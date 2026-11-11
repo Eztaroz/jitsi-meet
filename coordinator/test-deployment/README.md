@@ -5,7 +5,7 @@ The recorder bot's JWT test deployment (`recorder-bot/test-deployment`, with `do
 | Service | Where |
 |---|---|
 | Jitsi web | https://localhost:8443 |
-| Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret` |
+| Recorder bot control API | http://localhost:8090, bearer secret `recorder-bot-test-secret`; the second recorder bot worker is at http://localhost:8095, secret `recorder-bot-2-test-secret` |
 | Coordinator screen | https://localhost:8443/coordinator/screen |
 | Coordinator API | https://localhost:8443/coordinator/, bearer secret `coordinator-test-secret` |
 | Video player control API | http://localhost:8094, bearer secret `video-player-test-secret` (host network, like the recorder bot) |
@@ -32,7 +32,9 @@ cd coordinator/test-deployment
 docker compose -f ../../recorder-bot/test-deployment/docker-compose.yml -f ../../recorder-bot/test-deployment/docker-compose.jwt.yml -f docker-compose.yml up -d
 ```
 
-On Docker Desktop (Mac, Windows) the recorder bot's host network is the VM's, and `host-gateway` is the machine itself, so the coordinator service cannot reach the bot there. Set `COORDINATOR_RECORDER_BOT_URL` to `http://<gateway of the recorder-bot-test_meet.jitsi network>:8090` (`docker network inspect recorder-bot-test_meet.jitsi`), and publish the bot ports for the specs on the host, for example with `alpine/socat` containers (the specs' `RECORDER_BOT_*_API_URL` settings).
+The two recorder bots (`recorder-bot-1` on port 8090 and `recorder-bot-2` on 8095) and the video player (`video-player-1`) are workers that send heartbeats to the coordinator service through the web server's TLS (ADR 0014); the coordinator service takes the address of their control APIs from the heartbeats. `workers.json` lists their ids and secrets, which are test-only placeholders, never real ones; the coordinator service reads it again whenever it changes, so adding or removing a line needs no restart (edit it in place, as a file mounted into a container does not follow a file that is replaced). `GET /coordinator/workers` lists the workers with their kind, build, capacity, running count and whether they are lost. Without a heartbeat for 15 seconds a worker gets no new work.
+
+On Docker Desktop (Mac, Windows) the recorder bot's host network is the VM's, and `host-gateway` is the machine itself, so the coordinator service cannot reach the bots there. Set `WORKER_ADDRESS` to `<gateway of the recorder-bot-test_meet.jitsi network>` (`docker network inspect recorder-bot-test_meet.jitsi`) before `up`, so that the workers advertise it, and publish the bot ports for the specs on the host, for example with `alpine/socat` containers (the specs' `RECORDER_BOT_*_API_URL` settings).
 
 The specs that need the video player (`waitingVideo`, `staffVideo`) run because `tests.env` sets `VIDEO_PLAYER_AVAILABLE=true`; drop that line to skip them.
 

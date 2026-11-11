@@ -6,6 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { createApi } from './api.ts';
 import { DAY_MS, loadConfig } from './config.ts';
 import { Consultations } from './consultations.ts';
+import { Heartbeat } from './heartbeat.ts';
 import { log } from './log.ts';
 import { Periodic } from './periodic.ts';
 import { RetentionSweeper } from './retention.ts';
@@ -21,7 +22,37 @@ const api = createApi({ consultations, maxConsultations: config.maxConsultations
 
 const storage = { consultations, spoolDir: config.spoolDir, storageRoot: config.storageRoot };
 const retrier = new SpoolRetrier(storage);
-const sweeper = new RetentionSweeper({ ...storage, folderRefKey: config.apiSecret, retentionMs: config.retentionMs });
+
+// Tells the coordinator service this worker is up, so that it is handed consultations (ADR 0014).
+const heartbeat = config.heartbeat && new Heartbeat({
+    ...config.heartbeat,
+    onTakenOver: ids => {
+        // The coordinator service gave these consultations to another recorder bot while this one was cut off from it.
+        for (const id of ids) {
+            const consultation = consultations.get(id);
+
+            if (consultation?.isRunning()) {
+                log.warn('stopping a consultation that was taken over', { consultationId: id });
+                consultation.requestStop().catch(() => undefined);
+            }
+        }
+    },
+    secret: config.apiSecret,
+    status: () => ({
+        capacity: config.maxConsultations,
+        consultations: consultations.active().map(c => c.id),
+        running: consultations.active().length
+    })
+});
+
+// Named by the coordinator service in its answers to the heartbeats: with several recorder bots on one storage root,
+// only one sweeps it (ADR 0014). Without heartbeats there is one recorder bot, and it sweeps.
+const sweeper = new RetentionSweeper({
+    ...storage,
+    folderRefKey: config.apiSecret,
+    mayEmptyStorageRoot: () => !heartbeat || heartbeat.sweeper,
+    retentionMs: config.retentionMs
+});
 
 // Both start with what the service left before it last stopped.
 const housekeeping = [
@@ -34,6 +65,7 @@ log.info('retention period', { retentionDays: config.retentionMs / DAY_MS, sweep
 for (const task of housekeeping) {
     task.start();
 }
+heartbeat?.start();
 
 let shuttingDown = false;
 
@@ -49,6 +81,7 @@ async function shutdown(signal: string) {
     }
     shuttingDown = true;
     log.info('shutting down', { signal });
+    heartbeat?.stop();
     api.close();
     await Promise.all(housekeeping.map(task => task.stop()));
     await consultations.shutdown();

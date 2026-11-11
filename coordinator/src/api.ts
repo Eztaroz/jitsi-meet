@@ -8,6 +8,7 @@ import { type IncomingMessage, type Server, type ServerResponse, createServer } 
 
 import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { errorCode, log } from './log.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
@@ -26,6 +27,7 @@ import type { ICoordinatorAuth } from './screenAuth.ts';
 import { createScreenRoutes } from './screenRoutes.ts';
 import { createStaffRoutes } from './staffRoutes.ts';
 import { createSurveyRoutes } from './surveyRoutes.ts';
+import type { WorkerRegistry } from './workerRegistry.ts';
 
 /** Who the audit log names for a call with the shared bearer secret. */
 const SYSTEM = 'system';
@@ -41,7 +43,7 @@ const DEFAULT_REPORT_DAYS = 30;
  * @param {string} b - The other.
  * @returns {boolean}
  */
-function sameSecret(a: string, b: string): boolean {
+export function sameSecret(a: string, b: string): boolean {
     const digest = (s: string) => createHash('sha256').update(s).digest();
 
     return timingSafeEqual(digest(a), digest(b));
@@ -185,18 +187,27 @@ function reportTime(value: string | null, fallback: Date): Date {
  *
  * @param {Object} options - Options.
  * @param {CoordinatorService} options.service - The coordinator service.
+ * @param {Function} options.holdsLock - Whether this instance holds the active lock, for the health check; without it
+ * the instance is the only one and always active.
  * @param {ICoordinatorAuth} options.screen - How coordinators sign in; without it there is no screen.
  * @param {string} options.secret - The shared bearer secret.
  * @param {ICoordinatorAuth} options.survey - The hospital's issuer with the patient marker, which a patient's token
  * must match to send a satisfaction survey; without it there is no survey.
  * @returns {Server}
  */
-export function createApi({ screen, secret, service, staff, survey }: {
+export function createApi({ holdsLock, pipelineSecret, screen, secret, service, staff, survey, workers }: {
+    holdsLock?: () => boolean;
+
+    /** The pipeline's own secret: it alone sets a worker draining; unset, nothing can (ADR 0014). */
+    pipelineSecret?: string;
     screen?: ICoordinatorAuth;
     secret: string;
     service: CoordinatorService;
     staff?: ICoordinatorAuth;
     survey?: ICoordinatorAuth;
+
+    /** The workers that send heartbeats; unset, the workers are a fixed list and there is nothing to receive. */
+    workers?: WorkerRegistry;
 }): Server {
     /**
      * Handles the requests that act: starting an encounter, moving a participant and changing a stage. The system and
@@ -397,7 +408,61 @@ export function createApi({ screen, secret, service, staff, survey }: {
             return;
         }
 
-        if (scheme !== 'Bearer' || !token || !sameSecret(token, secret)) {
+        // A worker's heartbeat carries the worker's own secret, not the system's (ADR 0014).
+        if (path === '/workers/heartbeat' && req.method === 'POST' && workers) {
+            let reply;
+            let takenOver: string[] = [];
+
+            try {
+                const heartbeat = await readJson(req);
+
+                reply = workers.heartbeat(scheme === 'Bearer' ? token : undefined, heartbeat);
+                // The answer tells a worker that was cut off which of its consultations were taken over (ADR 0016).
+                const { consultations, id } = heartbeat as { consultations?: unknown; id?: unknown; };
+
+                takenOver = Array.isArray(consultations)
+                    ? service.takenOverFrom(String(id), consultations.filter((c): c is string => typeof c === 'string').slice(0, 1000))
+                    : [];
+            } catch (error) {
+                if (error instanceof HttpError && error.status === 401) {
+                    res.setHeader('www-authenticate', 'Bearer');
+                }
+                throw error;
+            }
+            send(res, 200, { status: 'ok', ...reply, takenOver });
+
+            return;
+        }
+
+        // Setting a worker draining is the pipeline's alone: the hospital system's secret is refused, not only a wrong one.
+        const drainMatch = /^\/workers\/([^/]+)\/draining$/u.exec(path);
+
+        if (drainMatch && req.method === 'PUT' && workers) {
+            if (!pipelineSecret || scheme !== 'Bearer' || !token || !sameSecret(token, pipelineSecret)) {
+                if (scheme === 'Bearer' && token && sameSecret(token, secret)) {
+                    throw new HttpError(403, 'only the pipeline sets a worker draining');
+                }
+                res.setHeader('www-authenticate', 'Bearer');
+                throw new HttpError(401, 'missing or wrong bearer secret');
+            }
+
+            const body = await readJson(req) as { draining?: unknown; } | null;
+            const id = decodeURIComponent(drainMatch[1]);
+
+            if (typeof body?.draining !== 'boolean') {
+                throw new HttpError(400, 'draining must be true or false');
+            }
+            workers.setDraining(id, body.draining);
+            send(res, 200, { draining: body.draining, id });
+
+            return;
+        }
+
+        // The pipeline may read the list of workers, to wait until a draining one runs nothing.
+        const pipelineReads = req.method === 'GET' && path === '/workers' && pipelineSecret && scheme === 'Bearer'
+            && token && sameSecret(token, pipelineSecret);
+
+        if (!pipelineReads && (scheme !== 'Bearer' || !token || !sameSecret(token, secret))) {
             res.setHeader('www-authenticate', 'Bearer');
             throw new HttpError(401, 'missing or wrong bearer secret');
         }
@@ -405,10 +470,18 @@ export function createApi({ screen, secret, service, staff, survey }: {
         const { pathname } = new URL(req.url ?? '/', 'http://localhost');
 
         if (pathname === '/health' && req.method === 'GET') {
-            send(res, 200, {
+            const active = holdsLock ? holdsLock() : true;
+
+            send(res, active ? 200 : 503, {
+                active,
                 openEncounters: service.state.encounters.filter(e => e.stage !== 'done').length,
-                status: 'ok'
+                status: active ? 'ok' : 'standby'
             });
+
+            return;
+        }
+        if (pathname === '/workers' && req.method === 'GET' && workers) {
+            send(res, 200, { workers: workers.list() });
 
             return;
         }
@@ -481,6 +554,21 @@ export function createApi({ screen, secret, service, staff, survey }: {
             return;
         }
 
+        const consultationsMatch = /^\/encounters\/([^/]+)\/consultations$/.exec(pathname);
+
+        if (consultationsMatch && req.method === 'GET') {
+            const found = service.consultationsOf(decodeURIComponent(consultationsMatch[1]));
+
+            if (!found) {
+                throw new HttpError(404, 'no such encounter');
+            }
+            send(res, 200, { consultations: found.map(c => ({
+                id: c.id, recorderBot: c.recorderBot, recording: c.recording, startedAt: c.startedAt
+            })) });
+
+            return;
+        }
+
         const encounterMatch = /^\/encounters\/([^/]+)$/.exec(pathname);
 
         if (encounterMatch && req.method === 'GET') {
@@ -509,6 +597,10 @@ export function createApi({ screen, secret, service, staff, survey }: {
         handle(req, res).catch(error => {
             if (error instanceof HttpError) {
                 send(res, error.status, { error: error.message });
+            } else if (error instanceof DatabaseError) {
+                // What needs the database was refused before anything was done, so the caller can ask again later.
+                log.warn('refused: the database cannot be written', { error: errorCode(error) });
+                send(res, 503, { error: 'the database cannot be written now; nothing was done' });
             } else {
                 log.error('API request failed', { error: errorCode(error) });
                 send(res, 500, { error: 'internal error' });

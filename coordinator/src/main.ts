@@ -1,26 +1,77 @@
 /**
  * The coordinator service: runs the API.
  */
+import type { Server } from 'node:http';
+
 import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
 import { CoordinatorService } from './coordinatorService.ts';
 import { log } from './log.ts';
+import { openStore } from './openStore.ts';
 import { Prosody } from './prosody.ts';
 import { RecorderBot } from './recorderBot.ts';
 import { keyLookup } from './screenAuth.ts';
-import { Store } from './store.ts';
+import { createStandbyApi, waitUntilActive, watchActive } from './standby.ts';
+import type { IStore } from './store.ts';
 import { VideoPlayer } from './videoPlayer.ts';
+import { WorkerRegistry } from './workerRegistry.ts';
+import { RecorderBotPool, VideoPlayerPool } from './workers.ts';
 
 const config = loadConfig();
-const store = new Store(config.dataDir);
+let store: IStore;
+
+try {
+    store = openStore(config);
+} catch (error) {
+    // The database cannot be reached, or its schema cannot be brought up to date: there is no state to decide from.
+    log.error('refusing to start: cannot open the store', { reason: (error as Error).message });
+    process.exit(1);
+}
+
+// One instance is active at a time. Another waits as standby, with no state in memory, and takes over when the
+// active one is gone, reading what it wrote (ADR 0015).
+let standbyApi: Server | undefined;
+const standbySignal = () => {
+    store.close();
+    process.exit(0);
+};
+
+process.on('SIGTERM', standbySignal);
+process.on('SIGINT', standbySignal);
+await waitUntilActive(store, {
+    onStandby: () => {
+        log.info('standby: another instance is active', { port: config.apiPort });
+        standbyApi = createStandbyApi(config.apiSecret);
+        standbyApi.listen(config.apiPort);
+    }
+});
+process.off('SIGTERM', standbySignal);
+process.off('SIGINT', standbySignal);
+if (standbyApi) {
+    const standby = standbyApi;
+
+    await new Promise<void>(resolve => {
+        standby.close(() => resolve());
+        standby.closeAllConnections();
+    });
+}
+log.info('active: holding the coordinator lock');
+
+// With a list of worker secrets, the workers are the ones that send heartbeats; else a fixed list (ADR 0014).
+const registry = config.workerSecretsFile
+    ? new WorkerRegistry({ file: config.workerSecretsFile, playTimeoutMs: config.videoPlayer?.playTimeoutMs })
+    : undefined;
 let service: CoordinatorService;
 
 try {
     service = new CoordinatorService({
         auditKey: config.auditKey,
         layout: config.layout,
+        lostRecorderBots: registry && (claimed => registry.lostRecorderBots(claimed)),
         prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
-        recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
+        recorderBot: new RecorderBotPool(registry
+            ? () => registry.recorderBots()
+            : config.recorderBots.map(w => new RecorderBot(w.url, w.secret, w.id))),
         retentionMs: config.retentionMs,
         retentionSweepMs: config.retentionSweepMs,
         roleMarkers: config.roleMarkers,
@@ -29,8 +80,10 @@ try {
         timeZone: config.timeZone,
         token: config.token,
         videoBaseUrl: config.videoPlayer?.baseUrl,
-        videoPlayer: config.videoPlayer && new VideoPlayer(config.videoPlayer.url, config.videoPlayer.secret,
-            { playTimeoutMs: config.videoPlayer.playTimeoutMs })
+        videoPlayer: config.videoPlayer && new VideoPlayerPool(registry
+            ? () => registry.videoPlayers()
+            : config.videoPlayer.workers.map(
+                w => new VideoPlayer(w.url, w.secret, { id: w.id, playTimeoutMs: config.videoPlayer!.playTimeoutMs })))
     });
 } catch (error) {
     // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).
@@ -42,12 +95,17 @@ try {
 service.resume().catch(error => log.error('could not resume the moves', { error: (error as Error).name }));
 service.startDayEnds();
 service.startRetention();
+if (registry) {
+    service.startTakeover();
+}
 const issuer = config.screen && {
     acceptedAudiences: config.screen.acceptedAudiences,
     acceptedIssuers: config.screen.acceptedIssuers,
     keyFor: keyLookup(config.screen.keys)
 };
 const api = createApi({
+    holdsLock: () => store.holdsActive(),
+    pipelineSecret: config.pipelineSecret,
     screen: issuer && config.screen && { ...issuer, marker: config.screen.marker },
 
     // A patient's page sends the survey with the patient's token, from the same issuer as the coordinators'.
@@ -56,10 +114,20 @@ const api = createApi({
     service,
 
     // Staff act with their own token from the same issuer, which carries the staff marker.
-    staff: issuer && config.roleMarkers.staff && { ...issuer, marker: config.roleMarkers.staff }
+    staff: issuer && config.roleMarkers.staff && { ...issuer, marker: config.roleMarkers.staff },
+    workers: registry
 });
 
 api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPort }));
+
+// Without the lock another instance may be active: stop, and the supervisor starts this one again as standby.
+const lockWatch = watchActive(store, {
+    onLost: () => {
+        log.error('lost the active place: stopping');
+        service.stop();
+        process.exit(1);
+    }
+});
 
 /**
  * Stops the API, then exits.
@@ -69,6 +137,7 @@ api.listen(config.apiPort, () => log.info('API listening', { port: config.apiPor
  */
 function shutdown(signal: string) {
     log.info('shutting down', { signal });
+    clearInterval(lockWatch);
     service.stop();
     api.close(() => {
         store.close();

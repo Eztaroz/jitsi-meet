@@ -10,7 +10,7 @@ import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Consultations } from './consultations.ts';
-import { evidenceLocation, moveIntoStorage, readManifest } from './evidence.ts';
+import { evidenceLocation, readManifest, storeFolder } from './evidence.ts';
 import { errorCode, log } from './log.ts';
 
 /** A consultation's spool folder is named after its consultation id. */
@@ -92,10 +92,10 @@ export class SpoolRetrier {
             return;
         }
 
-        const location = evidenceLocation(manifest.room, manifest.start);
+        const location = evidenceLocation(manifest.room, manifest.start, manifest.part);
 
         try {
-            await moveIntoStorage(folder, this.storageRoot, location);
+            await storeFolder(folder, this.storageRoot, location);
         } catch (error) {
             log.warn('could not move a spooled evidence recording to the storage root; will retry', {
                 consultationId,

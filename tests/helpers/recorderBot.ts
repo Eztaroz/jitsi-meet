@@ -108,11 +108,13 @@ function callApi(route: string, init: RequestInit = {}, apiUrl = config.recorder
  *
  * @param {string} hn - The patient's HN.
  * @param {string} apiUrl - Which instance of the service; the main one by default.
+ * @param {string|null} consultationId - The id the coordinator service makes; a random one by default, none for null.
  * @returns {Promise<Object>} The HTTP status and the body.
  */
-export async function postConsultation(hn: string, apiUrl?: string): Promise<{ body: IConsultation; status: number; }> {
+export async function postConsultation(hn: string, apiUrl?: string,
+        consultationId: string | null = randomUUID()): Promise<{ body: IConsultation; status: number; }> {
     const response = await callApi('/consultations', {
-        body: JSON.stringify({ hn }),
+        body: JSON.stringify({ consultationId, hn }),
         method: 'POST'
     }, apiUrl);
 
@@ -130,7 +132,7 @@ export async function postConsultation(hn: string, apiUrl?: string): Promise<{ b
 export async function postStationConsultation(
         hn: string, room: string, patient: string): Promise<{ body: IConsultation; status: number; }> {
     const response = await callApi('/consultations', {
-        body: JSON.stringify({ hn, patient, room }),
+        body: JSON.stringify({ consultationId: randomUUID(), hn, patient, room }),
         method: 'POST'
     });
 
@@ -455,6 +457,9 @@ export function waitForEvidence(consultationId: string, timeout = 30_000): Promi
 /** One media file of an evidence recording, as its manifest lists it. */
 export interface IEvidenceFile {
     bytes: number;
+
+    /** What a video file holds, as ffprobe names it. Absent for audio. */
+    codec?: string;
     duration: number | null;
     endpointId: string;
     kind: 'audio' | 'video';
@@ -564,6 +569,9 @@ export function findEvidence(storageRoot: string, consultationId: string): strin
 /** What playing a media file all the way through shows. */
 export interface IPlayback {
 
+    /** The video stream's codec as ffprobe names it, such as "av1", "vp9" or "vp8". Empty for audio. */
+    codec: string;
+
     /** The container's duration, in seconds. */
     duration: number;
 
@@ -595,6 +603,7 @@ export function playMedia(file: string): IPlayback {
     }
 
     return {
+        codec: probe([ '-select_streams', 'v:0', '-show_entries', 'stream=codec_name' ]),
         duration: Number(probe([ '-show_entries', 'format=duration' ])),
         heights
     };

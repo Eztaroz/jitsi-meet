@@ -178,24 +178,25 @@ Run one service per deployment. Each consultation runs in its own browser proces
 
 ### Capacity
 
-The prototype measured, on a shared 4-vCPU host without GPU:
+The bot copies each video track as the sender encoded it, so a video track no longer costs a core. What a consultation costs is now the browser's decoding-free copy, the remux when it finalises, and the audio. Capacity per worker is:
 
-- about one CPU core per recorded 720p video track, since the bot re-encodes each one;
-- about 0.4 GB of RAM per pair of participants recorded.
+    RECORDER_BOT_MAX_CONSULTATIONS = floor(cores / measured cores per consultation) with headroom
 
-A load test of the Docker deployment on a 4-vCPU, 8 GB VM without GPU (2026-11-11) recorded consultations of a patient and one staff member, each sending 720p from Chrome's fake camera:
+where the measured cores per consultation is taken from the load test below, with real cameras, and the headroom covers what a synthetic test does not show: cameras that change resolution, a shared screen, and several consultations finalising at once. Leave at least 25% of the cores free.
 
-| `RECORDER_BOT_MAX_HEIGHT` | Video the bot records | Recorder bot CPU per consultation | Host CPU with 8 consultations |
-|---|---|---|---|
-| `720` | 1280×720 | 2.5 to 3.9 cores: one consultation used the whole host | not reached |
-| `480` | 640×360 | about 0.19 of a core | 42% |
-| `360` | 640×360 | about 0.18 of a core | 48% |
+`RECORDER_BOT_MAX_HEIGHT` caps the video the bot asks the videobridge for. The videobridge forwards the 180, 360 or 720 line layer, so any cap below 720 records the 360-line layer. Because the bot copies video without decoding it, `720` is also cheap: a prototype load test of copied 720p (Chrome fake camera, 4-vCPU test VM) took about 0.18 of a core per consultation, 48% of the host with 8 consultations. A cap now saves storage and bandwidth, not CPU. With the earlier decode-and-encode path (before the copy), 720 needed 2.5 to 3.9 cores per consultation and 360 about 0.18.
 
-The videobridge forwards one of the layers the sender encodes, 180, 360 or 720 lines high, so `480` records 360 lines, like `360`. With 8 consultations the videobridge used about 0.3 of a core and the host 3.5 GB of RAM. A real camera is harder to encode than the fake one, so leave headroom.
+Measured results (the load test is run by hand on the test VM: 1 to 8 consultations, 5 minutes per level, 720p; record the build and the date with each row):
 
-At `720`, a consultation with a patient and one staff member records two video tracks, so it needs about two cores or more. Set `RECORDER_BOT_MAX_CONSULTATIONS` to about half the host's cores, leaving some headroom; the default of 2 suits a 4-core host. At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
+| Date | Build | Cameras | Consultations | CPU per consultation | Notes |
+|---|---|---|---|---|---|
+| not yet measured | | | | | The copy path has not been run in a real browser with real cameras. Until a row is filled in, keep the earlier setting (about half the host's cores, default 2 on a 4-core host), which is on the safe side. |
 
-Storage is at most about 680 MB per 30-minute consultation with two video participants (ADR 0003). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
+About 0.4 GB of RAM per pair of participants recorded (prototype figure, to be rechecked in the same test). At the limit, the service refuses further consultations with `503` rather than record them badly. A consultation counts until it reaches a final status: while it finalises, it still remuxes its files.
+
+Storage follows the sender's bitrate (ADR 0003): about 1 Mbps per AV1 camera at 720p, so about 0.5 GB per 30-minute consultation with two video participants, and more for a shared screen (bitrate in Mbps times 450 MB per hour, per video track). The spool needs that much for each consultation in progress, and for each evidence recording it keeps while the storage root is unavailable (see [When the storage root is unavailable](#when-the-storage-root-is-unavailable)); the storage root needs it times the consultations per day times the retention period.
+
+A Review file can be made from a recording whose video tracks are AV1, VP9 or VP8, mixed in any way (`npm run review`); the ffmpeg in the image decodes all three. Making one is not free: it re-encodes to H.264, so run it away from a worker that is recording.
 
 ### Crashes
 
@@ -226,7 +227,11 @@ The service relaunches a consultation's bot at most `RECORDER_BOT_MAX_RELAUNCHES
 | `RECORDER_BOT_STAFF_MARKER` | none | Which verified identities are staff: `user.<claim>=<value>` or `group=<value>`. See [Verified identities](#verified-identities) |
 | `RECORDER_BOT_VIDEO_PLAYER_MARKER` | none | Which verified identity is the video player (same syntax). The service records it under its own role, `video_player`, and a Review file labels its tile "video" |
 | `RECORDER_BOT_PATIENT_MARKER` | none | Which verified identity is the patient, written the same way |
-| `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for. Below 720 it records the 360-line layer and takes a small part of the CPU: see [Capacity](#capacity) |
+| `RECORDER_BOT_HEARTBEAT_URL` | unset | Where to send heartbeats to the coordinator service (ADR 0014): its base URL through the web server's TLS, for example `https://meet.example/coordinator`. Every 5 seconds the worker sends its id, kind, control API address, capacity (`RECORDER_BOT_MAX_CONSULTATIONS`), running count and build, with `RECORDER_BOT_API_SECRET` as its secret: the coordinator service must list that id and secret in its `COORDINATOR_WORKER_SECRETS_FILE`. Unset, none are sent (a fixed list of workers). A failed heartbeat is logged and the next one tried |
+| `RECORDER_BOT_ID` | | The worker's id on that list. Required with `RECORDER_BOT_HEARTBEAT_URL` |
+| `RECORDER_BOT_ADVERTISED_URL` | | The address the coordinator service reaches this control API at, for example `http://vm1:8090`. Required with `RECORDER_BOT_HEARTBEAT_URL` |
+| `RECORDER_BOT_BUILD` | `unknown` | The build this worker runs, shown in the coordinator service's worker list, so that a deployment can see the new build come up (ADR 0017) |
+| `RECORDER_BOT_MAX_HEIGHT` | `720` | The highest video resolution the bot asks the videobridge for. Below 720 it records the 360-line layer: see [Capacity](#capacity) |
 | `RECORDER_BOT_CHROMIUM_PATH` | Playwright's | A Chromium binary to run instead |
 | `RECORDER_BOT_IGNORE_CERTIFICATE_ERRORS` | `false` | Accept any certificate from the web server. Only for test deployments |
 
@@ -236,7 +241,7 @@ Every request needs the bearer secret; without it the service answers `401`.
 
 | Request | Answer |
 |---|---|
-| `POST /consultations` with `{ "hn": "<HN>" }` | `201` and `{ "consultationId", "status" }` for a new consultation; `200` and the same for the consultation already running in that HN's room; `503` when the service is at its limit |
+| `POST /consultations` with `{ "hn": "<HN>", "consultationId": "<id>" }`; the id is made by the coordinator service (ADR 0016) | `201` and `{ "consultationId", "status" }` for a new consultation, recorded under that id; `200` and the same for the consultation already running in that HN's room; `400` for a `consultationId` that is not usable; without one the service makes an id itself, for a coordinator service older than ADR 0016, which keeps the id from the answer; `409` when the id is already in use; `503` when the service is at its limit |
 | `POST /consultations` with station fields (`room` or `patient`) | `400` and an error that says station consultations are gone (ADR 0011). Nothing is started. Patients are never moved and staff come to their room, so only the patient's own room is recorded |
 | `POST /consultations/<consultationId>/stop` | Stops the consultation before its time, and answers `200` and the consultation once it has stopped. |
 | `GET /consultations/<consultationId>` | `200` and the consultation: `status`, `startedAt`, `stoppedAt`, `stopReason`, `relaunches` (how many times its bot was relaunched), and once stored `evidenceLocation` |
@@ -331,7 +336,20 @@ The logs name each deleted folder by its consultation id, with `place` `storage_
 find . -mindepth 1 -maxdepth 2 -printf '%P\n' | while read -r p; do printf '%s %s\n' "$(printf '%s' "$p" | openssl dgst -sha256 -hmac "$RECORDER_BOT_API_SECRET" -r | cut -c1-16)" "$p"; done
 ```
 
-When several services share one storage root, each of them sweeps it; that is safe.
+With several recorder bots on one storage root (see [Several recorder bots on one storage root](#several-recorder-bots-on-one-storage-root)), only one of them sweeps the storage root and its `.incoming` at a time: the one the coordinator service names in its answer to the heartbeats (`sweeper`). When that one is lost, the service names another in its answer to that one's next heartbeat. A recorder bot that is not named sweeps only its own spool, which is on its own VM. The word of the coordinator service holds for three heartbeats: a recorder bot that stops hearing from it stops sweeping, so that two never do at once. A recorder bot sends no heartbeat when `RECORDER_BOT_HEARTBEAT_URL` is unset; it then sweeps, as the only one.
+
+A newly named recorder bot sweeps at its next sweep, up to `RECORDER_BOT_RETENTION_SWEEP_SECONDS` later.
+
+### Several recorder bots on one storage root
+
+Every recorder bot writes its evidence recordings to the same evidence storage root, on shared storage (ADR 0014), and keeps its spool on its own VM. On each worker VM:
+
+1. Mount the same share at the same path, for example an NFS or SMB export of the hospital's file storage at `/mnt/evidence`, in `/etc/fstab` with `_netdev` (and `nofail`, so that the VM boots without it), then `mount /mnt/evidence`.
+2. Set `RECORDER_BOT_STORAGE_ROOT` to that path in the VM's `.env`. The compose file mounts it at the same path inside the container, and propagates later mounts.
+3. Let uid 1001 write to it on every VM. Where the share maps users by uid, map it to the same user everywhere, so that every recorder bot can read and delete what another wrote: any of them may be the one that sweeps.
+4. Create the marker file once, on the share (see [Running it](#running-it)). Every VM sees it.
+5. Leave `RECORDER_BOT_SPOOL_DIR` on the VM's own disk, in the `recorder-bot-spool` volume. Do not put the spool on the share.
+6. Set `RECORDER_BOT_HEARTBEAT_URL`, `RECORDER_BOT_ID` and `RECORDER_BOT_ADVERTISED_URL` on each VM, and list each id and secret in the coordinator service's `COORDINATOR_WORKER_SECRETS_FILE`: without heartbeats, every recorder bot sweeps.
 
 ### Logs
 

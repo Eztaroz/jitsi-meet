@@ -9,8 +9,11 @@ It is for the hospital's internal network only, and is reached through the web s
 | Variable | Meaning |
 |---|---|
 | `COORDINATOR_API_SECRET` (required) | The bearer secret the hospital's system sends. Treat it like a password. |
-| `COORDINATOR_RECORDER_BOT_URL` (required) | The recorder bot service's base URL. |
-| `COORDINATOR_RECORDER_BOT_SECRET` (required) | The recorder bot service's `RECORDER_BOT_API_SECRET`. |
+| `COORDINATOR_RECORDER_BOT_URL` (required, unless `COORDINATOR_WORKERS_FILE` lists recorder bots) | The recorder bot service's base URL. With one recorder bot, set this and the next. |
+| `COORDINATOR_RECORDER_BOT_SECRET` (required, as above) | The recorder bot service's `RECORDER_BOT_API_SECRET`. |
+| `COORDINATOR_WORKERS_FILE` | A JSON file listing the workers, for more than one of a kind: `{"recorderBots": [{"id": "bot-1", "url": "http://vm1:8090", "secret": "..."}], "videoPlayers": [{"id": "vp-1", "url": "http://vm1:8094", "secret": "..."}]}`. A kind left out keeps the single worker of the settings above. Ids are unique across both lists. Each new consultation goes to the recorder bot with the most room (its `/health` capacity minus its active consultations), and each waiting video to the video player with the most room. A worker that does not answer or answers that it is full is skipped, and tried last for 10 seconds; a request is refused with `503` only when no worker of its kind takes it. The list is read at start-up; with `COORDINATOR_WORKER_SECRETS_FILE` the workers send heartbeats instead (next row). Keep the file out of the repository: it holds the workers' secrets. |
+| `COORDINATOR_PIPELINE_SECRET` | The pipeline's own secret (ADR 0014), not a worker's and not the hospital system's. With it alone, `PUT /workers/<id>/draining` with `{"draining": true}` (or `false`) sets a worker draining or taking work again: a draining worker finishes what it runs and is handed no new consultation or waiting video, and is told so in the answer to its heartbeat (`{"status": "ok", "draining": true}`). The hospital system's secret is refused with `403`, any other with `401`, an id not on the list with `404`. The same secret may `GET /workers`, to wait until a draining worker runs nothing. Unset, nothing can set a worker draining. Draining is kept in memory: after a restart of the service every worker takes work again. |
+| `COORDINATOR_WORKER_SECRETS_FILE` | A JSON file of the workers' ids and their own secrets, for workers that send heartbeats (ADR 0014): `{"recorderBots": [{"id": "bot-1", "secret": "..."}], "videoPlayers": [{"id": "vp-1", "secret": "..."}]}`. It replaces `COORDINATOR_WORKERS_FILE` and the single worker settings above; the workers' addresses come from their heartbeats, and `COORDINATOR_VIDEO_BASE_URL` alone turns the video player on. The service reads the file again whenever it changes, without a restart: a line added brings its worker into service with its next heartbeat, and a line removed shuts it out at once (a file that cannot be read keeps the last good list). A worker sends `POST /workers/heartbeat` (path as the web server proxies it: `/coordinator/workers/heartbeat`) every 5 seconds with `Authorization: Bearer <its secret>` and `{id, kind: "recorder-bot"|"video-player", url, capacity, running, build}`, where `url` is the address of its control API; a wrong secret or an id not on the list is refused with `401`. A worker not heard from for 15 seconds is lost and gets no new work. After a restart the service knows its workers again within one heartbeat period, and which video player plays in which room from the video players' health reports. `GET /workers` (with the API secret) lists them: `id`, `kind`, `build`, `capacity`, `running`, `draining`, `lost` and `url`. Keep the file out of the repository: it holds secrets, and each worker's secret is also its control API's `*_API_SECRET`. |
 | `COORDINATOR_PROSODY_URL` (required) | Prosody's HTTP base URL, where the coordinator API module listens (below). |
 | `COORDINATOR_SIGNING_KID` (required) | The service's key id. |
 | `COORDINATOR_SIGNING_KEY_FILE` (required) | The PEM private key file. Prosody must have the public key (below). Keep it like the hospital issuer's key: whoever holds it can call Prosody's coordinator API. |
@@ -27,7 +30,40 @@ It is for the hospital's internal network only, and is reached through the web s
 | `COORDINATOR_COORDINATOR_MARKER` | The claim that marks a coordinator, written like the role markers. Default `user.hospital_role=coordinator`. |
 | `COORDINATOR_VIDEO_PLAYER_URL`, `COORDINATOR_VIDEO_PLAYER_SECRET`, `COORDINATOR_VIDEO_BASE_URL`, `COORDINATOR_VIDEO_PLAYER_MARKER` | Turn the waiting videos on. The first two are the [video player service](../../video-player/deploy/README.md)'s base URL and its `VIDEO_PLAYER_API_SECRET`; set together with the base URL of the web server that hosts the video files (for example `https://meet.example/`), which each video's `file` in the rooms file is resolved against. The marker, written like the role markers, is the claim the service puts in the token the video player joins a room with (for example `user.hospital_role=video_player`); set the same in the recorder bot's `RECORDER_BOT_VIDEO_PLAYER_MARKER` and in the mod that guards the patient's room. `COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS` (default 45) is how long to wait for the video player to start a video, which includes a Chromium cold start; when it runs out the service tells the video player to stop that room, so nothing plays unseen. Without the URL there are no videos. The rooms file lists them, see "Waiting videos" below. |
 | `COORDINATOR_API_PORT` | The port the API listens on. Default 8091. |
-| `COORDINATOR_DATA_DIR` | Where the database is. Default `/var/lib/coordinator`; mount a volume there. |
+| `COORDINATOR_DATA_DIR` | Where the SQLite database is. Default `/var/lib/coordinator`; mount a volume there. Not used when `COORDINATOR_MARIADB_HOST` is set. |
+| `COORDINATOR_MARIADB_HOST`, `COORDINATOR_MARIADB_PORT` (default 3306), `COORDINATOR_MARIADB_DATABASE`, `COORDINATOR_MARIADB_USER`, `COORDINATOR_MARIADB_PASSWORD` | Keep the state in the hospital's MariaDB instead of SQLite. Setting the host turns it on, and then the other three are required. See "State in MariaDB" below. |
+
+## State in MariaDB
+
+By default the service keeps its encounters, moves, audit log, satisfaction surveys and consultations in SQLite, in `COORDINATOR_DATA_DIR`: enough for a deployment on one host. To keep them in the hospital's MariaDB instead, so that losing the service's VM loses nothing (ADR 0015), set `COORDINATOR_MARIADB_HOST`, `_PORT`, `_DATABASE`, `_USER` and `_PASSWORD`. The service refuses to start when the database cannot be reached.
+
+**The database team makes the schema and the user.** It must be a schema of its own on the MariaDB of the service's own VM, never one of the hospital system's databases, and the user may change that schema and nothing else:
+
+```sql
+CREATE DATABASE coordinator CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+CREATE USER 'coordinator'@'<the service's host>' IDENTIFIED BY '<a password the team keeps in the deployment's secrets>';
+GRANT ALL PRIVILEGES ON coordinator.* TO 'coordinator'@'<the service's host>';
+```
+
+The service needs no other right: not `GRANT OPTION`, not `FILE`, not `SUPER`, and nothing on any other schema. Table rights on its own schema (create, alter, index, select, insert, update, delete) are what it uses.
+
+**Schema migrations.** The service applies its own numbered migrations (`coordinator/src/migrations.ts`) when it starts and records each one in the table `schema_migrations`, so nobody runs a script at a release. A start with nothing new applies nothing. Two instances starting together take turns, so the second finds nothing to do. MariaDB cannot roll back a schema change: a migration that fails half-way stops the start, and is not recorded.
+
+**Moving a deployment from SQLite.** Do it once, with the service stopped, so that nothing is written to the file meanwhile:
+
+1. Stop the coordinator service. Keep its `coordinator-data` volume: it is the way back.
+2. Run the copy where the volume and the MariaDB settings are, for example from the service's own image:
+   `docker run --rm -v coordinator-data:/var/lib/coordinator -e COORDINATOR_MARIADB_HOST=... -e COORDINATOR_MARIADB_PORT=3306 -e COORDINATOR_MARIADB_DATABASE=coordinator -e COORDINATOR_MARIADB_USER=coordinator -e COORDINATOR_MARIADB_PASSWORD=... <the coordinator image> node --disable-warning=ExperimentalWarning src/copySqliteToMariadb.ts`
+   It applies the migrations, then copies every encounter, move, audit entry, survey and consultation, and the patients' own rooms and the staff's stations, and prints how many of each. It refuses a database that already holds any, so a second run copies nothing and cannot write the audit log twice. Without the volume's path as an argument it reads `COORDINATOR_DATA_DIR`.
+3. Set the `COORDINATOR_MARIADB_*` settings of the service and start it. From then on the SQLite file is no longer read or written: keep it until the backups of the MariaDB are proven, then delete it.
+
+The list of workers is not in the database. From then on, back up the MariaDB with the database team's backups, not the `coordinator-data` volume.
+
+### One active instance, with a standby
+
+With MariaDB, run the service on two VMs against the same database: only one is active. Each instance takes a named lock in MariaDB (`GET_LOCK`, named after the schema) on its one connection; the one that holds it is active, and the other waits as standby, trying every 2 seconds. A standby instance has no state in memory and answers only `GET /health` (`503`, `{active: false, status: "standby"}`) and `503` for everything else, so point the load balancer at the instance whose `/health` is `200`. When the active instance stops, or its connection to MariaDB drops, the lock is released and the standby instance becomes active, reading the state the first one wrote. An active instance that finds it no longer holds the lock exits (status 1): run the service with a restart policy, so that it comes back as standby. With SQLite there is a single instance and it is always active.
+
+While MariaDB cannot be written, starting an encounter, changing a stage (by the system, a coordinator or staff) and a move are refused with `503` and `{"error": "the database cannot be written now; nothing was done"}`, before anything is done: the recorder bot is not asked, no participant is sent, nothing is audited.
 
 ## Health questionnaires
 
@@ -192,7 +228,7 @@ Every request carries `Authorization: Bearer <COORDINATOR_API_SECRET>`.
 | `GET /questionnaires` | `{questionnaires: [{id, title, questions}]}`: the [health questionnaires](#health-questionnaires) the deployment offers. |
 | `POST /encounters/<id>/questionnaires` with `{"questionnaire": "<catalogue id>"}` | Sends that questionnaire to the encounter's patient, at any stage; several can be sent. `201` and `{id}` (the id of this sending). `400` for a questionnaire that is not in the catalogue, `404` for an unknown encounter, `409` if the encounter is done, `503` if Prosody cannot be asked. Every sending, and every refusal, is in the audit log (`kind: "questionnaire_sent"`, with the `questionnaire` and the `issuer`). |
 | `GET /encounters/<id>/questionnaires` | `{questionnaires: [{id, questionnaire, title, questions, sentAt, sentBy, answers, answeredAt, closedAt}]}`: what was sent during this encounter and nothing of another, oldest first. `answers` is the index (0 or 1) of the chosen choice for each question; none until answered. `closedAt` is set when staff joined the room after it was sent and so it was withdrawn. `404` for an unknown encounter. |
-| `GET /health` | `200` and the number of open encounters. |
+| `GET /health` | `200`, `{active: true, status: "ok", openEncounters}` from the instance that holds the active lock; `503`, `{active: false, status: "standby"}` from a standby instance (see "One active instance, with a standby"). |
 
 Encounters are identified by an opaque id. The HN appears only in the body that starts an encounter and in what `GET /encounters/<id>` returns, never in a path or in the service's logs (ADR 0005).
 

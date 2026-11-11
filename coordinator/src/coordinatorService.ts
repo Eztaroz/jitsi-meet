@@ -11,6 +11,7 @@ import {
     moveEntry,
     questionnaireEntry,
     stageEntry,
+    unrecordedEntry,
     videoEntry
 } from './audit.ts';
 import { signToken } from './jwt.ts';
@@ -25,7 +26,7 @@ import {
     type ISentQuestionnaire,
     parseAnswers
 } from './questionnaires.ts';
-import type { RecorderBot } from './recorderBot.ts';
+import type { IRecorderBot } from './recorderBot.ts';
 import { backendSafeRoomName } from './roomName.ts';
 import {
     type ILayout,
@@ -54,7 +55,8 @@ import {
     queues,
     step
 } from './rules.ts';
-import { type IMoveRecord, type Store, newMoveRecord } from './store.ts';
+import { type StoreChange, diffState } from './stateChanges.ts';
+import { type IConsultation, type IMoveRecord, type IStore, newMoveRecord } from './store.ts';
 import { type ISurvey, type ISurveyAnswers, placeSurvey, surveysCsv } from './surveys.ts';
 import { type ITeam, describeTeams, stationsAt } from './teams.ts';
 import { destinationClaims } from './tokens.ts';
@@ -203,8 +205,11 @@ export class CoordinatorService {
     private readonly _opts: {
         auditKey: string;
         layout: ILayout;
+
+        /** The recorder bots that have fallen silent; their consultations are taken over (ADR 0016). Unset, none are. */
+        lostRecorderBots?: (claimedBy: string[]) => { id: string; lastSeen: Date; }[];
         prosody: Prosody;
-        recorderBot: RecorderBot;
+        recorderBot: IRecorderBot;
         retentionMs: number;
         retentionSweepMs: number;
         roleMarkers: IRoleMarkers;
@@ -212,7 +217,7 @@ export class CoordinatorService {
 
         /** How old, in milliseconds, a snapshot of the rooms may be for staff reads; 1000 when unset, 0 for none. */
         staffReadRoomsMs?: number;
-        store: Store;
+        store: IStore;
         timeZone: string;
         token: { audience: string; issuer: string; subject: string; };
 
@@ -227,6 +232,8 @@ export class CoordinatorService {
     /** The running timers of the moves, by move id and timer. */
     private readonly _timers = new Map<string, NodeJS.Timeout>();
     private _retention?: NodeJS.Timeout;
+
+    private _takeover?: NodeJS.Timeout;
 
     /** The videos playing now, by encounter. Not kept over a restart: the video player ends them by itself. */
     private readonly _videos = new Map<string, IPlayingVideo>();
@@ -288,6 +295,8 @@ export class CoordinatorService {
                 .catch(error => log.error('could not keep the stations of staff', { error: (error as Error).name }));
         }
 
+        const unrecorded = new Set(this._opts.store.consultationsByRecording(false).map(c => c.encounterId));
+
         return rooms.map(room => {
             const encounter = room.kind === 'patient'
                 ? this._state.encounters.find(e => e.stage !== 'done'
@@ -299,7 +308,13 @@ export class CoordinatorService {
                 return station === undefined ? o : { ...o, station };
             });
 
-            return encounter ? { ...room, encounterId: encounter.id, occupants } : { ...room, occupants };
+            if (!encounter) {
+                return { ...room, occupants };
+            }
+
+            return unrecorded.has(encounter.id)
+                ? { ...room, encounterId: encounter.id, occupants, unrecorded: true }
+                : { ...room, encounterId: encounter.id, occupants };
         });
     }
 
@@ -341,6 +356,8 @@ export class CoordinatorService {
      */
     startEncounter(hn: string, where: { center?: string; clinic?: string; visitNumber?: string; } = {}): Promise<IStep> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const resolved = resolvePathway(this._opts.layout, where);
 
             if ('reason' in resolved) {
@@ -357,15 +374,152 @@ export class CoordinatorService {
                 visitNumber: where.visitNumber
             });
 
+            const consultations: StoreChange[] = [];
+
             for (const command of result.commands) {
                 if (command.type === 'record_room') {
-                    await this._opts.recorderBot.recordRoom(command.hn);
+                    consultations.push(await this._recordRoom(command));
                 }
             }
-            this._commit(result.state);
+            this._commit(result.state, consultations);
 
             return result;
         });
+    }
+
+    /**
+     * The consultations of an encounter, and so the evidence recordings that belong to it.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {IConsultation[]|undefined} The oldest first; undefined when there is no such encounter.
+     */
+    consultationsOf(encounterId: string): IConsultation[] | undefined {
+        if (!this._state.encounters.some(e => e.id === encounterId)) {
+            return undefined;
+        }
+
+        return this._opts.store.consultationsOf(encounterId);
+    }
+
+    /**
+     * Asks the recorder bot to record a patient's room as a consultation whose id the coordinator service makes (ADR 0016).
+     *
+     * @param {Object} command - The `record_room` command.
+     * @returns {Promise<StoreChange>} What to keep about the consultation, once the recorder bot accepted the room.
+     */
+    private async _recordRoom(command: Extract<Command, { type: 'record_room'; }>): Promise<StoreChange> {
+        const { recorderBot } = this._opts;
+
+        // The recorder bot answers with the id of the consultation already running in that room, if there is one.
+        const startedAt = new Date();
+        const id = await recorderBot.recordRoom(command.hn, randomUUID(), { startedAt });
+
+        return {
+            consultation: {
+                encounterId: command.encounterId,
+                id,
+                recorderBot: recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot',
+                recording: true,
+                startedAt
+            },
+            kind: 'consultation'
+        };
+    }
+
+    /**
+     * Hands the consultations whose recorder bot is lost to another recorder bot with room, which joins the room and
+     * records the rest of the same consultation: what was not recorded since the lost worker's last heartbeat is a
+     * gap (ADR 0016). When no recorder bot has room, the consultation stays unrecorded, and the service says so in its
+     * log and its audit log; the coordinator's screen shows it from the consultation.
+     *
+     * @returns {Promise<void>}
+     */
+    takeOverLostConsultations(): Promise<void> {
+        return this._serial(async () => {
+            const recording = this._opts.store.consultationsByRecording(true);
+            const lost = new Map((this._opts.lostRecorderBots?.(recording.map(c => c.recorderBot)) ?? [])
+                .map(w => [ w.id, w.lastSeen ]));
+
+            if (!lost.size) {
+                return;
+            }
+
+            for (const consultation of recording) {
+                const gapSince = lost.get(consultation.recorderBot);
+                const encounter = this._state.encounters.find(e => e.id === consultation.encounterId);
+
+                if (!gapSince || !encounter || encounter.stage === DONE) {
+                    continue;
+                }
+                await this._takeOver(consultation, encounter.hn, gapSince);
+            }
+        }).catch(error => log.error('could not take over the consultations of a lost recorder bot', { error: (error as Error).name }));
+    }
+
+    /**
+     * Takes one consultation over.
+     *
+     * @param {IConsultation} consultation - The consultation.
+     * @param {string} hn - The patient's HN.
+     * @param {Date} gapSince - When its recorder bot was last heard from.
+     * @returns {Promise<void>}
+     */
+    private async _takeOver(consultation: IConsultation, hn: string, gapSince: Date): Promise<void> {
+        const { recorderBot } = this._opts;
+
+        try {
+            const id = await recorderBot.recordRoom(hn, consultation.id, {
+                gapSince, startedAt: consultation.startedAt, takenFrom: consultation.recorderBot
+            });
+            const taker = recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot';
+
+            this._opts.store.apply([ { consultation: { ...consultation, recorderBot: taker }, kind: 'consultation' } ]);
+            log.info('took a consultation over from a lost recorder bot', {
+                consultation: consultation.id, from: consultation.recorderBot, to: taker
+            });
+        } catch (error) {
+            if ((error as { code?: string; }).code !== 'at_capacity') {
+                // Nobody could be reached: try again at the next check.
+                log.warn('could not hand a consultation to another recorder bot; will try again', {
+                    consultation: consultation.id, reason: (error as Error).message
+                });
+
+                return;
+            }
+            this._opts.store.apply([ { consultation: { ...consultation, recording: false }, kind: 'consultation' } ]);
+            this._audit(unrecordedEntry({
+                at: new Date(), encounterId: consultation.encounterId, reason: 'no_recorder_bot_has_room'
+            }));
+            log.error('a consultation is not recorded: its recorder bot is lost and no other has room', {
+                consultation: consultation.id, encounter: consultation.encounterId, lostRecorderBot: consultation.recorderBot
+            });
+        }
+    }
+
+    /**
+     * Which of the consultations a recorder bot says it is running were given to another recorder bot, so that it
+     * stops them when it is heard from again (ADR 0016). It comes from the stored consultations, not from what was
+     * done: while the bot reports a consultation that is recording elsewhere it is told again, so a lost answer or a
+     * restart of this service does not leave two bots recording the same room.
+     *
+     * @param {string} workerId - The recorder bot.
+     * @param {string[]} running - The ids of the consultations it says it runs.
+     * @returns {string[]}
+     */
+    takenOverFrom(workerId: string, running: string[]): string[] {
+        return this._opts.store.consultationsByIds(running)
+            .filter(c => c.recording && c.recorderBot !== workerId).map(c => c.id);
+    }
+
+    /**
+     * Checks for lost recorder bots now and then, and takes their consultations over.
+     *
+     * @param {number} [everyMs] - How often.
+     * @returns {void}
+     */
+    startTakeover(everyMs = 5_000): void {
+        this._takeover = setInterval(() => void this.takeOverLostConsultations(), everyMs);
+        this._takeover.unref();
     }
 
     /**
@@ -378,6 +532,8 @@ export class CoordinatorService {
      */
     changeStage(encounterId: string, stage: Stage, issuer: string): Promise<IStep> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const at = new Date();
             const encounter = this._state.encounters.find(e => e.id === encounterId);
             const from = encounter?.stage;
@@ -784,7 +940,7 @@ export class CoordinatorService {
      * @returns {Promise<{ refused?: VideoRefusal; }>}
      */
     private async _stopVideo(encounterId: string, issuer: string): Promise<{ refused?: VideoRefusal; }> {
-        const playing = this._videos.get(encounterId);
+        const playing = this._videos.get(encounterId) ?? await this._adoptPlayingVideo(encounterId);
 
         if (!playing) {
             this._audit(videoEntry({
@@ -796,6 +952,26 @@ export class CoordinatorService {
         await this._endVideo(playing, issuer);
 
         return {};
+    }
+
+    /**
+     * Finds a video the video players play in an encounter's room that this service does not know of, as after a
+     * restart (the video players' health reports say which room plays), so that it can still be stopped.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {Promise<IPlayingVideo|undefined>}
+     */
+    private async _adoptPlayingVideo(encounterId: string): Promise<IPlayingVideo | undefined> {
+        const encounter = this._state.encounters.find(e => e.id === encounterId);
+
+        if (!encounter) {
+            return undefined;
+        }
+
+        const live = await this._opts.videoPlayer?.playingRooms().catch(() => []);
+        const room = live?.find(r => sameRoom(r, encounter.hn));
+
+        return room === undefined ? undefined : { encounterId, room, staffAtStart: new Set(), videoId: '' };
     }
 
     /**
@@ -948,7 +1124,7 @@ export class CoordinatorService {
             log.warn('could not stop a video', { error: error instanceof VideoPlayerUnavailableError ? error.code : 'unknown' });
         }
         this._audit(videoEntry({
-            action: 'stop', at: new Date(), encounterId: playing.encounterId, issuer, outcome: 'ok', reason, video: playing.videoId
+            action: 'stop', at: new Date(), encounterId: playing.encounterId, issuer, outcome: 'ok', reason, video: playing.videoId || undefined
         }));
     }
 
@@ -1212,6 +1388,8 @@ export class CoordinatorService {
      */
     staffChangeStage(encounterId: string, stage: Stage, staff: { id: string; }): Promise<IStaffStageResult> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const at = new Date();
             const encounter = this._state.encounters.find(e => e.id === encounterId);
             const here = findStaff(await this.rooms(), staff.id);
@@ -1279,6 +1457,8 @@ export class CoordinatorService {
      */
     staffCallNext(staff: { id: string; }): Promise<IStaffCallNextResult> {
         return this._serial(async () => {
+            this._opts.store.checkWritable();
+
             const at = new Date();
             const rooms = await this.rooms();
             const here = findStaff(rooms, staff.id);
@@ -1338,6 +1518,9 @@ export class CoordinatorService {
      * @returns {Promise<IMove>}
      */
     private async _startMove(request: { endpointId: string; fromRoom: string; toRoom: string; }, issuer: string): Promise<IMove> {
+        // A move is audited, so it is not made while the database cannot keep the audit entry.
+        this._opts.store.checkWritable();
+
         const rooms = await this.rooms();
         const named = (name: string) => rooms.find(r => backendSafeRoomName(r.name) === backendSafeRoomName(name))
             ?.name ?? name;
@@ -1411,6 +1594,7 @@ export class CoordinatorService {
      */
     stop(): void {
         clearInterval(this._retention);
+        clearInterval(this._takeover);
         clearTimeout(this._midnight);
         for (const timer of this._timers.values()) {
             clearTimeout(timer);
@@ -1458,17 +1642,28 @@ export class CoordinatorService {
      * Records a new state.
      *
      * @param {IState} state - The state.
+     * @param {StoreChange[]} extra - Other writes to save in the same transaction, even when the state is the same.
      * @returns {void}
      */
-    private _commit(state: IState): void {
-        if (state !== this._state) {
+    private _commit(state: IState, extra: StoreChange[] = []): void {
+        if (state === this._state) {
+            this._opts.store.apply(extra);
+        } else {
+            const previous = this._state;
+
             this._state = state;
 
             // The entries and the `audited` flags are saved in one transaction, so that a crash cannot leave an entry
             // that a restart would write again.
             const { entries, records } = this._endedMoves();
 
-            this._opts.store.save(this._state, records, entries);
+            try {
+                this._opts.store.apply([ ...diffState(previous, state, this._records, records, entries), ...extra ]);
+            } catch (error) {
+                // Memory must not get ahead of the database: what was refused was not done.
+                this._state = previous;
+                throw error;
+            }
             for (const [ id, record ] of records) {
                 this._records.set(id, record);
             }
@@ -1476,12 +1671,18 @@ export class CoordinatorService {
     }
 
     /**
-     * Saves the state and what is kept about each move.
+     * Saves what is kept about a move.
      *
+     * @param {string} moveId - The move.
      * @returns {void}
      */
-    private _persist(): void {
-        this._opts.store.save(this._state, this._records);
+    private _persist(moveId: string): void {
+        const move = this._state.moves.find(m => m.id === moveId);
+        const record = this._records.get(moveId);
+
+        if (move && record) {
+            this._opts.store.apply([ { kind: 'move', move, record } ]);
+        }
     }
 
     /**
@@ -1497,7 +1698,7 @@ export class CoordinatorService {
         const record = this._records.get(moveId) ?? newMoveRecord();
 
         this._records.set(moveId, { ...record, deadlines: { ...record.deadlines, [timer]: deadline } });
-        this._persist();
+        this._persist(moveId);
         clearTimeout(this._timers.get(key));
 
         const handle = setTimeout(() => {
@@ -1593,7 +1794,7 @@ export class CoordinatorService {
     private async _run(command: Command, rooms: IRoom[]): Promise<void> {
         switch (command.type) {
         case 'record_room':
-            await this._opts.recorderBot.recordRoom(command.hn);
+            this._opts.store.apply([ await this._recordRoom(command) ]);
             break;
         case 'start_timer':
             this._startTimer(command.moveId, command.timer, new Date(Date.now() + command.afterMs));

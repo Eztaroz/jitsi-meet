@@ -2,12 +2,15 @@
  * The consultations this service knows about.
  */
 import type { IConfig } from './config.ts';
-import { Consultation } from './consultation.ts';
+import { Consultation, type IConsultationOptions } from './consultation.ts';
 import { log } from './log.ts';
 import { roomNameFromHn } from './roomName.ts';
 
 /** The service already runs as many consultations as it may. */
 export class AtCapacityError extends Error {}
+
+/** A consultation with the id already exists, for another room or one that has ended. */
+export class DuplicateConsultationError extends Error {}
 
 export class Consultations {
     private readonly config: IConfig;
@@ -27,10 +30,15 @@ export class Consultations {
      * returned, so that a request can safely be repeated.
      *
      * @param {string} hn - The patient's HN.
+     * @param {string} id - The consultation's id, made by the coordinator service.
+     * @param {Object} [options] - What the coordinator service says of a consultation it hands over (ADR 0016).
+     * @param {Date} [options.gapSince] - For a takeover, when the lost recorder bot was last heard from.
+     * @param {string} [options.takenFrom] - For a takeover, the id of the lost worker, whose part is still missing.
+     * @param {Date} [options.startedAt] - When the consultation started, which names its folder.
      * @returns {Object} The consultation, and whether it was started by this call.
      * @throws {AtCapacityError} When the service already runs as many consultations as it may.
      */
-    start(hn: string): { consultation: Consultation; created: boolean; } {
+    start(hn: string, id: string, options: IConsultationOptions = {}): { consultation: Consultation; created: boolean; } {
         const room = roomNameFromHn(hn);
         const existing = this.running().find(c => c.room === room);
 
@@ -45,7 +53,12 @@ export class Consultations {
             throw new AtCapacityError('at capacity');
         }
 
-        const consultation = new Consultation(hn, this.config);
+        // An id that is already in use would overwrite another consultation's evidence.
+        if (this.byId.has(id)) {
+            throw new DuplicateConsultationError('a consultation with that id exists');
+        }
+
+        const consultation = new Consultation(hn, id, this.config, options);
 
         this.byId.set(consultation.id, consultation);
         consultation.start();

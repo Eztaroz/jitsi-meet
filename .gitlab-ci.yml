@@ -1,7 +1,7 @@
 # GitLab CI for the hospital's copy of this fork: test the coordinator service, build the images of deploy/production
 # with kaniko (the runners have no Docker daemon), push them to the registry as :latest and as the commit, and redeploy
-# the test stack in the night window (ADR 0017). This GitLab is older than 11.0: no `extends`, `rules`, `only: changes`,
-# `resource_group`, pipeline schedules or CI_COMMIT_SHORT_SHA, so this file uses YAML anchors and plain shell.
+# the test stack and then production in the night window (ADR 0017). This GitLab is older than 11.0: no `extends`, `rules`,
+# `only: changes`, `resource_group`, pipeline schedules or CI_COMMIT_SHORT_SHA, so this file uses YAML anchors and plain shell.
 #
 # CI/CD variables (Settings > CI/CD > Variables). No internal name is written in this file:
 #   REGISTRY          the registry host                                          (required to build)
@@ -12,7 +12,7 @@
 #
 # A push to master builds and pushes every image; it does not redeploy. The test stack runs every service, the central
 # ones too, so it is redeployed only in the night window: a cron job calls this project's pipeline trigger at 22:00 with
-# DEPLOY_CENTRAL=1, and that pipeline runs deploy-stack alone. deploy-stack-now redeploys at once, by hand.
+# DEPLOY_CENTRAL=1, and that pipeline runs only the deploy jobs below. deploy-stack-now redeploys the test stack at once, by hand.
 #
 # image-web runs on its own runner: webpack needs about 4 GB of memory. That runner takes one job at a time
 # (limit = 1 in its config.toml), because this GitLab has no resource_group.
@@ -20,12 +20,35 @@ stages:
   - test
   - build
   - deploy
+  - promote
+  - verify
+  - rollback
+  - workers
 
+# The coordinator service's tests run its store suite against SQLite and, through COORDINATOR_TEST_MARIADB, against this
+# MariaDB service container (ADR 0015). The container lives for the job only and holds nothing but test data; its user
+# owns one schema, as the service's own user does in production. The suite drops the tables of that schema before each test.
 test-coordinator:
   stage: test
   image: node:24-bookworm-slim
+  services:
+    - name: mariadb:11.4
+      alias: mariadb
+  variables:
+    MARIADB_DATABASE: coordinator_test
+    MARIADB_USER: coordinator_test
+    MARIADB_PASSWORD: throwaway-test-only
+    MARIADB_ROOT_PASSWORD: throwaway-test-only
+    COORDINATOR_TEST_MARIADB: mariadb://coordinator_test:throwaway-test-only@mariadb:3306/coordinator_test
   script:
     - cd coordinator
+    - npm ci
+    # The service container takes a few seconds to accept connections.
+    - |
+      for i in $(seq 1 60); do
+        node -e "require('net').connect(3306, 'mariadb').on('connect', () => process.exit(0)).on('error', () => process.exit(1))" && break
+        sleep 2
+      done
     - node --disable-warning=ExperimentalWarning --test test/*.test.ts
   tags:
     - HOSAPP02
@@ -60,6 +83,7 @@ test-coordinator:
       --dockerfile "${CI_PROJECT_DIR}/${DOCKERFILE}"
       --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:latest"
       --destination "${IMAGE_PREFIX}/${IMAGE_NAME}:${SHORT_SHA}"
+      --build-arg "BUILD=${SHORT_SHA}"
   tags:
     - HOSAPP02
   only:
@@ -96,6 +120,13 @@ image-prosody:
     CONTEXT: "."
     DOCKERFILE: deploy/production/prosody/Dockerfile
 
+image-front:
+  <<: *kaniko
+  variables:
+    IMAGE_NAME: front
+    CONTEXT: "."
+    DOCKERFILE: deploy/production/front/Dockerfile
+
 image-web:
   <<: *kaniko
   variables:
@@ -105,48 +136,177 @@ image-web:
   tags:
     - HIS2BE
 
-.deploy: &deploy
-  stage: deploy
-  image:
-    name: curlimages/curl:latest
-    entrypoint: [""]
-  script:
-    - |
-      if [ -z "$PORTAINER_WEBHOOK" ]; then
-        echo "PORTAINER_WEBHOOK is not set: skipping the deploy (the images are pushed)"
-        exit 0
-      fi
-    - echo "Triggering the Portainer redeploy"
-    - |
-      # -k: Portainer's certificate is self-signed on an internal address
-      HTTP_CODE=$(curl -k -sS -o /dev/null -w "%{http_code}" -X POST "$PORTAINER_WEBHOOK")
-      echo "Portainer webhook -> HTTP $HTTP_CODE"
-      if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-        echo "ERROR: the Portainer webhook failed (HTTP $HTTP_CODE)"
-        exit 1
-      fi
-  tags:
-    - HOSAPP02
-
-# The night window: only a triggered pipeline with DEPLOY_CENTRAL=1 redeploys.
-deploy-stack:
-  <<: *deploy
+# The night deployment (ADR 0017). The central services cut every consultation when they restart, so a pipeline started by
+# the 22:00 cron trigger (DEPLOY_CENTRAL=1) deploys them in this order, and each script refuses outside 22:00-05:00:
+#   deploy-stack         the test stack (it follows :latest): redeploy, then every health check, each reported
+#   central-promote      moves the :production tag of the coordinator, prosody, web and front images to this commit's build,
+#                        after writing down the build it pointed at (artifact central-previous.env)
+#   central-verify       redeploys the production central stack and waits for every health check, 2 minutes at most
+#   central-rollback-*   only when something failed: moves :production back to the previous build and redeploys it
+# A failed job stops the pipeline: the later stages do not run, apart from the rollback. Production jobs do nothing without
+# PRODUCTION_WEBHOOK. The scripts are in deploy/production/scripts/ci/ and are tested by
+# deploy/production/scripts/test/run-tests.sh against local fake servers.
+#
+# Variables of the health checks, for each of TEST_ and PRODUCTION_ (Settings > CI/CD > Variables; internal names go there):
+#   <P>_URL                 https://<the deployment's public address>
+#   <P>_COORDINATOR_SECRET  the coordinator service's API secret (Protected + Masked)
+#   <P>_JICOFO_HEALTH_URL   http://<host's internal address>:8888/about/health
+#   <P>_JVB_HEALTH_URL      http://<host's internal address>:8080/about/health
+#   <P>_INSECURE            1 when the certificate is self-signed
+#   PRODUCTION_WEBHOOK      the webhook of the production central stack (Protected + Masked); the test stack's is PORTAINER_WEBHOOK
+.central-only: &central-only
   before_script:
     - |
       if [ "$DEPLOY_CENTRAL" != "1" ]; then
         echo "DEPLOY_CENTRAL is not 1: nothing to deploy"
         exit 0
       fi
+
+.curl: &curl
+  image:
+    name: curlimages/curl:latest
+    entrypoint: [""]
+  tags:
+    - HOSAPP02
+
+.crane: &crane
+  image:
+    name: gcr.io/go-containerregistry/crane:debug
+    entrypoint: [""]
+  variables:
+    CRANE: /ko-app/crane
+  tags:
+    - HOSAPP02
+
+# The test stack: the night window's deployment, and the first check of the build.
+deploy-stack:
+  <<: [ *curl, *central-only ]
+  stage: deploy
+  script:
+    - export TEST_WEBHOOK="$PORTAINER_WEBHOOK"
+    - REDEPLOY_SETTLE=20 sh deploy/production/scripts/ci/redeploy-central.sh TEST
   only:
     - triggers
 
-# By hand, at once: the test stack's consultations are cut.
+# By hand, at once, at any hour: the test stack's consultations are cut.
 deploy-stack-now:
-  <<: *deploy
+  <<: *curl
+  stage: deploy
+  script:
+    - export TEST_WEBHOOK="$PORTAINER_WEBHOOK"
+    - NIGHT_WINDOW_CHECK=0 sh deploy/production/scripts/ci/redeploy-central.sh TEST
   when: manual
   allow_failure: true
   only:
     - master
     - main
   except:
+    - triggers
+
+central-promote:
+  <<: [ *crane, *central-only ]
+  stage: promote
+  script:
+    - sh deploy/production/scripts/ci/promote-central.sh
+  artifacts:
+    paths:
+      - central-previous.env
+    when: always
+    expire_in: 1 week
+  only:
+    - triggers
+
+central-verify:
+  <<: [ *curl, *central-only ]
+  stage: verify
+  script:
+    - REDEPLOY_SETTLE=20 sh deploy/production/scripts/ci/redeploy-central.sh PRODUCTION
+  dependencies: []
+  only:
+    - triggers
+
+central-rollback-tag:
+  <<: [ *crane, *central-only ]
+  stage: rollback
+  script:
+    - sh deploy/production/scripts/ci/rollback-central.sh
+  dependencies:
+    - central-promote
+  artifacts:
+    paths:
+      - central-previous.env
+    when: always
+    expire_in: 1 week
+  when: on_failure
+  only:
+    - triggers
+
+central-rollback-redeploy:
+  <<: [ *curl, *central-only ]
+  stage: rollback
+  script:
+    # Nothing was promoted: nothing to redeploy.
+    - '[ -s central-previous.env ] || { echo "No previous build recorded: nothing to roll back"; exit 0; }'
+    - NIGHT_WINDOW_CHECK=0 REDEPLOY_SETTLE=20 sh deploy/production/scripts/ci/redeploy-central.sh PRODUCTION
+  dependencies:
+    - central-rollback-tag
+  when: on_failure
+  only:
+    - triggers
+
+# ---- Workers, one at a time (ADR 0017). Kept in this section, with its script in deploy/pipeline/. ----------------------
+# Every build merged to the main branch reaches the recorder bots and the video players one at a time: draining, no
+# consultation cut, health checked within 2 minutes, rolled back and stopped if not. The script is the job; its
+# settings are CI/CD variables (see deploy/pipeline/deployWorkersMain.ts):
+#   COORDINATOR_URL, COORDINATOR_PIPELINE_SECRET (Protected + Masked), WEBHOOK_<ID> of each worker's VM stack
+#   (Protected), and optionally HEALTH_URL_<ID> / HEALTH_SECRET_<ID>, ALLOW_SELF_SIGNED=1.
+# Without COORDINATOR_URL the job is skipped, so a project that has no workers yet keeps building.
+test-deploy-pipeline:
+  stage: test
+  image: node:24-bookworm-slim
+  script:
+    - node --disable-warning=ExperimentalWarning --test deploy/pipeline/test/*.test.ts
+  tags:
+    - HOSAPP02
+  except:
+    - triggers
+
+deploy-workers:
+  stage: deploy
+  image: node:24-bookworm-slim
+  script:
+    - |
+      if [ -z "$COORDINATOR_URL" ]; then
+        echo "COORDINATOR_URL is not set: skipping the deploy of the workers (the images are pushed)"
+        exit 0
+      fi
+    - node --disable-warning=ExperimentalWarning deploy/pipeline/deployWorkersMain.ts
+  tags:
+    - HOSAPP02
+  only:
+    - master
+    - main
+  except:
+    - triggers
+
+# The night window also deploys the workers a day's pushes left behind, and the only recorder bot when there is just one
+# (ADR 0017): it may be cut now, and `ALLOW_SINGLE_RECORDER_BOT` says so. Its stage is the last, after the rollback, so
+# that a worker that fails never rolls the central services back, and it does not run when the central deployment failed.
+deploy-workers-night:
+  <<: *central-only
+  stage: workers
+  image: node:24-bookworm-slim
+  variables:
+    ALLOW_SINGLE_RECORDER_BOT: "1"
+  script:
+    - |
+      if [ -z "$COORDINATOR_URL" ]; then
+        echo "COORDINATOR_URL is not set: skipping the deploy of the workers"
+        exit 0
+      fi
+    - node --disable-warning=ExperimentalWarning deploy/pipeline/deployWorkersMain.ts
+  dependencies: []
+  tags:
+    - HOSAPP02
+  only:
     - triggers
