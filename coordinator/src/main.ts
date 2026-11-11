@@ -11,6 +11,7 @@ import { RecorderBot } from './recorderBot.ts';
 import { keyLookup } from './screenAuth.ts';
 import type { IStore } from './store.ts';
 import { VideoPlayer } from './videoPlayer.ts';
+import { RecorderBotPool, VideoPlayerPool } from './workers.ts';
 
 const config = loadConfig();
 let store: IStore;
@@ -29,7 +30,7 @@ try {
         auditKey: config.auditKey,
         layout: config.layout,
         prosody: new Prosody({ ...config.signingKey, url: config.prosodyUrl }),
-        recorderBot: new RecorderBot(config.recorderBotUrl, config.recorderBotSecret),
+        recorderBot: new RecorderBotPool(config.recorderBots.map(w => new RecorderBot(w.url, w.secret, w.id))),
         retentionMs: config.retentionMs,
         retentionSweepMs: config.retentionSweepMs,
         roleMarkers: config.roleMarkers,
@@ -38,8 +39,8 @@ try {
         timeZone: config.timeZone,
         token: config.token,
         videoBaseUrl: config.videoPlayer?.baseUrl,
-        videoPlayer: config.videoPlayer && new VideoPlayer(config.videoPlayer.url, config.videoPlayer.secret,
-            { playTimeoutMs: config.videoPlayer.playTimeoutMs })
+        videoPlayer: config.videoPlayer && new VideoPlayerPool(config.videoPlayer.workers.map(
+            w => new VideoPlayer(w.url, w.secret, { id: w.id, playTimeoutMs: config.videoPlayer!.playTimeoutMs })))
     });
 } catch (error) {
     // The configuration does not fit the encounters that are open: say which stage, and do not start (ADR 0013).

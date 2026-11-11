@@ -126,7 +126,9 @@ describe('the settings', () => {
         }));
 
         assert.deepEqual(config.videoPlayer, {
-            baseUrl: 'https://meet.example/', playTimeoutMs: 45_000, secret: 'vp-secret', url: 'http://video-player:8091'
+            baseUrl: 'https://meet.example/',
+            playTimeoutMs: 45_000,
+            workers: [ { id: 'video-player', secret: 'vp-secret', url: 'http://video-player:8091' } ]
         });
         assert.deepEqual(config.roleMarkers.videoPlayer, { path: [ 'user', 'hospital_role' ], value: 'video_player' });
     });

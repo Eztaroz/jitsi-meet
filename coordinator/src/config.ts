@@ -44,11 +44,8 @@ export interface IConfig {
     /** Prosody's HTTP base URL, where the coordinator API module listens. Internal network only. */
     prosodyUrl: string;
 
-    /** The recorder bot service's bearer secret. */
-    recorderBotSecret: string;
-
-    /** The recorder bot service's base URL. */
-    recorderBotUrl: string;
+    /** The recorder bots that record the consultations, one at least (ADR 0014). */
+    recorderBots: IWorkerConfig[];
 
     /** How long encounters and audit entries are kept, in milliseconds. Older ones are deleted. */
     retentionMs: number;
@@ -83,7 +80,14 @@ export interface IConfig {
      * The video player service, which plays the waiting videos (`COORDINATOR_VIDEO_PLAYER_URL`); unset, there are no
      * videos. `baseUrl` is where the web server hosts the videos' files.
      */
-    videoPlayer?: { baseUrl: string; playTimeoutMs: number; secret: string; url: string; };
+    videoPlayer?: { baseUrl: string; playTimeoutMs: number; workers: IWorkerConfig[]; };
+}
+
+/** A worker's id, base URL and bearer secret. */
+export interface IWorkerConfig {
+    id: string;
+    secret: string;
+    url: string;
 }
 
 /**
@@ -143,6 +147,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IConfig {
  * @returns {IConfig}
  */
 function buildConfig(env: NodeJS.ProcessEnv): IConfig {
+    const workers = loadWorkers(env.COORDINATOR_WORKERS_FILE?.trim());
+
     return {
         apiPort: Number(env.COORDINATOR_API_PORT ?? 8091),
         apiSecret: required(env, 'COORDINATOR_API_SECRET'),
@@ -163,19 +169,25 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
-        recorderBotSecret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
-        recorderBotUrl: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, ''),
+        recorderBots: workers.recorderBots ?? [ {
+            id: 'recorder-bot',
+            secret: required(env, 'COORDINATOR_RECORDER_BOT_SECRET'),
+            url: required(env, 'COORDINATOR_RECORDER_BOT_URL').replace(/\/+$/u, '')
+        } ],
         roleMarkers: {
             patient: parseRoleMarker(env.COORDINATOR_PATIENT_MARKER, 'COORDINATOR_PATIENT_MARKER'),
             staff: parseRoleMarker(env.COORDINATOR_STAFF_MARKER, 'COORDINATOR_STAFF_MARKER'),
             videoPlayer: parseRoleMarker(env.COORDINATOR_VIDEO_PLAYER_MARKER, 'COORDINATOR_VIDEO_PLAYER_MARKER')
         },
-        videoPlayer: env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
+        videoPlayer: workers.videoPlayers || env.COORDINATOR_VIDEO_PLAYER_URL?.trim()
             ? {
                 baseUrl: required(env, 'COORDINATOR_VIDEO_BASE_URL'),
                 playTimeoutMs: Number(env.COORDINATOR_VIDEO_PLAY_TIMEOUT_SECONDS ?? DEFAULT_PLAY_TIMEOUT_MS / 1000) * 1000,
-                secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
-                url: env.COORDINATOR_VIDEO_PLAYER_URL.trim().replace(/\/+$/u, '')
+                workers: workers.videoPlayers ?? [ {
+                    id: 'video-player',
+                    secret: required(env, 'COORDINATOR_VIDEO_PLAYER_SECRET'),
+                    url: required(env, 'COORDINATOR_VIDEO_PLAYER_URL').replace(/\/+$/u, '')
+                } ]
             }
             : undefined,
         token: {
@@ -188,6 +200,55 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
             privateKey: readFileSync(required(env, 'COORDINATOR_SIGNING_KEY_FILE'), 'utf8')
         }
     };
+}
+
+/**
+ * Reads the fixed list of workers: `{"recorderBots": [{"id", "url", "secret"}], "videoPlayers": [...]}`. A kind left out
+ * falls back to the single worker of the `COORDINATOR_RECORDER_BOT_*` and `COORDINATOR_VIDEO_PLAYER_*` settings.
+ *
+ * @param {string|undefined} file - The file; unset for none.
+ * @returns {{ recorderBots?: IWorkerConfig[]; videoPlayers?: IWorkerConfig[]; }}
+ * @throws {Error} When the file is malformed, a worker lacks an id, a URL or a secret, or two share an id.
+ */
+export function loadWorkers(file: string | undefined): { recorderBots?: IWorkerConfig[]; videoPlayers?: IWorkerConfig[]; } {
+    if (!file) {
+        return {};
+    }
+
+    const fail = (why: string) => new Error(`${file}: ${why}`);
+    let raw: Record<string, unknown>;
+
+    try {
+        raw = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+        throw fail(`cannot be read as JSON (${(error as Error).message})`);
+    }
+
+    const ids = new Set<string>();
+    const list = (key: string): IWorkerConfig[] | undefined => {
+        if (raw[key] === undefined) {
+            return undefined;
+        }
+        if (!Array.isArray(raw[key]) || !raw[key].length) {
+            throw fail(`"${key}" must be a list with at least one worker`);
+        }
+
+        return (raw[key] as Record<string, unknown>[]).map(w => {
+            for (const field of [ 'id', 'url', 'secret' ]) {
+                if (typeof w?.[field] !== 'string' || !(w[field] as string).trim()) {
+                    throw fail(`every worker needs an "id", a "url" and a "secret" (missing "${field}" in "${key}")`);
+                }
+            }
+            if (ids.has(w.id as string)) {
+                throw fail(`two workers are "${w.id}"`);
+            }
+            ids.add(w.id as string);
+
+            return { id: w.id as string, secret: w.secret as string, url: (w.url as string).trim().replace(/\/+$/u, '') };
+        });
+    };
+
+    return { recorderBots: list('recorderBots'), videoPlayers: list('videoPlayers') };
 }
 
 /**

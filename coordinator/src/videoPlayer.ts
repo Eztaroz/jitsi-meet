@@ -36,6 +36,9 @@ export const DEFAULT_PLAY_TIMEOUT_MS = 45_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export class VideoPlayer implements IVideoPlayer {
+
+    /** Names this video player in what the coordinator service keeps. */
+    readonly id: string;
     private readonly _playTimeoutMs: number;
     private readonly _secret: string;
     private readonly _url: string;
@@ -46,9 +49,11 @@ export class VideoPlayer implements IVideoPlayer {
      * @param {string} url - The video player service's base URL.
      * @param {string} secret - Its bearer secret.
      * @param {Object} [options] - Options.
+     * @param {string} [options.id] - The worker's id.
      * @param {number} [options.playTimeoutMs] - How long to wait for `/play` to answer.
      */
-    constructor(url: string, secret: string, options: { playTimeoutMs?: number; } = {}) {
+    constructor(url: string, secret: string, options: { id?: string; playTimeoutMs?: number; } = {}) {
+        this.id = options.id ?? 'video-player';
         this._url = url;
         this._secret = secret;
         this._playTimeoutMs = options.playTimeoutMs ?? DEFAULT_PLAY_TIMEOUT_MS;
@@ -103,6 +108,23 @@ export class VideoPlayer implements IVideoPlayer {
         if (!response.ok) {
             throw new VideoPlayerUnavailableError('rejected');
         }
+    }
+
+    /**
+     * How many more videos the video player can play: its capacity minus the ones it plays.
+     *
+     * @returns {Promise<number>}
+     */
+    async room(): Promise<number> {
+        const response = await this._request('GET', '/health');
+
+        if (!response.ok) {
+            throw new VideoPlayerUnavailableError('rejected');
+        }
+
+        const { activeRooms, maxRooms } = await response.json() as { activeRooms?: number; maxRooms?: number; };
+
+        return Number(maxRooms) - Number(activeRooms);
     }
 
     /**
