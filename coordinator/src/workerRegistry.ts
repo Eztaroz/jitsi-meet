@@ -76,6 +76,7 @@ export class WorkerRegistry {
     private readonly _draining = new Set<string>();
     private readonly _file: string;
     private readonly _heard = new Map<string, IHeard>();
+    private readonly _startedAt: number;
     private _list: { recorderBots: IWorkerSecret[]; videoPlayers: IWorkerSecret[]; };
     private _listVersion = '';
     private _sweeper?: string;
@@ -94,6 +95,7 @@ export class WorkerRegistry {
     constructor({ file, now = Date.now, playTimeoutMs }: { file: string; now?: () => number; playTimeoutMs?: number; }) {
         this._file = file;
         this._now = now;
+        this._startedAt = now();
         this._playTimeoutMs = playTimeoutMs;
         this._list = this._read();
     }
@@ -269,15 +271,29 @@ export class WorkerRegistry {
     }
 
     /**
-     * The recorder bots that were heard from and have fallen silent, with the time of their last heartbeat: the ones
-     * whose consultations are taken over (ADR 0016).
+     * The recorder bots whose consultations are taken over (ADR 0016): the ones heard from that have fallen silent,
+     * and, once `LOST_AFTER_MS` has passed since this process started, the ones that hold a consultation but are not
+     * live now: never heard since the start (a restart, or the other instance of an active/standby pair took over)
+     * or taken off the list. For those the registry cannot know when they were last heard, so the gap starts at the
+     * start of this process.
      *
+     * @param {string[]} [claimedBy] - The recorder bots that the consultations being recorded name.
      * @returns {{ id: string; lastSeen: Date; }[]}
      */
-    lostRecorderBots(): { id: string; lastSeen: Date; }[] {
-        const lost = new Set(this.list().filter(w => w.lost && w.kind === 'recorder-bot').map(w => w.id));
+    lostRecorderBots(claimedBy: Iterable<string> = []): { id: string; lastSeen: Date; }[] {
+        const status = this.list().filter(w => w.kind === 'recorder-bot');
+        const lost = new Map(status.filter(w => w.lost).map(w => [ w.id, new Date(this._heard.get(w.id)!.lastSeen) ]));
+        const live = new Set(status.filter(w => !w.lost).map(w => w.id));
 
-        return [ ...this._heard ].filter(([ id ]) => lost.has(id)).map(([ id, h ]) => ({ id, lastSeen: new Date(h.lastSeen) }));
+        if (this._now() - this._startedAt >= LOST_AFTER_MS) {
+            for (const id of claimedBy) {
+                if (!live.has(id) && !lost.has(id)) {
+                    lost.set(id, new Date(this._startedAt));
+                }
+            }
+        }
+
+        return [ ...lost ].map(([ id, lastSeen ]) => ({ id, lastSeen }));
     }
 
     /**

@@ -196,6 +196,18 @@ export class MariaDbStore implements IStore {
     }
 
     /**
+     * Reads the consultations that are recording, or the ones that are not.
+     *
+     * @param {boolean} recording - Which.
+     * @returns {IConsultation[]} The oldest first.
+     */
+    consultationsByRecording(recording: boolean): IConsultation[] {
+        return this._client.select<IConsultationRow>(
+            'SELECT * FROM consultations WHERE recording = ? ORDER BY started_at, id', [ recording ? 1 : 0 ]
+        ).map(consultationOfRow);
+    }
+
+    /**
      * Reads every consultation.
      *
      * @returns {IConsultation[]} The oldest first.
