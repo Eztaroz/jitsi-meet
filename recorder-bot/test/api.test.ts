@@ -65,6 +65,13 @@ describe('starting a consultation', () => {
         } ]);
     });
 
+    test('passes on the lost worker a takeover comes from, and refuses one that is not an id', async () => {
+        options.length = 0;
+        assert.equal((await post({ consultationId: 'c6', hn: '123', takenFrom: 'bot-1' })).status, 201);
+        assert.deepEqual(options, [ { takenFrom: 'bot-1' } ]);
+        assert.equal((await post({ consultationId: 'c5', hn: '123', takenFrom: 5 })).status, 400);
+    });
+
     test('starts without them, and refuses a time that is not one', async () => {
         options.length = 0;
         assert.equal((await post({ consultationId: 'c8', hn: '123' })).status, 201);

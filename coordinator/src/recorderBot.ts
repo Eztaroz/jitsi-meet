@@ -23,6 +23,9 @@ export interface IRecordRoomOptions {
 
     /** When the consultation started, which names its folder in the evidence storage root. */
     startedAt?: Date;
+
+    /** For a consultation taken over: the id of the lost worker, whose part of the evidence is still missing. */
+    takenFrom?: string;
 }
 
 /** What the coordinator service needs from the recorder bots; tests fake it. */
@@ -102,7 +105,8 @@ export class RecorderBot {
                     consultationId,
                     gapSince: options.gapSince?.toISOString(),
                     hn,
-                    startedAt: options.startedAt?.toISOString()
+                    startedAt: options.startedAt?.toISOString(),
+                    takenFrom: options.takenFrom
                 }),
                 headers: { authorization: `Bearer ${this._secret}`, 'content-type': 'application/json' },
                 method: 'POST',

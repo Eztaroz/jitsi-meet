@@ -41,8 +41,21 @@ export const STORAGE_ROOT_MARKER = '.recorder-bot-storage-root';
 const MANIFEST = 'manifest.json';
 const RAW_DIR = 'raw';
 
+/**
+ * The name of a worker's part: its id, kept to characters that are safe in a folder name.
+ *
+ * @param {string} workerId - The worker's id.
+ * @returns {string}
+ */
+export function partOf(workerId: string): string {
+    return workerId.replace(/[^\w.-]/gu, '_');
+}
+
 /** What the manifest is made of. */
 export interface IEvidenceInput {
+
+    /** Parts of the consultation that other recorder bots made or will store, which this one knows are missing. */
+    awaitingParts?: string[];
 
     consultationId: string;
 
@@ -227,13 +240,15 @@ interface IPartSummary {
 /**
  * Writes the manifest of a consultation made of the parts stored under its folder: which parts there are, and every
  * gap in them. It is made again from the parts each time one is stored, so that it lists those stored so far, whichever
- * recorder bot stores last; a part still on a lost VM's spool is not in it until that VM stores it (ADR 0016).
+ * recorder bot stores last; a part still on a lost VM's spool is not in it until that VM stores it, and the manifest says it is
+ * missing, so that the evidence recording is incomplete until then (ADR 0016).
  *
  * @param {string} folder - The consultation's folder in the storage root.
  * @returns {Promise<void>}
  */
 async function writeConsultationManifest(folder: string): Promise<void> {
     const parts: IPartSummary[] = [];
+    const awaiting = new Set<string>();
     let consultation: { consultationId: string; consultationStart: string; room: string; } | undefined;
 
     for (const entry of await readdir(folder, { withFileTypes: true })) {
@@ -253,6 +268,9 @@ async function writeConsultationManifest(folder: string): Promise<void> {
             consultationStart: manifest.consultationStart ?? manifest.start,
             room: manifest.room
         };
+        for (const part of Array.isArray(manifest.awaiting) ? manifest.awaiting : []) {
+            awaiting.add(String(part));
+        }
         parts.push({
             end: manifest.end,
             folder: entry.name,
@@ -269,8 +287,14 @@ async function writeConsultationManifest(folder: string): Promise<void> {
 
     const tmp = path.join(folder, `${MANIFEST}.${process.pid}.tmp`);
 
+    // A part a recorder bot knew was missing, and that has not been stored yet, is still in a lost worker's spool.
+    const stored = new Set(parts.flatMap(p => [ p.part, p.folder ]));
+    const missingParts = [ ...awaiting ].filter(part => !stored.has(part)).sort();
+
     await writeJson(tmp, {
+        complete: missingParts.length === 0,
         consultationId: consultation.consultationId,
+        missingParts,
         end: parts.map(p => p.end).sort().at(-1),
         gaps: parts.flatMap(p => p.gaps).sort((a, b) => a.start.localeCompare(b.start)),
         parts: parts.map(({ gaps: _gaps, ...p }) => p),
@@ -492,6 +516,7 @@ export class EvidenceRecording {
             room: input.room,
             consultationStart: input.consultationStart,
             part: input.part,
+            awaiting: input.awaitingParts?.length ? input.awaitingParts : undefined,
             meetingId: input.meetingId,
             start: input.start,
             end: input.end,

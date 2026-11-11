@@ -468,7 +468,9 @@ export class CoordinatorService {
         const { recorderBot } = this._opts;
 
         try {
-            const id = await recorderBot.recordRoom(hn, consultation.id, { gapSince, startedAt: consultation.startedAt });
+            const id = await recorderBot.recordRoom(hn, consultation.id, {
+                gapSince, startedAt: consultation.startedAt, takenFrom: consultation.recorderBot
+            });
             const taker = recorderBot.workerOf?.(id) ?? recorderBot.workerId ?? 'recorder-bot';
 
             this._opts.store.apply([ { consultation: { ...consultation, recorderBot: taker }, kind: 'consultation' } ]);

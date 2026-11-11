@@ -202,7 +202,7 @@ describe('a lost recorder bot\'s consultation is taken over by another (ADR 0016
         assert.equal(after.recording, true);
         assert.equal(after.startedAt, before.startedAt);
         assert.deepEqual(bots[1].asked, [ {
-            consultationId: before.id, gapSince: lastHeartbeat, hn: 'HN/1', startedAt: before.startedAt
+            consultationId: before.id, gapSince: lastHeartbeat, hn: 'HN/1', startedAt: before.startedAt, takenFrom: 'bot-1'
         } ]);
     });
 
