@@ -80,9 +80,20 @@ describe('starting a consultation', () => {
         assert.equal((await post({ consultationId: 'c7', gapSince: 5, hn: '123' })).status, 400);
     });
 
-    for (const body of [ { hn: '123' }, { consultationId: '', hn: '123' }, { consultationId: 7, hn: '123' },
+    test('makes an id itself for an older coordinator service that sends none, so a new worker serves it until the night deployment', async () => {
+        started.length = 0;
+
+        const res = await post({ hn: '123' });
+        const { consultationId } = await res.json() as { consultationId: string; };
+
+        assert.equal(res.status, 201);
+        assert.match(consultationId, /^[0-9a-f-]{36}$/u);
+        assert.deepEqual(started, [ `123/${consultationId}` ]);
+    });
+
+    for (const body of [ { consultationId: '', hn: '123' }, { consultationId: 7, hn: '123' },
         { consultationId: '../x', hn: '123' }, { consultationId: 'a/b', hn: '123' } ]) {
-        test(`refuses ${JSON.stringify(body)} as it has no usable consultation id`, async () => {
+        test(`refuses ${JSON.stringify(body)} as it names an unusable consultation id`, async () => {
             started.length = 0;
 
             const res = await post(body);
