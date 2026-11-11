@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 
 import { type IMove, initialState, step } from '../src/rules.ts';
+import { diffState } from '../src/stateChanges.ts';
 import { Store, newMoveRecord } from '../src/store.ts';
 import type { ISurvey } from '../src/surveys.ts';
 
@@ -21,7 +22,7 @@ describe('the store', () => {
         const closed = step(moved.state, { at: new Date(T0.getTime() + 120_000), type: 'close_day' });
         const store = new Store(dir);
 
-        store.save(closed.state);
+        store.apply(closed.state.encounters.map(encounter => ({ encounter, kind: 'encounter' as const })));
         store.close();
 
         const loaded = new Store(dir).load();
@@ -47,6 +48,53 @@ describe('the store', () => {
     });
 });
 
+describe('writing what changed', () => {
+    it('writes one encounter and leaves the others as they were', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'store-'));
+        const a = step(initialState(), { at: T0, hn: 'A', type: 'start_encounter' });
+        const b = step(a.state, { at: new Date(T0.getTime() + 500), hn: 'B', type: 'start_encounter' });
+        const staged = step(b.state, { at: new Date(T0.getTime() + 1000), encounterId: a.encounter?.id as string, stage: 'intake', type: 'change_stage' });
+        const store = new Store(dir);
+
+        store.apply(b.state.encounters.map(encounter => ({ encounter, kind: 'encounter' as const })));
+        store.apply([ { encounter: staged.state.encounters.find(e => e.hn === 'A') as never, kind: 'encounter' } ]);
+        store.close();
+
+        assert.deepEqual(new Store(dir).load().encounters, staged.state.encounters);
+    });
+
+    it('keeps the rooms of patients and the stations of staff, and deletes one on request', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'store-'));
+        const store = new Store(dir);
+
+        store.apply([ { identityId: 'p1', kind: 'patient_room', room: 'r1' }, { identityId: 'p2', kind: 'patient_room', room: 'r2' },
+            { identityId: 's1', kind: 'staff_station', station: 'intake' } ]);
+        store.apply([ { identityId: 'p1', kind: 'patient_room', room: undefined } ]);
+        store.close();
+
+        const loaded = new Store(dir);
+
+        assert.deepEqual(loaded.patientRooms(), { p2: 'r2' });
+        assert.deepEqual(loaded.staffStations(), { s1: 'intake' });
+    });
+});
+
+describe('what changed between two states', () => {
+    it('lists only the encounters, moves and rooms that are new or different, then the audit entries', () => {
+        const a = step(initialState(), { at: T0, hn: 'A', type: 'start_encounter' });
+        const b = step(a.state, { at: new Date(T0.getTime() + 500), hn: 'B', type: 'start_encounter' });
+        const entry = { at: T0, issuer: 'system', kind: 'stage' as const, outcome: 'ok', encounterId: 'e', from: 'waiting' as const, to: 'intake' as const };
+        const next = { ...b.state, patientRooms: { p1: 'r1' } };
+
+        assert.deepEqual(diffState(a.state, next, new Map(), new Map(), [ entry ]), [
+            { encounter: b.state.encounters[1], kind: 'encounter' },
+            { identityId: 'p1', kind: 'patient_room', room: 'r1' },
+            { audit: entry, kind: 'audit' }
+        ]);
+        assert.deepEqual(diffState(next, next, new Map(), new Map()), []);
+    });
+});
+
 describe('the audit log and the retention sweep', () => {
     const DAY = 24 * 60 * 60 * 1000;
     const entry = (at: Date) => ({ at, issuer: 'system', kind: 'stage' as const, outcome: 'ok', encounterId: 'e', from: 'waiting' as const, to: 'intake' as const });
@@ -66,7 +114,7 @@ describe('the audit log and the retention sweep', () => {
         const old = step(initialState(), { at: new Date(now.getTime() - 100 * DAY), hn: 'OLD', type: 'start_encounter' });
         const fresh = step(old.state, { at: new Date(now.getTime() - 10 * DAY), hn: 'NEW', type: 'start_encounter' });
 
-        store.save(fresh.state);
+        store.apply(fresh.state.encounters.map(encounter => ({ encounter, kind: 'encounter' as const })));
         store.addAudit(entry(new Date(now.getTime() - 100 * DAY)));
         store.addAudit(entry(new Date(now.getTime() - 10 * DAY)));
 
@@ -89,8 +137,8 @@ describe('saving audit entries with the moves', () => {
     it('saves the entries and the audited flag together', () => {
         const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
 
-        store.save({ ...initialState(), moves: [ move ] }, new Map([ [ 'm-1', { ...newMoveRecord(), audited: true } ] ]),
-            [ entry(new Date('2030-01-01T09:00:00Z')) ]);
+        store.apply([ { kind: 'move', move, record: { ...newMoveRecord(), audited: true } },
+            { audit: entry(new Date('2030-01-01T09:00:00Z')), kind: 'audit' } ]);
 
         assert.equal(store.audit(10).length, 1);
         assert.equal(store.loadMoveRecords().get('m-1')?.audited, true);
@@ -99,8 +147,8 @@ describe('saving audit entries with the moves', () => {
     it('saves neither when one of them cannot be saved', () => {
         const store = new Store(mkdtempSync(join(tmpdir(), 'store-')));
 
-        assert.throws(() => store.save({ ...initialState(), moves: [ move ] },
-            new Map([ [ 'm-1', { ...newMoveRecord(), audited: true } ] ]), [ entry(new Date(NaN)) ]));
+        assert.throws(() => store.apply([ { kind: 'move', move, record: { ...newMoveRecord(), audited: true } },
+            { audit: entry(new Date(NaN)), kind: 'audit' } ]));
 
         assert.equal(store.audit(10).length, 0);
         assert.equal(store.loadMoveRecords().size, 0);

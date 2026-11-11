@@ -10,7 +10,7 @@ import { CoordinatorService } from '../src/coordinatorService.ts';
 import type { Prosody } from '../src/prosody.ts';
 import type { RecorderBot } from '../src/recorderBot.ts';
 import { parseRoleMarker } from '../src/rooms.ts';
-import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, type IMove, initialState } from '../src/rules.ts';
+import { ARRIVAL_WAIT_MS, COUNTDOWN_MS, type IMove } from '../src/rules.ts';
 import { Store, newMoveRecord } from '../src/store.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
@@ -183,7 +183,7 @@ describe('the coordinator service across a restart', () => {
         service.stop();
         store.close();
         store = new Store(dir);
-        store.save({ ...initialState(), moves: [ legacy ] }, new Map([ [ 'm-old', newMoveRecord('coord-1') ] ]));
+        store.apply([ { kind: 'move', move: legacy, record: newMoveRecord('coord-1') } ]);
         store.close();
         service = boot();
         await service.resume();
@@ -197,6 +197,30 @@ describe('the coordinator service across a restart', () => {
 
         await restart();
         assert.equal(moveAudits().length, 1);
+    });
+
+    it('writes each change on its own, in order, and loads the same state after a restart', async () => {
+        const writes: string[][] = [];
+        const apply = store.apply.bind(store);
+
+        mock.method(store, 'apply', (changes: Parameters<Store['apply']>[0]) => {
+            writes.push(changes.map(c => c.kind));
+            apply(changes);
+        });
+
+        const first = await service.startEncounter('A');
+
+        mock.timers.tick(1000);
+        await service.startEncounter('B');
+        await service.changeStage(first.encounter?.id as string, 'intake', 'system');
+
+        // Each start and each stage change writes the one encounter it changed, not the other.
+        assert.deepEqual(writes, [ [ 'encounter' ], [ 'encounter' ], [ 'encounter' ] ]);
+
+        const before = service.state;
+
+        await restart();
+        assert.deepEqual(service.state, before);
     });
 
     it('deletes the staff\'s stations in the retention sweep', async () => {
