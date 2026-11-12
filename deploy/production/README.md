@@ -46,11 +46,11 @@ Needs Docker with the Compose plugin, a clone of this repository at the release 
 
    Behind a TLS-inspecting proxy add `--secret id=npm_ca,src=<proxy CA bundle>` to each `docker build`.
 
-2. **Make `.env`**, then set every `CHANGE_ME_*` value (the internal address, the advertised addresses, the image tags, `RECORDER_BOT_MAX_CONSULTATIONS`) and the certificate paths:
+2. **Make `.env`**: first set, in `.env.example`, `PUBLIC_HOST`, `PUBLIC_URL`, `EXTERNAL_IP`, every `CHANGE_ME_*` value (the internal address, the advertised addresses, the image tags, `RECORDER_BOT_MAX_CONSULTATIONS`) and the certificate paths, then make it. The script renders coturn's configuration from `PUBLIC_HOST` and `EXTERNAL_IP` as they are at that moment; run it as root, so that coturn (uid 65534) can read that file:
 
    ```sh
-   scripts/generate-secrets.sh
-   $EDITOR .env
+   $EDITOR .env.example
+   sudo scripts/generate-secrets.sh
    ```
 
    Keep `.env` as it is once the stack has run: the passwords are in Prosody's accounts.
@@ -98,7 +98,7 @@ The old server had no firewall; this host should have one that allows only the r
 - **Logs:** `docker compose logs -f --tail 200 <service>`.
 - **Update:** build the new images, change their tags in `.env`, `docker compose up -d`. A recorder bot being replaced has a minute to finalise the consultations in progress; do it between visits. After a change to a Prosody module, restart `prosody`, then `jicofo` and `jvb`.
 - **Back up:** the `coordinator-data` volume (encounters, audit log, surveys) unless the coordinator service keeps its state in the hospital's MariaDB (`COORDINATOR_MARIADB_HOST` in `.env`; then the database team's backups hold it, see `coordinator/deploy/README.md`, "State in MariaDB"), the `recorder-bot-spool` volume while evidence recordings wait in it, `.env`, `keys/coordinator-private/`, `coordinator/rooms.json`.
-- **Certificates:** one certificate serves the web server and coturn. After renewing it in place, `docker compose restart web coturn`. `scripts/preflight.sh` warns 30 days ahead of expiry; run it from a daily check, because the old server's coturn certificate expired unnoticed.
+- **Certificates:** one certificate serves the web server and coturn. The staff drop a renewed pair in doit's home under the old names; then `sudo ~/install-tls-cert.sh` (a copy of `scripts/install-tls-cert.sh`) checks it, copies it to `TLS_CERT_FILE` and `TLS_KEY_FILE` (the key owned by uid 65534, which coturn runs as, mode 400) and reloads `front` and coturn without cutting a call. `--check` only checks. `scripts/preflight.sh` warns 30 days ahead of expiry; run it from a daily check, because the old server's coturn certificate expired unnoticed.
 - **Secrets:** a change to a service's API secret needs the same change in whoever calls it (`RECORDER_BOT_API_SECRET` is also the coordinator's; `COORDINATOR_API_SECRET` is the hospital system's).
 
 ## The front web server and the maintenance page

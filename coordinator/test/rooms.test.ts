@@ -49,6 +49,16 @@ describe('describing the rooms Prosody reports', () => {
         assert.equal(describeRooms(raw, markers)[0].name, 'hn/a1');
     });
 
+    it('leaves out the rooms Jicofo opens for its own health check, which are nobody\'s', () => {
+        const rooms = describeRooms({ rooms: [
+            { name: '__jicofo-health-check-4904240162747317418', occupants: [] },
+            { name: '__jicofo-health-check--3903072082638573757', occupants: [] },
+            { name: 'hn%2fa1', occupants: [] }
+        ] }, markers);
+
+        assert.deepEqual(rooms.map(r => r.name), [ 'hn/a1' ]);
+    });
+
     it('keeps a room name that is not valid percent-encoding as it is', () => {
         assert.equal(describeRooms({ rooms: [ { name: '100%', occupants: [] } ] }, markers)[0].name, '100%');
     });
