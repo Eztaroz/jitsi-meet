@@ -20,6 +20,12 @@ COPY recorder-bot/deploy/nginx/hn-rooms.conf coordinator/deploy/nginx/coordinato
 RUN sed -i 's|^include /config/nginx-custom/\*\.conf;|&\ninclude /etc/tele-meet/nginx/*.conf;|' /defaults/meet.conf \
     && grep -q '^include /etc/tele-meet/nginx/' /defaults/meet.conf
 
+# The hospital's logo and link. The image copies /defaults/interface_config.js to /config at every start, and appends
+# /config/custom-interface_config.js only from the volume, so add ours to the copy in the image.
+COPY deploy/production/web/interface_config.branding.js /tmp/
+RUN cat /tmp/interface_config.branding.js >> /defaults/interface_config.js && rm /tmp/interface_config.branding.js \
+    && grep -q 'hospital-logo.png' /defaults/interface_config.js
+
 # The fork's web build replaces the image's own. The bot pages are in static/.
 COPY --from=build /src/index.html /src/base.html /src/body.html /src/fonts.html /src/head.html /src/plugin.head.html /src/title.html /src/manifest.json /src/pwa-worker.js /usr/share/jitsi-meet/
 COPY --from=build /src/libs /usr/share/jitsi-meet/libs
