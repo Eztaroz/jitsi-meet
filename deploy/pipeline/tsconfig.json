@@ -4,7 +4,8 @@
         "target": "es2023",
         "lib": [ "ES2023" ],
 
-        // No package.json of its own says "type": "module": Node finds the ES module syntax, and so must the check.
+        // These scripts have no package.json of their own, so nodenext would check them as CommonJS. Node runs them as
+        // ES modules. Bundler resolution does not check that each import names its file; the tests run every file.
         "module": "esnext",
         "moduleResolution": "bundler",
         "allowImportingTsExtensions": true,
