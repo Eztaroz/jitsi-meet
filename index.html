@@ -5,6 +5,23 @@
     <meta http-equiv="content-type" content="text/html;charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <meta name="theme-color" content="#2A3A4B">
+    <script>
+        // LINE opens a shared link in its own in-app browser, which cannot use the camera or the microphone, and
+        // which stays in the meeting after the person reopens the link in their browser. Before anything joins, ask
+        // LINE to open the link in the phone's browser instead: LINE does so for a URL with openExternalBrowser=1.
+        (function () {
+            try {
+                const url = new URL(window.location.href);
+
+                if (/\bLine\//.test(navigator.userAgent) && !url.searchParams.has('openExternalBrowser')) {
+                    url.searchParams.set('openExternalBrowser', '1');
+                    window.location.replace(url.href);
+                }
+            } catch (e) {
+                // Load the meeting as it is.
+            }
+        })();
+    </script>
     <!--#include virtual="base.html" -->
 
     <link rel="apple-touch-icon" href="images/apple-touch-icon.png">
