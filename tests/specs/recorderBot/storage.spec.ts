@@ -13,7 +13,7 @@ import {
     evidencePath,
     findEvidence,
     getConsultation,
-    makeStorageRoot,
+    isolatedFileChanges,
     patientLinkRoom,
     playMedia,
     readEvidenceJson,
@@ -39,6 +39,7 @@ recorderBot.available expectation and the RECORDER_BOT_ISOLATED_* variables are 
 describe('Recorder bot: unavailable storage root', () => {
     const { apiUrl, container = '', retrySeconds, spool = '', storageRoot: root = '' } = config.recorderBot.isolated;
     const retryMs = retrySeconds * 1000;
+    const asRoot = isolatedFileChanges();
     let patient: Participant;
     let consultationId: string;
 
@@ -49,7 +50,7 @@ describe('Recorder bot: unavailable storage root', () => {
      */
     function takeStorageRootAway() {
         if (fs.existsSync(root)) {
-            fs.renameSync(root, `${root}-${Date.now()}`);
+            asRoot.rename(root, `${root}-${Date.now()}`).apply();
         }
     }
 
@@ -150,7 +151,7 @@ describe('Recorder bot: unavailable storage root', () => {
 
     it('the service writes nothing to a folder not marked as the storage root', async () => {
         // The folder is there, as a mount point is while its share is not mounted, but it has no marker.
-        fs.mkdirSync(root);
+        asRoot.mkdir(root).apply();
         await patient.driver.pause(3 * retryMs);
 
         expect((await getConsultation(consultationId, apiUrl)).status).toBe('spooled');
@@ -160,8 +161,7 @@ describe('Recorder bot: unavailable storage root', () => {
 
     it('the service stores nothing in a storage root it cannot write to', async () => {
         // The service's instance runs as root, but without the capability to override file permissions.
-        makeStorageRoot(root);
-        fs.chmodSync(root, 0o555);
+        asRoot.makeStorageRoot(root).chmod(root, 0o555).apply();
 
         const since = new Date();
 
@@ -176,8 +176,7 @@ describe('Recorder bot: unavailable storage root', () => {
     it('a failed attempt to store it leaves nothing in the storage root', async () => {
         // The storage root is writable again, but a file stands where the move stages its copy: the spool and the
         // storage root are on different mounts, so every attempt fails after it has created the patient's folder.
-        fs.chmodSync(root, 0o755);
-        fs.writeFileSync(path.join(root, '.incoming'), '');
+        asRoot.chmod(root, 0o755).write(path.join(root, '.incoming')).apply();
         await patient.driver.pause(3 * retryMs);
 
         expect((await getConsultation(consultationId, apiUrl)).status).toBe('spooled');
@@ -187,7 +186,7 @@ describe('Recorder bot: unavailable storage root', () => {
 
     it('once the storage root works, the evidence recording moves into it whole and the consultation is stored',
         async () => {
-            fs.rmSync(path.join(root, '.incoming'));
+            asRoot.remove(path.join(root, '.incoming')).apply();
 
             const consultation = await waitForConsultation(consultationId, c => c.status === 'stored', {
                 apiUrl,
@@ -206,7 +205,7 @@ describe('Recorder bot: unavailable storage root', () => {
     it('an evidence recording spooled before the service restarts is retried after it', async () => {
         // This time the folder is there, without its marker.
         takeStorageRootAway();
-        fs.mkdirSync(root);
+        asRoot.mkdir(root).apply();
 
         const id = await recordConsultation('RESTART');
         const spooled = await waitForFinalStatus(id, { apiUrl });
@@ -217,7 +216,7 @@ describe('Recorder bot: unavailable storage root', () => {
 
         // The storage root comes back while the service is down.
         docker('stop', container);
-        makeStorageRoot(root);
+        asRoot.makeStorageRoot(root).apply();
         docker('start', container);
 
         // The service no longer knows the consultation; its evidence recording turns up in the storage root, and

@@ -629,14 +629,178 @@ export async function setCameraHeight(participant: Participant, height: number):
 export const STORAGE_ROOT_MARKER = '.recorder-bot-storage-root';
 
 /**
- * Makes a folder an evidence storage root, as an operator does: creates it if it is not there, and marks it.
+ * Quotes a word for a POSIX shell.
  *
- * @param {string} root - The folder.
- * @returns {void}
+ * @param {string} word - The word.
+ * @returns {string}
  */
-export function makeStorageRoot(root: string): void {
-    fs.mkdirSync(root, { recursive: true });
-    fs.writeFileSync(path.join(root, STORAGE_ROOT_MARKER), '');
+function shellQuote(word: string): string {
+    return `'${word.replace(/'/g, '\'\\\'\'')}'`;
+}
+
+/**
+ * Quotes the absolute path of a file for a POSIX shell.
+ *
+ * @param {string} file - The file, relative to this process's folder or absolute.
+ * @returns {string}
+ */
+function quotedPath(file: string): string {
+    return shellQuote(path.resolve(file));
+}
+
+/**
+ * Changes to files in folders that a container of the service writes to, made as root. The service's containers run
+ * as root, so those folders and what the service writes in them belong to root, and the tests need not run as root
+ * (GitLab #18). The tests read them from this host, as the service writes them readable by all (its image's default
+ * umask).
+ *
+ * Collect the changes, then apply them in a throwaway container of the service's image, with the folders mounted at
+ * the same paths as on this host. The changes are made one after another while the service runs, so it can see a
+ * batch half-way.
+ */
+export class FileChangesAsRoot {
+    private readonly commands: string[] = [];
+    private readonly container: string;
+    private readonly folders: string[];
+
+    /**
+     * Changes to files in folders.
+     *
+     * @param {string} container - The service's container that writes to the folders; its image makes the changes.
+     * @param {string[]} folders - The folders the changes are in, on this host.
+     */
+    constructor(container: string, folders: string[]) {
+        this.container = container;
+        this.folders = folders;
+    }
+
+    /**
+     * Writes a file, creating its folder.
+     *
+     * @param {string} file - The file.
+     * @param {string} content - What to write.
+     * @returns {FileChangesAsRoot}
+     */
+    write(file: string, content = ''): this {
+        return this.add(`mkdir -p ${quotedPath(path.dirname(file))}`,
+            `printf %s ${shellQuote(content)} > ${quotedPath(file)}`);
+    }
+
+    /**
+     * Makes a folder an evidence storage root, as an operator does: creates it if it is not there, and marks it.
+     *
+     * @param {string} root - The folder.
+     * @returns {FileChangesAsRoot}
+     */
+    makeStorageRoot(root: string): this {
+        return this.write(path.join(root, STORAGE_ROOT_MARKER));
+    }
+
+    /**
+     * Creates a folder, and the folders it is in.
+     *
+     * @param {string} folder - The folder.
+     * @returns {FileChangesAsRoot}
+     */
+    mkdir(folder: string): this {
+        return this.add(`mkdir -p ${quotedPath(folder)}`);
+    }
+
+    /**
+     * Removes a file or a folder with everything in it, if it is there.
+     *
+     * @param {string} target - The file or folder.
+     * @returns {FileChangesAsRoot}
+     */
+    remove(target: string): this {
+        return this.add(`rm -rf ${quotedPath(target)}`);
+    }
+
+    /**
+     * Renames a file or a folder.
+     *
+     * @param {string} from - Its name.
+     * @param {string} to - Its new name.
+     * @returns {FileChangesAsRoot}
+     */
+    rename(from: string, to: string): this {
+        return this.add(`mv ${quotedPath(from)} ${quotedPath(to)}`);
+    }
+
+    /**
+     * Creates a symbolic link.
+     *
+     * @param {string} target - What it points to, relative to the link's folder, as it is written in the link.
+     * @param {string} link - The link.
+     * @returns {FileChangesAsRoot}
+     */
+    symlink(target: string, link: string): this {
+        return this.add(`ln -s ${shellQuote(target)} ${quotedPath(link)}`);
+    }
+
+    /**
+     * Sets the permissions of a file or a folder.
+     *
+     * @param {string} target - The file or folder.
+     * @param {number} mode - The permissions, such as 0o555.
+     * @returns {FileChangesAsRoot}
+     */
+    chmod(target: string, mode: number): this {
+        return this.add(`chmod ${mode.toString(8)} ${quotedPath(target)}`);
+    }
+
+    /**
+     * Sets the modification time of a folder and of everything in it, as if nothing had changed there since.
+     *
+     * @param {string} folder - The folder.
+     * @param {Date} time - When.
+     * @returns {FileChangesAsRoot}
+     */
+    age(folder: string, time: Date): this {
+        return this.add(`find ${quotedPath(folder)} -exec touch -d @${Math.floor(time.getTime() / 1000)} {} +`);
+    }
+
+    /**
+     * Makes the changes collected so far, in order, and forgets them. Stops at the first that fails.
+     *
+     * @returns {void}
+     */
+    apply(): void {
+        if (!this.commands.length) {
+            return;
+        }
+
+        const image = docker('inspect', '-f', '{{.Config.Image}}', this.container).trim();
+        const mounts = this.folders.map(f => path.resolve(f)).flatMap(folder => [ '-v', `${folder}:${folder}` ]);
+
+        docker('run', '--rm', '--user', 'root', '--network', 'none', '--entrypoint', 'sh', ...mounts, image,
+            '-ec', this.commands.join('\n'));
+        this.commands.length = 0;
+    }
+
+    /**
+     * Adds commands to the batch.
+     *
+     * @param {string[]} commands - Shell commands.
+     * @returns {FileChangesAsRoot}
+     */
+    private add(...commands: string[]): this {
+        this.commands.push(...commands);
+
+        return this;
+    }
+}
+
+/**
+ * Changes to the folders that the isolated instance's container writes to: the folder its storage root is in, and its
+ * spool. The storage and the retention tests change files there.
+ *
+ * @returns {FileChangesAsRoot}
+ */
+export function isolatedFileChanges(): FileChangesAsRoot {
+    const { container = '', spool = '', storageRoot = '' } = config.recorderBot.isolated;
+
+    return new FileChangesAsRoot(container, [ path.dirname(storageRoot), spool ]);
 }
 
 /**
