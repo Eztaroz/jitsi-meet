@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { setTestProperties } from '../../helpers/TestProperties';
 import { config } from '../../helpers/TestsConfig';
-import { docker, makeStorageRoot, retentionUnavailableReason } from '../../helpers/recorderBot';
+import { docker, isolatedFileChanges, retentionUnavailableReason } from '../../helpers/recorderBot';
 
 setTestProperties(__filename, {
     description: 'The retention sweeper deletes the evidence recordings whose consultation started longer ago than \
@@ -16,32 +16,6 @@ by HN. Skipped unless the recorderBot.available expectation and the RECORDER_BOT
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Writes a file, creating its folder.
- *
- * @param {string} file - The file.
- * @param {string} content - What to write.
- * @returns {void}
- */
-function writeFile(file: string, content: string) {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, content);
-}
-
-/**
- * Sets the modification time of a folder and of everything in it, as if nothing had changed there since.
- *
- * @param {string} folder - The folder.
- * @param {Date} time - When.
- * @returns {void}
- */
-function age(folder: string, time: Date) {
-    for (const entry of fs.readdirSync(folder, { recursive: true }) as string[]) {
-        fs.utimesSync(path.join(folder, entry), time, time);
-    }
-    fs.utimesSync(folder, time, time);
-}
 
 /**
  * Waits until a condition holds.
@@ -75,6 +49,10 @@ describe('Recorder bot: retention', () => {
     const old = new Date(seededAt.getTime() - (retentionDays + 1) * DAY_MS);
     const recent = new Date(seededAt.getTime() - (retentionDays - 1) * DAY_MS);
 
+    // The sweeper runs while the seeds are made, one step after another. Each seed is written so that no step on the
+    // way is one it deletes: its files first, then its age.
+    const asRoot = isolatedFileChanges();
+
     /**
      * One seeded evidence recording: its consultation, the HN in its manifest, where it is, and the part of its HN
      * that is unique to it.
@@ -92,20 +70,26 @@ describe('Recorder bot: retention', () => {
      *
      * @param {string} label - Distinguishes its HN.
      * @param {Date} start - Its consultation start.
-     * @param {string} under - The folder its patient's folder is in; the storage root by default.
+     * @param {Object} options - Where it goes, and what it lacks.
+     * @param {string} options.under - The folder its patient's folder is in; the storage root by default.
+     * @param {string} options.name - Its folder's name; the one the service gives it by default.
+     * @param {boolean} options.manifest - Whether it has a manifest.
      * @returns {ISeed}
      */
-    function seedEvidence(label: string, start: Date, under = root): ISeed {
+    function seedEvidence(label: string, start: Date,
+            { manifest = true, name = start.toISOString().replace(/[-:]/g, ''), under = root } = {}): ISeed {
         const tag = `retention${label}${run}`.toLowerCase();
         const hn = `HN/${tag}`.toUpperCase();
         const room = encodeURIComponent(hn.toLowerCase()).toLowerCase();
         const consultationId = randomUUID();
-        const folder = path.join(under, room, start.toISOString().replace(/[-:]/g, ''));
+        const folder = path.join(under, room, name);
 
-        writeFile(path.join(folder, '01-endpoint-audio.webm'), 'media');
-        writeFile(path.join(folder, 'timeline.json'), JSON.stringify({ consultationId, entries: [] }));
-        writeFile(path.join(folder, 'manifest.json'), JSON.stringify({ consultationId, hn, room, start }));
-        age(folder, start);
+        asRoot.write(path.join(folder, '01-endpoint-audio.webm'), 'media')
+            .write(path.join(folder, 'timeline.json'), JSON.stringify({ consultationId, entries: [] }));
+        if (manifest) {
+            asRoot.write(path.join(folder, 'manifest.json'), JSON.stringify({ consultationId, hn, room, start }));
+        }
+        asRoot.age(folder, start);
 
         return { consultationId, folder, hn, room, tag };
     }
@@ -121,8 +105,7 @@ describe('Recorder bot: retention', () => {
         const consultationId = randomUUID();
         const folder = path.join(dir, consultationId);
 
-        writeFile(path.join(folder, 'raw', '01-endpoint-video.webm'), 'media');
-        age(folder, changed);
+        asRoot.write(path.join(folder, 'raw', '01-endpoint-video.webm'), 'media').age(folder, changed);
 
         return { consultationId, folder };
     }
@@ -141,16 +124,16 @@ describe('Recorder bot: retention', () => {
         // What the sweeper kept, so that the next runs start clean.
         for (const seed of [ recentEvidence, unmatched, misplaced, linked ]) {
             if (seed) {
-                fs.rmSync(path.dirname(seed.folder), { force: true, recursive: true });
+                asRoot.remove(path.dirname(seed.folder));
             }
         }
         if (link) {
-            fs.rmSync(link, { force: true });
-            fs.rmSync(path.join(path.dirname(root), `outside-${run}`), { force: true, recursive: true });
+            asRoot.remove(link).remove(path.join(path.dirname(root), `outside-${run}`));
         }
         if (recentSpool) {
-            fs.rmSync(recentSpool.folder, { force: true, recursive: true });
+            asRoot.remove(recentSpool.folder);
         }
+        asRoot.apply();
     });
 
     it('setup', async () => {
@@ -161,32 +144,29 @@ describe('Recorder bot: retention', () => {
 
             return;
         }
-        makeStorageRoot(root);
+        asRoot.makeStorageRoot(root);
 
         oldEvidence = seedEvidence('OLD', old);
         recentEvidence = seedEvidence('RECENT', recent);
 
         // Old, but not an evidence recording: a folder with no manifest.
-        unmatched = seedEvidence('UNMATCHED', old);
-        fs.rmSync(path.join(unmatched.folder, 'manifest.json'));
-        age(unmatched.folder, old);
+        unmatched = seedEvidence('UNMATCHED', old, { manifest: false });
 
         // Old, but its manifest says it belongs elsewhere.
-        misplaced = seedEvidence('MISPLACED', old);
-        fs.renameSync(misplaced.folder, path.join(path.dirname(misplaced.folder), 'moved'));
-        misplaced.folder = path.join(path.dirname(misplaced.folder), 'moved');
+        misplaced = seedEvidence('MISPLACED', old, { name: 'moved' });
 
         // An old evidence recording outside the storage root, which a symbolic link in it points to. The link is
         // relative, so that it resolves both here and in the service's container.
         const outside = path.join(path.dirname(root), `outside-${run}`);
 
-        linked = seedEvidence('LINKED', old, outside);
+        linked = seedEvidence('LINKED', old, { under: outside });
         link = path.join(root, linked.room);
-        fs.symlinkSync(path.relative(root, path.join(outside, linked.room)), link);
+        asRoot.symlink(path.relative(root, path.join(outside, linked.room)), link);
 
         staleSpool = seedLeftover(spool, old);
         recentSpool = seedLeftover(spool, recent);
         staleStaging = seedLeftover(path.join(root, '.incoming'), old);
+        asRoot.apply();
 
         await waitFor(() => !fs.existsSync(oldEvidence.folder) && !fs.existsSync(staleSpool.folder)
                 && !fs.existsSync(staleStaging.folder),
