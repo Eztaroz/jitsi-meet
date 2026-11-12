@@ -151,7 +151,7 @@ export class Players {
     private async finish(room: string, slot?: { browser?: IPlayerBrowser; }): Promise<void> {
         const current = this.rooms.get(room);
 
-        if (!current || slot && current !== slot) {
+        if (!current || (slot && current !== slot)) {
             return;
         }
 

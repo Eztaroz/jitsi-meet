@@ -99,6 +99,11 @@ twa/*.aab
 twa/assetlinks.json
 
 tsconfig.json
+# The fork's standalone packages keep theirs: their ESLint configs lint with it.
+!coordinator/tsconfig.json
+!deploy/pipeline/tsconfig.json
+!recorder-bot/tsconfig.json
+!video-player/tsconfig.json
 
 # React Native SDK
 #

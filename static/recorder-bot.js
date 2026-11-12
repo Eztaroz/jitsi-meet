@@ -1,4 +1,4 @@
-/* global JitsiMeetJS, config */
+/* global BigInt, JitsiMeetJS, RTCRtpScriptTransform, config */
 
 /**
  * The in-page half of the recorder bot. The recorder bot service (recorder-bot/) loads static/recorder-bot.html in
@@ -170,6 +170,8 @@ onrtctransform = ({ transformer }) => {
         return header.buffer;
     }
 
+    /* eslint-disable no-bitwise -- the VP9 superframe index is a bit field, and RTP timestamps wrap at 32 bits. */
+
     /**
      * Joins the frames of one picture, one per spatial layer, into one temporal unit. AV1 layers are consecutive
      * OBUs; VP9 layers are joined as a superframe, with its index.
@@ -187,14 +189,14 @@ onrtctransform = ({ transformer }) => {
 
         const largest = Math.max(...parts.map(part => part.length));
         const sizeBytes = largest < 0x100 ? 1 : largest < 0x10000 ? 2 : largest < 0x1000000 ? 3 : 4;
-        const marker = 0xc0 | (sizeBytes - 1) << 3 | parts.length - 1;
-        const index = new Uint8Array(2 + parts.length * sizeBytes);
+        const marker = 0xc0 | ((sizeBytes - 1) << 3) | (parts.length - 1);
+        const index = new Uint8Array(2 + (parts.length * sizeBytes));
 
         index[0] = marker;
         index[index.length - 1] = marker;
         parts.forEach((part, i) => {
             for (let b = 0; b < sizeBytes; b++) {
-                index[1 + i * sizeBytes + b] = part.length >>> 8 * b & 0xff;
+                index[1 + (i * sizeBytes) + b] = (part.length >>> (8 * b)) & 0xff;
             }
         });
 
@@ -261,6 +263,8 @@ onrtctransform = ({ transformer }) => {
         };
     }
 
+    /* eslint-enable no-bitwise */
+
     /**
      * Starts recording a video track by copying its encoded frames into an IVF stream, without re-encoding.
      *
@@ -298,6 +302,7 @@ onrtctransform = ({ transformer }) => {
                 parts = [];
             }
         };
+        const timer = setInterval(flush, CHUNK_MS);
         const detach = () => {
             clearInterval(timer);
             try {
@@ -306,6 +311,19 @@ onrtctransform = ({ transformer }) => {
                 // The receiver may be gone with the track.
             }
             channel.port1.close();
+        };
+        const recorder = {
+            state: 'recording',
+            stop() {
+                if (recorder.state === 'inactive') {
+                    return;
+                }
+                recorder.state = 'inactive';
+                detach();
+                writer.end();
+                flush();
+                recorder.onstop?.();
+            }
         };
 
         channel.port1.onmessage = ({ data: frame }) => {
@@ -331,24 +349,8 @@ onrtctransform = ({ transformer }) => {
             }
         };
 
-        const timer = setInterval(flush, CHUNK_MS);
-
         receiver.transform = new RTCRtpScriptTransform(getPassthroughWorker(), { port: channel.port2 },
             [ channel.port2 ]);
-
-        const recorder = {
-            state: 'recording',
-            stop() {
-                if (recorder.state === 'inactive') {
-                    return;
-                }
-                recorder.state = 'inactive';
-                detach();
-                writer.end();
-                flush();
-                recorder.onstop?.();
-            }
-        };
 
         return recorder;
     }

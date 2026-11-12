@@ -1,0 +1,19 @@
+{
+    "include": [ "*.ts", "test/**/*.ts" ],
+    "compilerOptions": {
+        "target": "es2023",
+        "lib": [ "ES2023" ],
+
+        // No package.json of its own says "type": "module": Node finds the ES module syntax, and so must the check.
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "noEmit": true,
+        "strict": true,
+        "noImplicitAny": true,
+        "noImplicitOverride": true,
+        "skipLibCheck": true,
+        "types": [ "node" ]
+    }
+}

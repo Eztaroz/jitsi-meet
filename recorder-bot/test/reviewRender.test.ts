@@ -29,6 +29,15 @@ const hasFfmpeg = (() => {
     }
 })();
 
+/** The codecs the recorder bot copies from the sender, as ffprobe names them, and the ffmpeg encoder that makes each. */
+const ENCODERS = {
+    av1: [ '-c:v', 'libaom-av1', '-cpu-used', '8', '-b:v', '100k' ],
+    vp8: [ '-c:v', 'libvpx', '-b:v', '100k' ],
+    vp9: [ '-c:v', 'libvpx-vp9', '-b:v', '100k' ]
+} as const;
+
+type Codec = keyof typeof ENCODERS;
+
 /**
  * Whether this machine's ffmpeg can make video of a codec, to build the test evidence with.
  *
@@ -73,15 +82,6 @@ const PEOPLE = [
 
 /** The bot crashed at 5 seconds and was back at 6. */
 const GAPS = [ { start: at(5), end: at(6) } ];
-
-/** The codecs the recorder bot copies from the sender, as ffprobe names them, and the ffmpeg encoder that makes each. */
-const ENCODERS = {
-    av1: [ '-c:v', 'libaom-av1', '-cpu-used', '8', '-b:v', '100k' ],
-    vp8: [ '-c:v', 'libvpx', '-b:v', '100k' ],
-    vp9: [ '-c:v', 'libvpx-vp9', '-b:v', '100k' ]
-} as const;
-
-type Codec = keyof typeof ENCODERS;
 
 /**
  * Builds a small evidence recording, as the recorder bot finalises one, with ffmpeg's test sources.
@@ -269,7 +269,7 @@ describe('npm run review', { skip: !hasFfmpeg && 'ffmpeg and ffprobe are not on 
         assert.deepEqual(await readdir(work).then(names => names.filter(n => n.endsWith('.part'))), []);
     });
 
-    for (const codec of [ 'av1', 'vp9', 'vp8' ] as const) {
+    ([ 'av1', 'vp9', 'vp8' ] as const).forEach(codec => {
         test(`renders a Review file from ${codec} video tracks`, {
             skip: !canMake(codec) && `ffmpeg has no ${codec} encoder`
         }, async () => {
@@ -278,7 +278,7 @@ describe('npm run review', { skip: !hasFfmpeg && 'ffmpeg and ffprobe are not on 
             await buildEvidence(folder, () => codec);
             await assertRendered(folder, path.join(work, `only-${codec}.mp4`));
         });
-    }
+    });
 
     test('renders a Review file from AV1, VP9 and VP8 tracks mixed in one consultation', {
         skip: !(canMake('av1') && canMake('vp9') && canMake('vp8')) && 'ffmpeg lacks an AV1, VP9 or VP8 encoder'

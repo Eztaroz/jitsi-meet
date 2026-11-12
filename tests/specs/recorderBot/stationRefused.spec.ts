@@ -1,5 +1,5 @@
 import { setTestProperties } from '../../helpers/TestProperties';
-import { recorderBotUnavailableReason, postStationConsultation, uniqueHn } from '../../helpers/recorderBot';
+import { postStationConsultation, recorderBotUnavailableReason, uniqueHn } from '../../helpers/recorderBot';
 
 setTestProperties(__filename, {
     description: 'A request that still sends station fields (room, patient) is refused with a clear error and no \

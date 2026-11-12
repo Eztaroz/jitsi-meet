@@ -23,17 +23,17 @@ export interface IConfig {
     /** The Chromium binary to run; Playwright's own when unset. */
     chromiumPath?: string;
 
-    /**
-     * Where to send heartbeats to the coordinator service (ADR 0014); unset, none are sent. The worker's id on the
-     * service's list, its build and the address the service reaches the control API at.
-     */
-    heartbeat?: { advertisedUrl: string; build: string; coordinatorUrl: string; id: string; };
-
     /** How long the bot stays in a room every human has left, in milliseconds (ADR 0003). */
     emptyRoomGraceMs: number;
 
     /** How long the bot waits for the first human to join, in milliseconds (ADR 0003). */
     firstJoinWaitMs: number;
+
+    /**
+     * Where to send heartbeats to the coordinator service (ADR 0014); unset, none are sent. The worker's id on the
+     * service's list, its build and the address the service reaches the control API at.
+     */
+    heartbeat?: { advertisedUrl: string; build: string; coordinatorUrl: string; id: string; };
 
     /** Whether to accept the Jitsi web server's certificate without checking it. For local test deployments. */
     ignoreCertificateErrors: boolean;
