@@ -32,11 +32,11 @@ export interface IHeartbeatOptions {
     /** How often to send; for tests. */
     intervalMs?: number;
 
-    /** Called with the consultations the coordinator service took over, from the answer: this worker stops them. */
-    onTakenOver?: (consultationIds: string[]) => void;
-
     /** The clock, in milliseconds; for tests. */
     now?: () => number;
+
+    /** Called with the consultations the coordinator service took over, from the answer: this worker stops them. */
+    onTakenOver?: (consultationIds: string[]) => void;
 
     /** The worker's own secret on that list: the same one the coordinator service sends with its requests. */
     secret: string;

@@ -1,0 +1,20 @@
+{
+    "include": [ "*.ts", "test/**/*.ts" ],
+    "compilerOptions": {
+        "target": "es2023",
+        "lib": [ "ES2023" ],
+
+        // These scripts have no package.json of their own, so nodenext would check them as CommonJS. Node runs them as
+        // ES modules. Bundler resolution does not check that each import names its file; the tests run every file.
+        "module": "esnext",
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true,
+        "verbatimModuleSyntax": true,
+        "noEmit": true,
+        "strict": true,
+        "noImplicitAny": true,
+        "noImplicitOverride": true,
+        "skipLibCheck": true,
+        "types": [ "node" ]
+    }
+}

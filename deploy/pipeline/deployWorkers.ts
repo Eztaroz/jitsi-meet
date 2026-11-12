@@ -218,7 +218,7 @@ export async function deployWorkers(options: IOptions): Promise<{ deployed: stri
             const fresh = beatsAtDrain === undefined || status?.heartbeats === undefined
                 || status.heartbeats >= beatsAtDrain + HEARTBEATS_AFTER_DRAINING;
 
-            if (!status || status.lost || status.running === 0 && fresh) {
+            if (!status || status.lost || (status.running === 0 && fresh)) {
                 break;
             }
             if (Date.now() >= drainUntil) {

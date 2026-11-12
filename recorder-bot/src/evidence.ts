@@ -72,10 +72,10 @@ export interface IEvidenceInput {
 
     /** The conference's meeting id, as jitsi-meet and the videobridge log it. */
     meetingId?: string;
-    participants: IParticipant[];
 
     /** This recorder bot's folder under the consultation's, so that parts never overwrite each other (ADR 0016). */
     part?: string;
+    participants: IParticipant[];
 
     /** The patient's room, which names the evidence's place under their HN. */
     room: string;
