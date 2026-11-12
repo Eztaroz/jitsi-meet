@@ -31,6 +31,13 @@ sed -e "s|@TURN_CREDENTIALS@|$TURN_CREDENTIALS|" \
     -e "s|@PUBLIC_HOST@|$PUBLIC_HOST|" \
     -e "s|@EXTERNAL_IP@|$EXTERNAL_IP|" \
     coturn/turnserver.conf.template > coturn/turnserver.conf
-chmod 600 coturn/turnserver.conf
+# coturn runs as "nobody" (uid 65534) and must read it; nobody else may, as it holds the TURN secret. A file coturn
+# cannot read is not an error to coturn: it starts with its defaults, without the secret, TLS or the denied peers.
+chmod 400 coturn/turnserver.conf
+if [ "$(id -u)" = 0 ]; then
+    chown 65534:0 coturn/turnserver.conf
+else
+    echo "run as root, or: sudo chown 65534:0 coturn/turnserver.conf" >&2
+fi
 
 echo "made .env and coturn/turnserver.conf; now set the CHANGE_ME_* values in .env"
