@@ -204,6 +204,12 @@ function matches(identity: IRawIdentity | undefined, marker: IRoleMarker | undef
 }
 
 /**
+ * How the rooms Jicofo opens for its health check are named (resources/prosody-plugins/util.lib.lua,
+ * is_healthcheck_room).
+ */
+const JICOFO_HEALTH_CHECK_ROOM = '__jicofo-health-check';
+
+/**
  * Decodes a room name from the room's address, where Jitsi percent-encodes characters such as "/".
  *
  * @param {string} name - The name in the address.
@@ -258,7 +264,10 @@ export function sameRoom(a: string, b: string): boolean {
  * @returns {IRoom[]}
  */
 function describeOpenRooms(rooms: { name?: string; occupants?: unknown; }[], markers: IRoleMarkers, layout: ILayout): IRoom[] {
-    return rooms.map((room: { name?: string; occupants?: unknown; }) => {
+    // Jicofo opens a room of its own every few seconds to check its health; it is nobody's room.
+    const participants = rooms.filter(room => !(room.name ?? '').startsWith(JICOFO_HEALTH_CHECK_ROOM));
+
+    return participants.map((room: { name?: string; occupants?: unknown; }) => {
         const occupants = Array.isArray(room.occupants) ? room.occupants as IRawOccupant[] : [];
 
         const name = decodeRoomName(room.name ?? '');
