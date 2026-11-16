@@ -3,7 +3,7 @@
 #
 # Build from the repository root:
 #   docker build -f deploy/production/front/Dockerfile -t front .
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
 COPY deploy/production/front/front.conf /etc/nginx/conf.d/default.conf
 COPY deploy/production/front/security-headers.conf /etc/nginx/snippets/security-headers.conf
