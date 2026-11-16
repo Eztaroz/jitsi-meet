@@ -137,6 +137,8 @@ services:
             TURN_CREDENTIALS: ${TURN_CREDENTIALS:?run scripts/generate-secrets.sh}
             TURN_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
             TURN_PORT: 3478
+            # coturn listens on UDP 3478 only (no-tcp); the image would hand out TCP, which nothing answers.
+            TURN_TRANSPORT: udp
             TURNS_HOST: ${PUBLIC_HOST}
             TURNS_PORT: 5349
             TZ: ${TZ:-Asia/Bangkok}

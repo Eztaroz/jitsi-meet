@@ -46,7 +46,7 @@ Needs Docker with the Compose plugin, a clone of this repository at the release 
 
    Behind a TLS-inspecting proxy add `--secret id=npm_ca,src=<proxy CA bundle>` to each `docker build`.
 
-2. **Make `.env`**: first set, in `.env.example`, `PUBLIC_HOST`, `PUBLIC_URL`, `EXTERNAL_IP`, every `CHANGE_ME_*` value (the internal address, the advertised addresses, the image tags, `RECORDER_BOT_MAX_CONSULTATIONS`) and the certificate paths, then make it. The script renders coturn's configuration from `PUBLIC_HOST` and `EXTERNAL_IP` as they are at that moment; run it as root, so that coturn (uid 65534) can read that file:
+2. **Make `.env`**: first set, in `.env.example`, `PUBLIC_HOST`, `PUBLIC_URL`, `EXTERNAL_IP`, every `CHANGE_ME_*` value (the internal address, the advertised addresses, the image tags, `RECORDER_BOT_MAX_CONSULTATIONS`) and the certificate paths, then make it. The script renders coturn's configuration from `PUBLIC_HOST`, `EXTERNAL_IP` and `HOST_INTERNAL_IP` as they are at that moment; run it as root, so that coturn (uid 65534) can read that file:
 
    ```sh
    $EDITOR .env.example
@@ -86,7 +86,7 @@ The first start of the Jitsi containers generates their configuration under `con
 |---|---|---|
 | TCP 443 (and 80, which redirects), on the front web server | Users and the hospital's systems | The web client, BOSH and websockets, `/coordinator/` |
 | UDP 10000 | Users | Media through the videobridge |
-| UDP 3478, TCP 5349 | Users | coturn (STUN/TURN, TURN over TLS) |
+| UDP 3478, TCP 5349 | Users | coturn (TURN over UDP, TURN over TLS). Its relay reaches only public addresses and this host's internal one |
 | `127.0.0.1:8090`, `:8094` | This host only | The recorder bot's and the video player's control APIs, for health checks |
 | 8091 (coordinator), 5280 (Prosody HTTP) | Nothing | Internal network only. **Never publish them** |
 
