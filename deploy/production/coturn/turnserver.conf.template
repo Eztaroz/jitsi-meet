@@ -23,8 +23,12 @@ no-tlsv1
 no-tlsv1_1
 cipher-list=ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384
 
-# A relay never reaches a private or special address, as in the old server. The videobridge and the recorder bot are
-# reached directly, not through the relay.
+# A relay never reaches a private or special address, as in the old server, except this host's own: the videobridge
+# advertises it, and a client behind a network that blocks UDP reaches the videobridge only through the relay. Without
+# it every relay to the videobridge is denied (its public address would need a hairpin through the NAT). The relay
+# carries UDP only (no-tcp-relay), so it reaches no TCP service on this host; the UDP ports on it are the videobridge's
+# and coturn's own.
+allowed-peer-ip=@HOST_INTERNAL_IP@
 denied-peer-ip=0.0.0.0-0.255.255.255
 denied-peer-ip=10.0.0.0-10.255.255.255
 denied-peer-ip=100.64.0.0-100.127.255.255
