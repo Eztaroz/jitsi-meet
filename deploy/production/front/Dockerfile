@@ -6,6 +6,7 @@
 FROM nginx:1.27-alpine
 
 COPY deploy/production/front/front.conf /etc/nginx/conf.d/default.conf
+COPY deploy/production/front/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY deploy/production/maintenance/index.html /usr/share/tele-meet/maintenance/maintenance.html
 
 # The certificate and key are mounted at /etc/tele-meet/certs/cert.crt and cert.key.
