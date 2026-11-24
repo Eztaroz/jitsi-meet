@@ -1479,6 +1479,7 @@
         "timelineStart": "Start"
     },
     "staffActions": {
+        "allowNotifications": "Allow notifications",
         "answer": "{{question}}: {{choice}}",
         "apply": "Change stage",
         "currentStage": "Stage: {{stage}}",
@@ -1490,7 +1491,11 @@
         "pickVideo": "Waiting video for this stage...",
         "playVideo": "Play video",
         "questionnaireNotSent": "The questionnaire was not sent.",
+        "queueAlertTitle": "A patient is waiting for your station",
         "queueEmpty": "Nobody is waiting for your station.",
+        "queueLongest": "longest {{minutes}} min",
+        "queueNobody": "Nobody is waiting",
+        "queueWaiting": "{{waiting}} waiting",
         "refused": "The stage was not changed.",
         "sendQuestionnaire": "Send questionnaire",
         "stopVideo": "Stop video",
