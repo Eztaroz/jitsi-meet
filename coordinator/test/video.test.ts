@@ -35,7 +35,7 @@ const LAYOUT: ILayout = {
             { id: 'examination', name: 'E' },
             { id: 'done', name: 'D' }
         ] } ],
-        stations: [ { id: 'exam', lounge: 'lounge-exam', stage: 'examination' } ]
+        stations: [ { id: 'exam', lounge: 'lounge-exam', stages: [ 'examination' ] } ]
     } ],
     videos: [ { file: 'videos/intro.mp4', id: 'intro', title: 'Intro' } ]
 };

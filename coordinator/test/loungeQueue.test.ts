@@ -42,8 +42,9 @@ describe('staff in a lounge see their station\'s queue (#24)', () => {
                 centers: [ {
                     id: 'c1',
                     stations: [
-                        { id: 'pharmacy', lounge: 'lounge-pharmacy', stage: 'pharmacy' },
-                        { id: 'examination', lounge: 'lounge-exam', stage: 'examination' }
+                        { id: 'pharmacy', lounge: 'lounge-pharmacy', stages: [ 'pharmacy' ] },
+                        { id: 'examination', lounge: 'lounge-exam', stages: [ 'examination' ] },
+                        { id: 'nurse', lounge: 'lounge-nurse', stages: [ 'intake', 'aftercare' ] }
                     ]
                 } ]
             },
@@ -101,6 +102,18 @@ describe('staff in a lounge see their station\'s queue (#24)', () => {
         assert.equal(typeof queue?.longestWaitSeconds, 'number');
         assert.equal(queue?.lastJoinedAt, second.enteredAt.toISOString());
         assert.ok(first.enteredAt < second.enteredAt);
+    });
+
+    it('counts the patients of every stage a station serves (ADR 0018)', async () => {
+        await enter('hn-a', 'intake');
+        await enter('hn-b', 'aftercare');
+        await enter('hn-c', 'pharmacy');
+        rooms = [ lounge('lounge-nurse', staffAt('s-1', 'e-sam')), patientRoom('hn-a'), patientRoom('hn-b'), patientRoom('hn-c') ];
+
+        const queue = (await service.staffContext(SAM)).queue;
+
+        assert.equal(queue?.waiting, 2);
+        assert.equal(queue?.lastJoinedAt, service.queues().aftercare[0].enteredAt.toISOString());
     });
 
     it('leaves out a patient who already has staff with them, or whose room is not open', async () => {

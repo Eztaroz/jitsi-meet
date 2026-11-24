@@ -21,7 +21,7 @@ function roomsFile(content: unknown): string {
 }
 
 describe('the health questionnaires of the configuration', () => {
-    const stations = [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ];
+    const stations = [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ];
     const withQuestionnaires = (questionnaires: unknown) => ({ centers: [ { id: 'c1', stations } ], questionnaires });
     const question = { choices: [ 'Yes', 'No' ], text: 'Do you smoke?' };
     const valid = { id: 'lifestyle', questions: [ question ], title: 'Lifestyle' };

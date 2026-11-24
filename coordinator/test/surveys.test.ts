@@ -7,7 +7,7 @@ import { initialState, step } from '../src/rules.ts';
 import { type ISurvey, parseSurvey, placeSurvey, surveysCsv } from '../src/surveys.ts';
 
 const T0 = new Date('2030-01-01T08:00:00Z');
-const LAYOUT: ILayout = { centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-1', stage: 'intake' } ] } ] };
+const LAYOUT: ILayout = { centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-1', stages: [ 'intake' ] } ] } ] };
 
 /**
  * Says the HTTP status a function fails with.

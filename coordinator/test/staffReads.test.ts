@@ -33,7 +33,7 @@ describe('staff reads of the rooms', () => {
         store = new Store(mkdtempSync(join(tmpdir(), 'staff-reads-')));
         service = new CoordinatorService({
             auditKey: 'audit-key',
-            layout: { centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ] },
+            layout: { centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ] } ] },
             prosody: {
                 rooms: async () => {
                     dumps++;

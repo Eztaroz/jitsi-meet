@@ -410,6 +410,33 @@ export function examinationQueues(state: IState, now: Date): IExaminationQueues 
 }
 
 /**
+ * Returns the queue a staff member of a station calls from: the patients of all the station's stages, the longest
+ * waiting in their current stage first (ADR 0018). In examination, which a station serves alone, it is the staff
+ * member's own doctor queue (ADR 0012).
+ *
+ * @param {IState} state - The state.
+ * @param {Date} now - The current time.
+ * @param {Object} caller - Who calls.
+ * @param {string[]} caller.stages - The stages of the staff member's station.
+ * @param {string} caller.staffId - The staff member's verified identity id.
+ * @param {string[]} pathwayStages - The stages of the configured pathways.
+ * @returns {IQueueEntry[]}
+ */
+export function stationQueue(state: IState, now: Date, caller: { staffId: string; stages: readonly string[]; },
+        pathwayStages: readonly string[]): IQueueEntry[] {
+    if (caller.stages.includes(EXAMINATION)) {
+        return examinationQueues(state, now).doctors[caller.staffId] ?? [];
+    }
+
+    const all = queues(state, now, pathwayStages);
+
+    // A stable sort keeps the order of each stage's own queue between patients who entered at the same time.
+    return caller.stages.flatMap(stage => all[stage] ?? [])
+        .sort((a, b) => a.enteredAt.getTime() - b.enteredAt.getTime())
+        .map((entry, i) => ({ ...entry, suggested: i === 0 }));
+}
+
+/**
  * Starts a move, or refuses it. Only staff are moved: into a patient's own room while it is open, or into a lounge,
  * open or not. Patients stay in their own room (ADR 0011).
  *

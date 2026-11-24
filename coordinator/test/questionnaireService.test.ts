@@ -32,7 +32,7 @@ const PAIN: IQuestionnaire = {
     title: 'Pain'
 };
 const LAYOUT: ILayout = {
-    centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ],
+    centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ] } ],
     questionnaires: [ SMOKING, PAIN ]
 };
 

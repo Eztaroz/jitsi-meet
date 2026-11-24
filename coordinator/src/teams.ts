@@ -25,7 +25,7 @@ export interface ITeam {
     free: ITeamMember[];
     id: string;
     lounge: string;
-    stage: string;
+    stages: string[];
 }
 
 /**
@@ -53,7 +53,7 @@ export function describeTeams(layout: ILayout, rooms: IRoom[]): ITeam[] {
             .flatMap(room => staffOf(room).map(member)),
         id: station.id,
         lounge: station.lounge,
-        stage: station.stage
+        stages: station.stages
     }));
 }
 

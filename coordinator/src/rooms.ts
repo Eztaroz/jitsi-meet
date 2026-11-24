@@ -46,13 +46,15 @@ export interface IOccupant {
 /** The stage a station serves: the id of a stage of the pathways, other than waiting and done. */
 export type StationStage = string;
 
-/** A center's team of staff for one stage, and the lounge where its free staff wait (ADR 0011). */
+/** A center's team of staff for one or more stages, and the lounge where its free staff wait (ADR 0011, ADR 0018). */
 export interface IStation {
     id: string;
 
     /** The room name of the station's lounge. */
     lounge: string;
-    stage: StationStage;
+
+    /** The stages it serves: at least one, and `examination` only alone. */
+    stages: StationStage[];
 }
 
 /** One step of a pathway: its id, its Thai name and the waiting video played by default while a patient waits in it. */
@@ -118,8 +120,8 @@ export interface IRoom {
     /** False for a lounge that nobody is in. */
     open: boolean;
 
-    /** For a lounge, its station. */
-    stage?: StationStage;
+    /** For a lounge, its station's stages. */
+    stages?: StationStage[];
     station?: string;
 
     /** For a patient's room, true when its consultation is not being recorded (ADR 0016). */
@@ -239,7 +241,7 @@ export function describeRooms(raw: unknown, markers: IRoleMarkers, layout: ILayo
     return [
         ...open,
         ...stationsOf(layout).filter(s => !isOpen(s.lounge)).map(s => {
-            return { kind: 'lounge' as const, name: s.lounge, occupants: [], open: false, stage: s.stage, station: s.id };
+            return { kind: 'lounge' as const, name: s.lounge, occupants: [], open: false, stages: s.stages, station: s.id };
         })
     ];
 }
@@ -277,7 +279,7 @@ function describeOpenRooms(rooms: { name?: string; occupants?: unknown; }[], mar
             kind: station ? 'lounge' : 'patient',
             name,
             open: true,
-            ...station ? { stage: station.stage, station: station.id } : {},
+            ...station ? { stages: station.stages, station: station.id } : {},
             occupants: occupants.map(o => {
                 let role: Role = 'unknown';
 

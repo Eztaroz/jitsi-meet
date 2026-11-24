@@ -24,7 +24,7 @@ const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as unknown as {
 
 const stage = (id: string, name = id) => ({ id, name });
 const SHORT: IPathway = { id: 'short', stages: [ stage('waiting', 'W'), stage('examination', 'E'), stage('done', 'D') ] };
-const stations = [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ];
+const stations = [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ];
 const DEFAULT_LAYOUT: ILayout = { centers: [ { id: 'c1', stations } ] };
 const CLINIC_LAYOUT: ILayout = {
     centers: [ { clinics: [ { id: 'gyn', pathway: 'short' }, { id: 'med' } ], id: 'c1', pathways: [ SHORT ], stations } ]
