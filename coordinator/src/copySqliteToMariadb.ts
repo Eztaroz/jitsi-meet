@@ -32,7 +32,8 @@ try {
     const counts = copyStore(source, target);
 
     process.stdout.write(`Copied ${counts.encounters} encounters, ${counts.moves} moves, ${counts.audit} audit entries, `
-        + `${counts.surveys} surveys and ${counts.consultations} consultations from ${file}.\n`);
+        + `${counts.surveys} surveys, ${counts.consultations} consultations and ${counts.bypassDays} NHSO bypass days `
+        + `from ${file}.\n`);
 } catch (error) {
     process.stderr.write(`Nothing was copied: ${(error as Error).message}\n`);
     process.exitCode = 1;

@@ -5,6 +5,7 @@ import type { IAuditEntry } from './audit.ts';
 import { DatabaseError, MariaDbClient } from './mariadbClient.ts';
 import type { IStatement } from './mariadbWorker.ts';
 import { applyMigrations } from './migrations.ts';
+import type { IBypassDay } from './nhso.ts';
 import type { IState } from './rules.ts';
 import type { StoreChange } from './stateChanges.ts';
 import {
@@ -15,6 +16,7 @@ import {
     type IStore,
     type ISweepResult,
     auditOfRow,
+    bypassDayOfRow,
     consultationOfRow,
     encounterOfRow,
     moveOfRow,
@@ -314,6 +316,31 @@ export class MariaDbStore implements IStore {
     }
 
     /**
+     * Keeps an NHSO bypass day, or its cancelling.
+     *
+     * @param {IBypassDay} day - The day.
+     * @returns {void}
+     */
+    putBypassDay(day: IBypassDay): void {
+        this._client.query('INSERT INTO nhso_bypass_days (day, declared_at, record) VALUES (?, ?, ?) '
+            + 'ON DUPLICATE KEY UPDATE declared_at = VALUES(declared_at), record = VALUES(record)',
+        [ day.day, day.declaredAt.toISOString(), JSON.stringify(day) ]);
+    }
+
+    /**
+     * Reads the NHSO bypass days from one day to another.
+     *
+     * @param {string} from - The first day, as `YYYY-MM-DD`, included.
+     * @param {string} to - The last day, included.
+     * @returns {IBypassDay[]} The earliest first.
+     */
+    bypassDays(from: string, to: string): IBypassDay[] {
+        return this._client.select<{ record: string; }>(
+            'SELECT record FROM nhso_bypass_days WHERE day >= ? AND day <= ? ORDER BY day', [ from, to ]
+        ).map(r => bypassDayOfRow(r.record));
+    }
+
+    /**
      * Reads the satisfaction surveys submitted in a period.
      *
      * @param {Date} from - The start of the period, included.
@@ -370,6 +397,7 @@ export class MariaDbStore implements IStore {
         const at = cutoff.toISOString();
         const tables: [ keyof ISweepResult, string, string ][] = [
             [ 'audit', 'audit', 'at' ],
+            [ 'bypassDays', 'nhso_bypass_days', 'declared_at' ],
             [ 'consultations', 'consultations', 'started_at' ],
             [ 'encounters', 'encounters', 'started_at' ],
             [ 'moves', 'moves', 'started_at' ],

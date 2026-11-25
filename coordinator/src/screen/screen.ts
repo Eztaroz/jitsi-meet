@@ -42,6 +42,17 @@
         unreadable: [ 'อ่านนัดจาก HIS ไม่ได้', 'จะลองอ่านใหม่ในหนึ่งนาที หรือกด "เริ่ม encounter" เอง' ]
     };
 
+    /** Each NHSO authentication status, as the queue shows it (ADR 0020): label and hint. */
+    const NHSO_LABELS: Record<NhsoStatus, [string, string]> = {
+        authenticated: [ 'สปสช. ยืนยันแล้ว', 'ผู้ป่วยยืนยันตัวตนในแอป สปสช. แล้ว' ],
+        bypassed: [ 'สปสช. bypass', 'วันนี้ประกาศ bypass แล้ว: สปสช. นับทุกการมารับบริการของวันนี้ว่ายืนยันแล้ว' ],
+        not_yet: [ 'สปสช. ยังไม่ยืนยัน', 'ยังรับบริการต่อได้ ให้พยาบาลชวนผู้ป่วยยืนยันในแอป สปสช. ระหว่างรอ' ],
+        unavailable: [ 'สปสช. ตรวจไม่ได้', 'ตอนนี้ถาม API ของ สปสช. ไม่ได้ ถ้าล่มทั้งวันให้ประกาศ bypass' ]
+    };
+
+    /** The NHSO authentication of each open encounter, by id, as the last refresh found it. */
+    let NHSO_STATUSES: Record<string, NhsoStatus> = {};
+
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
         [ 'patient', 'ห้องผู้ป่วย', 'door' ],
@@ -108,6 +119,14 @@
         unrecorded?: boolean;
     }
 
+    type NhsoStatus = 'authenticated' | 'bypassed' | 'not_yet' | 'unavailable';
+
+    interface IBypassDay {
+        day: string;
+        declaredAt: string;
+        declaredBy: string;
+    }
+
     interface IMove {
         destination?: string;
         endpointId: string;
@@ -156,6 +175,9 @@
         coordinator: { id: string; name?: string; };
         examination: IExamination;
         moves: IMove[];
+
+        /** Today's NHSO bypass day, if one was declared, and each open encounter's authentication (ADR 0020). */
+        nhso?: { bypass: IBypassDay | null; statuses: Record<string, NhsoStatus>; };
         questionnaires?: IQuestionnaires;
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
@@ -642,6 +664,15 @@
         }
         if (entry.suggested) {
             row.appendChild(el('span', 'ถัดไป', 'badge next'));
+        }
+
+        const nhso = NHSO_STATUSES[entry.encounterId];
+
+        if (nhso) {
+            const badge = el('span', NHSO_LABELS[nhso][0], `badge nhso nhso-${nhso}`);
+
+            badge.title = NHSO_LABELS[nhso][1];
+            row.appendChild(badge);
         }
         wait.title = `รอมาแล้ว ${waitedInWords(entry.waitedSeconds)}`;
         wait.appendChild(icon('clock'));
@@ -1250,6 +1281,55 @@
      *
      * @returns {void}
      */
+    /** Today's NHSO bypass day, as the last refresh found it. */
+    let bypass: IBypassDay | null = null;
+
+    /**
+     * Draws the NHSO bar: today's bypass day and who declared it, with the button that declares or cancels it.
+     *
+     * @param {Object|null} day - Today's bypass day, if there is one.
+     * @returns {void}
+     */
+    function drawNhso(day: IBypassDay | null): void {
+        bypass = day;
+        $('nhso-bar').dataset.bypass = String(Boolean(day));
+        $('nhso-text').textContent = day
+            ? `วันนี้ bypass สปสช. (API ล่ม) ประกาศโดย ${day.declaredBy} เวลา ${clockTime(day.declaredAt)} ถึงเที่ยงคืน`
+            : 'ยืนยันตัวตน สปสช.: ถ้า API ของ สปสช. ล่มทั้งวัน ให้ประกาศ bypass วันนี้';
+        $('nhso-toggle').textContent = day ? 'ยกเลิก bypass' : 'ประกาศ bypass วันนี้';
+    }
+
+    /**
+     * Formats a time of day, as the coordinator's clock shows it.
+     *
+     * @param {string} at - An ISO time.
+     * @returns {string}
+     */
+    function clockTime(at: string): string {
+        return new Date(at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    $('nhso-toggle').addEventListener('click', () => {
+        const cancel = Boolean(bypass);
+        const sure = cancel
+            ? 'ยกเลิก bypass ของวันนี้? การยกเลิกจะถูกบันทึกใน audit log'
+            : 'ประกาศว่า API ของ สปสช. ล่มทั้งวันนี้? ทุก encounter ของวันนี้จะถูกนับเป็น bypass จนถึงเที่ยงคืน และบันทึกใน audit log ว่าใครประกาศ';
+
+        if (!window.confirm(sure)) {
+            return;
+        }
+        $<HTMLButtonElement>('nhso-toggle').disabled = true;
+        act(cancel ? '/nhso/bypass/cancel' : '/nhso/bypass', {}).then(result => {
+            $<HTMLButtonElement>('nhso-toggle').disabled = false;
+            if (failed(result)) {
+                say(cancel ? 'ยกเลิก bypass ไม่สำเร็จ' : 'ประกาศ bypass ไม่สำเร็จ', 'error');
+            } else {
+                say(cancel ? 'ยกเลิก bypass ของวันนี้แล้ว' : 'ประกาศ bypass ของวันนี้แล้ว', 'ok');
+            }
+            refresh();
+        });
+    });
+
     function refresh(): void {
         const token = sessionStorage.getItem(TOKEN_KEY);
 
@@ -1284,6 +1364,8 @@
                         sent: {} };
                     drawStats(state);
                     PLAYING_VIDEOS = new Set((state.videos ?? []).map(v => v.encounterId));
+                    NHSO_STATUSES = state.nhso?.statuses ?? {};
+                    drawNhso(state.nhso?.bypass ?? null);
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     // A list being chosen from would close, and a field being typed in would lose its place, if they

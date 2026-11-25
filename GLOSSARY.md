@@ -170,6 +170,14 @@ _Avoid_: Staff room, desk, booth, service point
 A fixed room belonging to one station, where that station's staff wait between patients; being in it is what makes a staff member free at that station. No patient is ever in it, so nothing in it is recorded.
 _Avoid_: Break room, home room
 
+**NHSO authentication**:
+Whether a patient has authenticated in the NHSO (สปสช.) app for the day, so that the hospital can claim the visit. It is for the claim, not for care: it never holds an encounter up.
+_Avoid_: Verification, check-in
+
+**Bypass day**:
+A day a coordinator declared the NHSO API down. NHSO then takes every encounter of the day, from midnight to midnight, as authenticated, and the claims staff list them.
+_Avoid_: Override, exemption
+
 **Satisfaction survey**:
 What a patient answers, if they choose to, about a video call on the page they land on once they have left a room: an overall rating, what stood out, a rating of each part of the service and suggestions. It is kept with the patient's HN, for the hospital's quality department.
 _Avoid_: Feedback, review, rating

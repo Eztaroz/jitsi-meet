@@ -10,6 +10,7 @@ import type { CoordinatorService, VideoRefusal } from './coordinatorService.ts';
 import { HttpError, readJson, send } from './http.ts';
 import { errorCode, log } from './log.ts';
 import { DatabaseError } from './mariadbClient.ts';
+import { type IBypassDay, dayOf, isDay } from './nhso.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { createQuestionnaireRoutes } from './questionnaireRoutes.ts';
 import { describeSent } from './questionnaires.ts';
@@ -121,6 +122,7 @@ function encounterBody(service: CoordinatorService, id: string) {
         history: e.history,
         hn: e.hn,
         id: e.id,
+        nhso: e.stage === 'done' ? undefined : service.nhsoStatuses()[e.id],
         pathway: e.pathway,
         stage: e.stage,
         stageName: e.stageName,
@@ -128,6 +130,22 @@ function encounterBody(service: CoordinatorService, id: string) {
         startedAt: e.startedAt,
         unfinished: e.unfinished,
         visitNumber: e.visitNumber
+    };
+}
+
+/**
+ * Describes an NHSO bypass day for the API (ADR 0020).
+ *
+ * @param {IBypassDay|undefined} day - The day.
+ * @returns {Object|undefined}
+ */
+function bypassBody(day: IBypassDay | undefined) {
+    return day && {
+        cancelledAt: day.cancelledAt,
+        cancelledBy: day.cancelledBy,
+        day: day.day,
+        declaredAt: day.declaredAt,
+        declaredBy: day.declaredBy
     };
 }
 
@@ -220,6 +238,30 @@ export function createApi({ holdsLock, pipelineSecret, screen, secret, service, 
      * @returns {Promise<boolean>} Whether it was one of them, and answered.
      */
     async function act(req: IncomingMessage, res: ServerResponse, pathname: string, issuer: string): Promise<boolean> {
+        if (pathname === '/nhso/bypass' && req.method === 'GET') {
+            send(res, 200, { bypass: bypassBody(service.bypassToday()) ?? null });
+
+            return true;
+        }
+        if (pathname === '/nhso/bypass' && req.method === 'POST') {
+            const { created, day } = await service.declareBypass(issuer);
+
+            send(res, created ? 201 : 200, { bypass: bypassBody(day) });
+
+            return true;
+        }
+        if (pathname === '/nhso/bypass/cancel' && req.method === 'POST') {
+            const { day, refused } = await service.cancelBypass(issuer);
+
+            if (refused) {
+                send(res, 409, { error: refused });
+
+                return true;
+            }
+            send(res, 200, { bypass: bypassBody(day) });
+
+            return true;
+        }
         if (pathname === '/encounters' && req.method === 'POST') {
             const body = await readJson(req);
             const hn = hnFrom(body);
@@ -524,6 +566,24 @@ export function createApi({ holdsLock, pipelineSecret, screen, secret, service, 
                 'content-type': 'text/csv; charset=utf-8'
             });
             res.end(service.surveyReport(from, to, SYSTEM));
+
+            return;
+        }
+        if (pathname === '/nhso-bypass.csv' && req.method === 'GET') {
+            const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+            const to = query.get('to') ?? dayOf(new Date(), service.timeZone);
+            const from = query.get('from')
+                ?? (isDay(to) ? dayOf(new Date(Date.parse(to) - (DEFAULT_REPORT_DAYS * 24 * 60 * 60 * 1000)), 'UTC') : '');
+
+            if (!isDay(from) || !isDay(to)) {
+                throw new HttpError(400, 'from and to must be days, as YYYY-MM-DD');
+            }
+            res.writeHead(200, {
+                'cache-control': 'no-store',
+                'content-disposition': 'attachment; filename="nhso-bypass.csv"',
+                'content-type': 'text/csv; charset=utf-8'
+            });
+            res.end(service.bypassReport(from, to, SYSTEM));
 
             return;
         }

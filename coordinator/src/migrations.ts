@@ -88,6 +88,18 @@ export const MIGRATIONS: IMigration[] = [
             'ALTER TABLE consultations ADD COLUMN ended_at VARCHAR(30) NULL',
             'CREATE INDEX consultations_recorder_bot ON consultations (recorder_bot)'
         ]
+    },
+    {
+        id: 3,
+        name: 'the NHSO bypass days (ADR 0020)',
+        statements: [
+            `CREATE TABLE nhso_bypass_days (
+                day VARCHAR(10) NOT NULL PRIMARY KEY,
+                declared_at VARCHAR(30) NOT NULL,
+                record LONGTEXT NOT NULL,
+                KEY nhso_bypass_days_declared_at (declared_at)
+            ) ${TABLE}`
+        ]
     }
 ];
 

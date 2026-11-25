@@ -291,6 +291,42 @@ for (const backend of databases) {
         });
     });
 
+    describe(`the NHSO bypass days (${backend.name})`, () => {
+        const DAY = 24 * 60 * 60 * 1000;
+        const declared = (day: string, declaredAt: Date) => ({ day, declaredAt, declaredBy: 'coordinator-1' });
+
+        it('keeps each day across a restart, reads those of a period by day, and keeps a cancelling', async () => {
+            const open = await fresh();
+            const store = open();
+            const cancelled = {
+                ...declared('2030-01-02', new Date('2030-01-02T01:00:00Z')),
+                cancelledAt: new Date('2030-01-02T01:05:00Z'),
+                cancelledBy: 'coordinator-2'
+            };
+
+            store.putBypassDay(declared('2030-01-03', new Date('2030-01-03T01:00:00Z')));
+            store.putBypassDay(declared('2030-01-02', new Date('2030-01-02T01:00:00Z')));
+            store.putBypassDay(declared('2030-01-05', new Date('2030-01-05T01:00:00Z')));
+            store.putBypassDay(cancelled);
+            store.close();
+
+            assert.deepEqual(open().bypassDays('2030-01-01', '2030-01-04'),
+                [ cancelled, declared('2030-01-03', new Date('2030-01-03T01:00:00Z')) ]);
+        });
+
+        it('deletes the days older than the retention period', async () => {
+            const open = await fresh();
+            const now = new Date('2030-06-01T00:00:00Z');
+            const store = open();
+
+            store.putBypassDay(declared('2030-02-21', new Date(now.getTime() - 100 * DAY)));
+            store.putBypassDay(declared('2030-05-22', new Date(now.getTime() - 10 * DAY)));
+
+            assert.equal(store.sweep(new Date(now.getTime() - 90 * DAY)).bypassDays, 1);
+            assert.deepEqual(store.bypassDays('2030-01-01', '2030-12-31').map(d => d.day), [ '2030-05-22' ]);
+        });
+    });
+
     describe(`consultations (${backend.name})`, () => {
         const consultation = (id: string, encounterId: string, recording = true) =>
             ({ encounterId, id, recorderBot: 'bot-1', recording, startedAt: T0 });
