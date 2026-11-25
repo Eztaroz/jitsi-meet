@@ -54,8 +54,21 @@ describe('Coordinator: a waiting video from the screen', () => {
         await (await screen.driver.$('#board')).waitForDisplayed({ timeout: 10_000 });
     });
 
-    const toggle = () => screen.driver.$(`.queue-entry[data-encounter="${encounterId}"]`).parentElement()
-        .$('.video-toggle');
+    // The video's button is among the card's other options, which are opened first.
+    const toggle = async () => {
+        const face = await screen.driver.$(`.queue-entry[data-encounter="${encounterId}"]`);
+
+        await face.waitForExist({ timeout: 15_000 });
+
+        const card = await face.parentElement();
+        const button = await card.$('.video-toggle');
+
+        if (!await button.isDisplayed()) {
+            await (await card.$('.card-more summary')).click();
+        }
+
+        return button;
+    };
 
     it('plays the stage\'s default video into the patient\'s room as the video player', async () => {
         await (await toggle()).click();

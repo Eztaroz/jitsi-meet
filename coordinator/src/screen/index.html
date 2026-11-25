@@ -106,19 +106,12 @@
         <p id="problem" role="alert" hidden></p>
 
         <div id="view-queue" class="view">
-            <section id="teams-section">
-                <div class="section-head">
-                    <h2>ทีมของแต่ละสถานี</h2>
-                    <p class="section-hint">เจ้าหน้าที่ว่างอยู่ในห้องพักของสถานี ส่วนเจ้าหน้าที่ที่ไม่ว่างอยู่ในห้องของผู้ป่วย</p>
-                </div>
-                <div id="team-list" class="board"></div>
+            <section id="teams-section" aria-label="ทีมของแต่ละสถานี">
+                <span class="teams-label"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg>ทีม</span>
+                <div id="team-list"></div>
             </section>
 
-            <section id="queues">
-                <div class="section-head">
-                    <h2>คิวผู้ป่วย</h2>
-                    <p class="section-hint">ปุ่ม “ส่งต่อ” จะส่งไปขั้นถัดไป เลือกขั้นอื่นได้จากรายการ</p>
-                </div>
+            <section id="queues" aria-label="คิวผู้ป่วย">
                 <div id="queue-list"></div>
             </section>
         </div>

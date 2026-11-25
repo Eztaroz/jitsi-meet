@@ -19,7 +19,8 @@ import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
     description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, \
-changes an encounter\'s stage and marks it done, and moves a staff member from their lounge into a patient\'s room. \
+sends the patient on from their card to the next stage, picks another stage for them, marks the encounter done from \
+their card at the last stage, and moves a staff member from their lounge into a patient\'s room. \
 A patient is offered no move, since patients stay in their own room (ADR 0011). A staff member being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
 staff member, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
@@ -119,30 +120,37 @@ describe('Coordinator: acting from the screen', () => {
         expect((await getQueues()).waiting.some(e => e.hn?.toLowerCase() === room)).toBe(true);
     });
 
-    it('changes an encounter\'s stage, and marks it done', async () => {
+    it('sends a patient on from their card, to a picked stage, and marks it done at the last stage', async () => {
         const room = hn.toLowerCase();
         const entry = async () => (await getQueues()).waiting.find(e => e.hn?.toLowerCase() === room)!;
         const id = (await entry()).encounterId;
-        const act = (selector: string, value?: string) => a.driver.execute((encounterId: string, sel: string, v?: string) => {
-            const row = Array.from(document.querySelectorAll('.queue-entry')).find(e => (e as HTMLElement).dataset.encounter === encounterId)!;
-            const controls = row.nextElementSibling as HTMLElement;
+        const face = (stage: string) => `#queue-${stage} .queue-entry[data-encounter="${id}"]`;
 
-            if (v) {
-                const select = controls.querySelector('select') as HTMLSelectElement;
+        // The card's one action, in the column of the stage the patient is in.
+        const forward = async (stage: string) => {
+            const go = await a.driver.$(`${face(stage)} .card-go`);
 
-                select.value = v;
-                select.dispatchEvent(new Event('change'));
-            }
-            (controls.querySelector(sel) as HTMLElement).click();
-        }, id, selector, value);
+            await go.waitForExist({ timeout: 10_000, timeoutMsg: `the patient has no card in ${stage}` });
+            await go.click();
+        };
+        const inStage = (stage: string) => a.driver.waitUntil(
+            async () => (await getQueues())[stage].some(e => e.encounterId === id), { timeoutMsg: `not in ${stage}` });
 
         await showScreenView(a, 'queue');
-        await a.driver.waitUntil(async () => await a.driver.$$('.queue-entry').length > 0);
-        await act('.stage-go', 'intake');
-        await a.driver.waitUntil(async () => (await getQueues()).intake.some(e => e.encounterId === id), { timeoutMsg: 'not in intake' });
+        await forward('waiting');
+        await inStage('registration');
 
-        await a.driver.waitUntil(async () => await a.driver.$$('#queue-intake .queue-entry').length > 0);
-        await act('.stage-done');
+        // Any other stage is picked among the card's other options, which are right after its face.
+        await (await a.driver.$(face('registration'))).waitForExist({ timeout: 10_000 });
+        await a.driver.execute((selector: string) => {
+            const more = document.querySelector(selector)!.nextElementSibling as HTMLElement;
+
+            (more.querySelector('select') as HTMLSelectElement).value = 'pharmacy';
+            (more.querySelector('.stage-go') as HTMLElement).click();
+        }, face('registration'));
+        await inStage('pharmacy');
+
+        await forward('pharmacy');
         await a.driver.waitUntil(
             async () => !Object.values(await getQueues()).flat().some(e => e.encounterId === id), { timeoutMsg: 'not done' });
         expect((await getAudit(1000)).find(e => e.kind === 'stage' && e.encounterId === id && e.to === 'done')?.issuer)

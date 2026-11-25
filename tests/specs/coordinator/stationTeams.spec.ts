@@ -91,6 +91,11 @@ describe('Coordinator: stations as teams on the screen', () => {
     });
 
     it('lists the staff member in the lounge as free', async () => {
+        // The strip shows the counts; the names are behind them, and stay open as the screen refreshes.
+        const counts = await screen.driver.$('.team[data-station="aftercare"] summary');
+
+        await counts.waitForExist({ timeout: 15_000 });
+        await counts.click();
         await screen.driver.waitUntil(async () => (await teamText()).includes(staffIdentity.name),
             { timeout: 15_000, timeoutMsg: 'the staff member is not on their station\'s team' });
         expect(await teamText()).toContain('ว่าง 1');

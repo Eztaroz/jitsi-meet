@@ -28,6 +28,11 @@
     --danger-soft: #fde4e2;
     --lounge: #5f33a8;
     --lounge-soft: #ede4fb;
+    /* The wait tiers, a set told apart with any colour vision. Marks and icons wear them; text never does. */
+    --tier-ok: #0b6a3a;
+    --tier-warn: #c77700;
+    --tier-long: #b01e17;
+    --lane: #e8ecf1;
     --shadow-sm: 0 1px 2px rgb(13 23 34 / 8%);
     --shadow: 0 1px 2px rgb(13 23 34 / 5%), 0 6px 20px -6px rgb(13 23 34 / 10%);
     --shadow-lg: 0 12px 32px -8px rgb(13 23 34 / 28%);
@@ -215,56 +220,103 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
     text-align: center;
 }
 
-/* Queues */
-.board { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.queue { --tone: var(--accent); --tone-soft: var(--accent-soft); display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px; }
+/* Team strip: a slim row, each station a chip that opens its names. */
+#teams-section { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem .75rem; }
+.teams-label { align-items: center; color: var(--muted); display: inline-flex; font-size: .88rem; font-weight: 600; gap: .4rem; }
+#team-list { display: flex; flex-wrap: wrap; gap: .5rem; }
+.team { position: relative; }
+.team summary {
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    display: flex;
+    font-size: .88rem;
+    gap: .5rem;
+    list-style: none;
+    padding: .25rem .9rem;
+}
+.team summary::-webkit-details-marker { display: none; }
+.team summary:focus-visible { box-shadow: var(--ring); outline: 0; }
+.team[open] summary { border-color: var(--accent); }
+.team-free { color: var(--ok); font-weight: 700; }
+.team-busy { color: var(--muted); }
+.team-pop {
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    display: grid;
+    gap: .5rem;
+    left: 0;
+    padding: .8rem 1rem;
+    position: absolute;
+    top: calc(100% + 6px);
+    width: 20rem;
+    z-index: 15;
+}
+.team-stage { color: var(--muted); font-size: .88rem; }
+.team-member { align-items: center; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.team-member .avatar { height: 26px; width: 26px; }
+.team-with { color: var(--muted); font-size: .88rem; margin-left: auto; }
+
+/*
+ * The board: a lane for each stage, in one row that scrolls sideways only when the lanes cannot all be 14rem wide.
+ * The script sets the columns, as an empty stage's is narrow.
+ */
+#queue-list { display: grid; gap: .6rem; overflow-x: auto; padding-bottom: .5rem; }
+.queue { --tone: var(--accent); --tone-soft: var(--accent-soft); align-self: start; background: var(--lane); border-radius: var(--radius); min-width: 0; }
 .queue[data-stage='waiting'] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
 .queue[data-stage='examination'] { --tone: var(--lounge); --tone-soft: var(--lounge-soft); }
 .queue[data-stage='aftercare'] { --tone: var(--ok); --tone-soft: var(--ok-soft); }
-.queue h3 { align-items: center; display: flex; font-size: .95rem; gap: 10px; line-height: 1.3; }
-.queue h3 .count { margin-left: auto; }
+.queue h3 { align-items: center; display: flex; font-size: .95rem; font-weight: 600; gap: .5rem; line-height: 1.35; padding: .65rem .7rem .35rem; }
 .queue h3 .tile { height: 30px; width: 30px; }
+.queue h3 .stage-name { min-width: 0; overflow-wrap: anywhere; }
+.queue h3 .count { background: var(--surface); margin-left: auto; }
+.col-body { display: flex; flex-direction: column; gap: .6rem; padding: .4rem; }
+.queue.collapsed { align-self: stretch; background: transparent; border: 1.5px dashed var(--line-strong); min-height: 14rem; }
+.queue.collapsed h3 { color: var(--faint); flex-direction: column; padding: .65rem 0; }
+.queue.collapsed h3 .tile, .queue.collapsed .col-body { display: none; }
+.queue.collapsed h3 .count { margin: 0; order: -1; }
+.queue.collapsed .stage-name { writing-mode: vertical-rl; }
 
+.doctor-group, .group-body { display: flex; flex-direction: column; gap: .6rem; }
+.doctor-group h4 { align-items: center; color: var(--muted); display: flex; font-size: .88rem; font-weight: 600; gap: .4rem; }
+.doctor-group h4 span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.doctor-group h4::after { background: var(--line-strong); content: ''; flex: 1; height: 1px; opacity: .6; }
+.doctor-group[data-doctor=''] h4 { color: var(--warn); }
+
+/* Cards: no frame, a soft shadow, and a bar on the left for a long wait or trouble. */
 .ticket {
-    background: var(--surface-2);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    overflow: hidden;
-    transition: border-color .15s, box-shadow .15s;
+    background: var(--surface);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 1px 2px rgb(13 23 34 / 7%), 0 2px 6px -2px rgb(13 23 34 / 6%);
+    padding: .55rem .35rem .35rem .45rem;
+    position: relative;
+    transition: box-shadow .15s;
 }
-.ticket:hover { border-color: var(--line-strong); }
-.ticket:has(.suggested) { border-color: color-mix(in srgb, var(--ok) 55%, transparent); box-shadow: 0 0 0 3px var(--ok-soft); }
-.team { --tone: var(--lounge); --tone-soft: var(--lounge-soft); display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; }
-.team h3 { align-items: center; display: flex; font-size: .95rem; gap: 10px; line-height: 1.3; }
-.team h3 .tile { height: 30px; width: 30px; }
-.team-stage { color: var(--muted); font-size: .88rem; font-weight: 400; }
-.team-part { color: var(--muted); font-size: .88rem; font-weight: 600; margin-top: 4px; }
-.team-member { align-items: center; display: flex; flex-wrap: wrap; gap: 4px 8px; }
-.team-member .avatar { height: 26px; width: 26px; }
-.team-with { color: var(--muted); font-size: .88rem; }
-.badge.at { background: var(--lounge-soft); color: var(--lounge); }
-.queue-entry { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 8px; padding: 10px 12px 6px; }
-.position {
-    color: var(--faint);
-    font-size: .88rem;
-    font-variant-numeric: tabular-nums;
-    font-weight: 700;
-    min-width: 1.2em;
-}
+.ticket:hover { box-shadow: 0 2px 4px rgb(13 23 34 / 8%), 0 8px 20px -8px rgb(13 23 34 / 22%); }
+.ticket::before { background: transparent; border-radius: var(--radius-sm) 0 0 var(--radius-sm); bottom: 0; content: ''; left: 0; position: absolute; top: 0; width: 4px; }
+.ticket[data-tier='warn']::before { background: var(--tier-warn); }
+.ticket[data-tier='long']::before, .ticket[data-trouble='true']::before { background: var(--tier-long); }
+/* An HN too long to share the line sends the wait and the action under it, rather than break. */
+.card-line { align-items: center; display: flex; flex-wrap: wrap; gap: .2rem; min-width: 0; }
+.card-end { align-items: center; display: flex; gap: .2rem; margin-left: auto; }
+.position { color: var(--faint); font-size: .88rem; font-variant-numeric: tabular-nums; font-weight: 500; }
 .hn-link {
     background: none;
     border: 0;
     border-radius: 6px;
     color: var(--text);
-    cursor: pointer;
-    font: inherit;
-    font-size: 1rem;
+    flex: 0 1 auto;
+    font-size: .95rem;
     font-variant-numeric: tabular-nums;
-    font-weight: 700;
     min-height: 0;
     min-width: 0;
     overflow-wrap: anywhere;
-    padding: 0 2px;
+    padding: 0;
     text-align: left;
     text-decoration: underline transparent 1.5px;
     text-underline-offset: 3px;
@@ -276,26 +328,32 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
     align-items: center;
     color: var(--muted);
     display: inline-flex;
+    flex: none;
     font-size: .88rem;
     font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    gap: 4px;
-    margin-left: auto;
+    gap: .2rem;
 }
-.wait .i { height: 1rem; width: 1rem; }
-.wait.warn { color: var(--warn); }
-.wait.long { background: var(--danger-soft); border-radius: 999px; color: var(--danger); padding: 0 8px; }
-.controls { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px 12px; }
-.controls select { flex: 1 1 100%; min-width: 0; }
-.controls button { flex: 1 1 0; }
-.questionnaires { border-top: 1px solid var(--line); font-size: .88rem; }
-.questionnaire { padding: 4px 12px 8px; }
-.questionnaire .answer { color: var(--muted, inherit); padding-left: 10px; }
-.doctor-controls { padding-top: 0; }
-.doctor-controls input { flex: 2 1 0; min-width: 0; }
-.doctor-group { display: flex; flex-direction: column; gap: 10px; }
-.doctor-group h4 { align-items: center; display: flex; font-size: .88rem; gap: 8px; }
-.doctor-group h4 .count { margin-left: auto; }
+.wait .i { color: var(--faint); height: .9rem; width: .9rem; }
+.ticket[data-tier='warn'] .wait, .ticket[data-tier='long'] .wait { color: var(--text); font-weight: 700; }
+.ticket[data-tier='warn'] .wait .i { color: var(--tier-warn); }
+.ticket[data-tier='long'] .wait .i { color: var(--tier-long); }
+/* The card's one action is tinted, not solid: a column of solid blue squares would be the loudest thing on the page. */
+button.card-go.primary { background: var(--accent-soft); color: var(--accent); flex: none; min-height: 2.2rem; padding: 0; width: 2rem; }
+button.card-go.primary:hover:not(:disabled) { background: var(--accent); color: var(--on-accent); }
+.card-badges { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }
+.card-badges:empty { display: none; }
+.card-badges .badge { border-radius: 6px; max-width: 100%; overflow-wrap: anywhere; padding: 0 .45rem; white-space: normal; }
+.card-badges .badge .i { height: .85rem; width: .85rem; }
+
+/* What else can be done with an encounter, folded away under the card. */
+.card-more summary { border-radius: 6px; color: var(--muted); cursor: pointer; font-size: .88rem; margin-top: .25rem; }
+.card-more summary:focus-visible { box-shadow: var(--ring); outline: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 6px; padding-top: .45rem; }
+.controls select, .controls input { flex: 1 1 100%; min-width: 0; width: 0; }
+.controls button { flex: 1 1 auto; padding-inline: .5rem; white-space: normal; }
+.questionnaires { border-top: 1px solid var(--line); font-size: .88rem; margin-top: .45rem; }
+.questionnaire { overflow-wrap: anywhere; padding-top: .45rem; }
+.questionnaire .answer { color: var(--muted); padding-left: 10px; }
 
 /* Rooms */
 .toolbar { align-items: center; display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
@@ -390,6 +448,8 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
     white-space: nowrap;
 }
 .badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.at { background: var(--surface-3); color: var(--text); }
+.badge.video { background: var(--accent-soft); color: var(--accent); }
 .badge.next { background: var(--ok-soft); color: var(--ok); }
 .badge.rec { background: var(--danger-soft); color: var(--danger); }
 .badge.rec::before { animation: pulse 2s ease-in-out infinite; background: currentColor; border-radius: 50%; content: ''; height: 7px; width: 7px; }
@@ -517,7 +577,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 /* Messages */
 .badge.nhso-authenticated { background: var(--ok-soft); color: var(--ok); }
 .badge.nhso-not_yet { background: var(--warn-soft); color: var(--warn); }
-.badge.nhso-unavailable { background: var(--surface-3); color: var(--muted); }
+.badge.nhso-unavailable { background: var(--danger-soft); color: var(--danger); }
 .badge.nhso-bypassed { background: var(--lounge-soft); color: var(--lounge); }
 
 #problem, #signin-error {
@@ -596,14 +656,13 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
     #view-rooms { grid-template-columns: minmax(0, 1fr); }
     #activity { order: -1; position: static; }
     #outcomes { max-height: 240px; }
-    .board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 600px) {
     main { padding: 14px 12px 80px; }
     .tagline, .live { display: none; }
     .stats { flex-wrap: wrap; row-gap: .6rem; }
-    .board, .grid { grid-template-columns: minmax(0, 1fr); }
+    .grid { grid-template-columns: minmax(0, 1fr); }
     .toolbar, .search { width: 100%; }
     .segmented { display: flex; width: 100%; }
     .segmented button { flex: 1 1 auto; padding-inline: 8px; }

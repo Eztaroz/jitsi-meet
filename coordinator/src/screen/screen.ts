@@ -200,8 +200,21 @@
         stages: string[];
     }
 
-    /** What the coordinator has chosen in the lists and typed in the fields, kept across the redraws. */
+    /**
+     * What the coordinator has chosen in the move lists and typed in their fields, kept across the redraws of the
+     * rooms. The queue view needs none of it: its elements are kept and patched.
+     */
     const choices: Record<string, string> = {};
+
+    /**
+     * The elements of the queue view, by key. Each refresh patches them in place rather than draw them anew, so that
+     * an open card, a half-typed field, a chosen option and the focus survive it. A card is one element for as long as
+     * its encounter stays in one stage.
+     */
+    const teamNodes = new Map<string, HTMLDetailsElement>();
+    const columnNodes = new Map<string, HTMLElement>();
+    const groupNodes = new Map<string, HTMLElement>();
+    const ticketNodes = new Map<string, HTMLElement>();
 
     /** The health questionnaires the deployment offers, and those sent to each open encounter, from the last refresh. */
     let questionnaires: IQuestionnaires = { catalogue: [],
@@ -404,6 +417,110 @@
     }
 
     /**
+     * Returns the element kept under a key, making it the first time.
+     *
+     * @param {Map} nodes - The elements kept.
+     * @param {string} key - The key.
+     * @param {Function} create - Makes the element.
+     * @returns {HTMLElement}
+     */
+    function kept<T extends HTMLElement>(nodes: Map<string, T>, key: string, create: () => T): T {
+        const node = nodes.get(key) ?? create();
+
+        nodes.set(key, node);
+
+        return node;
+    }
+
+    /**
+     * Makes these elements an element's children, in this order. One that is already in its place is not touched.
+     *
+     * @param {Element} parent - The element.
+     * @param {Element[]} children - Its children to be.
+     * @returns {void}
+     */
+    function arrange(parent: Element, children: Element[]): void {
+        const wanted = new Set(children);
+
+        Array.from(parent.children).filter(child => !wanted.has(child))
+            .forEach(child => child.remove());
+        children.forEach((child, i) => {
+            if (parent.children[i] !== child) {
+                parent.insertBefore(child, parent.children[i] ?? null);
+            }
+        });
+    }
+
+    /**
+     * Sets an element's text, leaving it alone when it already says so.
+     *
+     * @param {Element} node - The element.
+     * @param {string} text - The text.
+     * @returns {void}
+     */
+    function setText(node: Element, text: string): void {
+        if (node.textContent !== text) {
+            node.textContent = text;
+        }
+    }
+
+    /**
+     * Whether what an element was last drawn from has changed; if so, it is remembered.
+     *
+     * @param {HTMLElement} node - The element.
+     * @param {*} from - What it is drawn from.
+     * @returns {boolean}
+     */
+    function changed(node: HTMLElement, from: unknown): boolean {
+        const drawn = JSON.stringify(from);
+
+        if (node.dataset.drawn === drawn) {
+            return false;
+        }
+        node.dataset.drawn = drawn;
+
+        return true;
+    }
+
+    /**
+     * Fills a list to choose from, when what it offers has changed, keeping the choice if it is still offered.
+     *
+     * @param {HTMLSelectElement} pick - The list.
+     * @param {Array} options - The value and text of each option.
+     * @returns {void}
+     */
+    function offer(pick: HTMLSelectElement, options: [string, string][]): void {
+        if (!changed(pick, options)) {
+            return;
+        }
+
+        const chosen = pick.value;
+
+        pick.textContent = '';
+        options.forEach(([ value, text ]) => pick.appendChild(el('option', text)).setAttribute('value', value));
+        pick.value = options.some(o => o[0] === chosen) ? chosen : options[0]?.[0] ?? '';
+    }
+
+    /**
+     * Holds a button down while what it asked for is done and shown.
+     *
+     * @param {HTMLButtonElement} trigger - The button.
+     * @param {Promise} request - The request.
+     * @param {Function} tell - Tells what came of it.
+     * @returns {void}
+     */
+    function hold(trigger: HTMLButtonElement, request: Promise<IResult>, tell: (result: IResult) => void): void {
+        trigger.disabled = true;
+        request.then(result => {
+            tell(result);
+
+            return refresh();
+        }).then(() => {
+            trigger.disabled = false;
+        });
+    }
+
+    /**
      * Shows the sign-in form, with a reason if there is one.
      *
      * @param {string} message - Why, or nothing.
@@ -483,7 +600,7 @@
     }
 
     /**
-     * The stage that an encounter in a stage goes to by default: the next, or for the last, the one before.
+     * The stage the stage list offers first for an encounter: the next, or for the last, the one before.
      *
      * @param {number} index - The stage's place in the stages.
      * @returns {string}
@@ -503,47 +620,78 @@
     }
 
     /**
-     * Draws each station as a team: its free staff, in its lounge, and its busy staff, each with the patient they are with.
+     * Draws each station as a team in a slim strip: how many of its staff are free and busy, and behind that who they
+     * are, each busy one with the patient they are with.
      *
      * @param {Object[]} teams - The teams.
      * @returns {void}
      */
     function drawTeams(teams: ITeam[]): void {
-        const list = $('team-list');
-
-        list.textContent = '';
         $('teams-section').hidden = !teams.length;
-        teams.forEach(team => {
-            const card = el('div', undefined, 'card team');
-            const title = el('h3');
-            const stage = stageNames(team.stages);
-            const member = (m: ITeamMember, free: boolean, hn?: string) => {
-                const line = el('div', undefined, 'team-member');
-                const who = m.name || 'ไม่ระบุชื่อ';
+        arrange($('team-list'), teams.map(team => {
+            const node = kept(teamNodes, team.id, () => createTeam(team.id));
 
-                line.dataset.state = free ? 'free' : 'busy';
-                line.append(el('span', initials(who), 'avatar'), el('span', who, 'person-name'));
-                if (hn) {
-                    line.appendChild(el('span', `กับ ${hn}`, 'team-with'));
-                }
+            updateTeam(node, team);
 
-                return line;
-            };
-
-            card.dataset.station = team.id;
-            title.appendChild(el('span', undefined, 'tile')).appendChild(icon('coffee'));
-            title.append(el('span', team.id), el('span', stage, 'team-stage'));
-            card.appendChild(title);
-            card.appendChild(el('div', `ว่าง ${team.free.length}`, 'team-part'));
-            team.free.forEach(m => card.appendChild(member(m, true)));
-            card.appendChild(el('div', `ไม่ว่าง ${team.busy.length}`, 'team-part'));
-            team.busy.forEach(m => card.appendChild(member(m, false, m.hn)));
-            list.appendChild(card);
-        });
+            return node;
+        }));
     }
 
     /**
-     * Draws the queues.
+     * Makes a station's team: its counts, which open the names.
+     *
+     * @param {string} station - The station's id.
+     * @returns {HTMLDetailsElement}
+     */
+    function createTeam(station: string): HTMLDetailsElement {
+        const node = el('details', undefined, 'team');
+        const summary = el('summary');
+
+        node.dataset.station = station;
+        summary.append(el('b', station), el('span', undefined, 'team-free'), el('span', undefined, 'team-busy'));
+        node.append(summary, el('div', undefined, 'team-pop'));
+
+        return node;
+    }
+
+    /**
+     * Brings a station's team up to date.
+     *
+     * @param {HTMLDetailsElement} node - The team's element.
+     * @param {Object} team - The team.
+     * @returns {void}
+     */
+    function updateTeam(node: HTMLDetailsElement, team: ITeam): void {
+        const pop = node.querySelector('.team-pop') as HTMLElement;
+        const stage = stageNames(team.stages);
+
+        setText(node.querySelector('.team-free') as Element, `ว่าง ${team.free.length}`);
+        setText(node.querySelector('.team-busy') as Element, `ไม่ว่าง ${team.busy.length}`);
+        (node.querySelector('summary') as HTMLElement).title = stage;
+        if (!changed(pop, [ stage, team.free, team.busy ])) {
+            return;
+        }
+
+        const member = (m: ITeamMember, hn?: string) => {
+            const line = el('div', undefined, 'team-member');
+            const who = m.name || 'ไม่ระบุชื่อ';
+
+            line.dataset.state = hn === undefined ? 'free' : 'busy';
+            line.append(el('span', initials(who), 'avatar'), el('span', who, 'person-name'),
+                el('span', hn === undefined ? 'ว่าง' : `กับ ${hn}`, 'team-with'));
+
+            return line;
+        };
+
+        pop.textContent = '';
+        pop.appendChild(el('div', `ขั้น: ${stage}`, 'team-stage'));
+        team.free.forEach(m => pop.appendChild(member(m)));
+        team.busy.forEach(m => pop.appendChild(member(m, m.hn)));
+    }
+
+    /**
+     * Draws the board: a column for each stage, in the pathway's order, with a card for each of its patients. A stage
+     * with nobody collapses to a narrow strip.
      *
      * @param {Object} queues - The queues by stage.
      * @param {Object} examination - Examination's queue split by doctor.
@@ -551,74 +699,274 @@
      */
     function drawQueues(queues: Record<string, IQueueEntry[]>, examination: IExamination): void {
         const list = $('queue-list');
+        const focused = document.activeElement as HTMLElement | null;
+        const drawn = new Set<string>();
 
-        list.textContent = '';
-        list.className = 'board';
-        STAGES.forEach(([ id, name, iconName ], index) => {
-            const column = el('div', undefined, 'card queue');
+        arrange(list, STAGES.map(([ id, name, iconName ], index) => {
+            const column = kept(columnNodes, id, () => createColumn(id, name, iconName));
             const entries = queues[id] ?? [];
-            const title = el('h3');
+            const body = column.querySelector('.col-body') as HTMLElement;
+            const card = (entry: IQueueEntry, position: number, noDoctor = false) => {
+                const key = `${id}|${entry.encounterId}`;
+                const ticket = kept(ticketNodes, key, () => createTicket(entry, id));
 
-            column.id = `queue-${id}`;
-            column.dataset.stage = id;
-            title.appendChild(el('span', undefined, 'tile')).appendChild(icon(iconName));
-            title.appendChild(el('span', name));
-            title.appendChild(el('span', String(entries.length), 'count'));
-            column.appendChild(title);
-            if (!entries.length) {
-                column.appendChild(el('div', 'ไม่มีผู้ป่วยรอ', 'empty'));
-            }
+                drawn.add(key);
+                updateTicket(ticket, entry, position, index, noDoctor);
+
+                return ticket;
+            };
+
+            column.classList.toggle('collapsed', !entries.length);
+            column.title = entries.length ? '' : `${name}: ไม่มีผู้ป่วย`;
+            setText(column.querySelector('.stage-name') as Element, name);
+            setText(column.querySelector('h3 .count') as Element, String(entries.length));
             if (id === 'examination') {
-                drawExamination(column, examination, index);
+                drawExamination(column, body, examination, card);
             } else {
-                entries.forEach((entry, position) => column.appendChild(drawTicket(entry, position, index)));
+                arrange(body, entries.map((entry, position) => card(entry, position)));
             }
-            list.appendChild(column);
-        });
-    }
 
-    /**
-     * Draws examination's queue split by doctor: a group for each doctor, then the patients with no doctor.
-     *
-     * @param {HTMLElement} column - The examination column.
-     * @param {Object} examination - Examination's queue split by doctor.
-     * @param {number} index - The stage's place in the stages.
-     * @returns {void}
-     */
-    function drawExamination(column: HTMLElement, examination: IExamination, index: number): void {
-        const known = Object.keys(examination.doctors);
-        const datalist = el('datalist');
+            return column;
+        }));
+        list.style.gridTemplateColumns = STAGES
+            .map(([ id ]) => queues[id]?.length ? 'minmax(14rem, 1fr)' : '2.8rem')
+            .join(' ');
+        ticketNodes.forEach((_, key) => drawn.has(key) || ticketNodes.delete(key));
 
-        datalist.id = 'doctor-list';
-        known.forEach(doctor => datalist.appendChild(el('option', doctor)).setAttribute('value', doctor));
-        column.appendChild(datalist);
-
-        const group = (title: string, entries: IQueueEntry[], doctor?: string) => {
-            const section = el('div', undefined, 'doctor-group');
-            const heading = el('h4');
-
-            section.dataset.doctor = doctor ?? '';
-            heading.appendChild(el('span', title));
-            heading.appendChild(el('span', String(entries.length), 'count'));
-            section.appendChild(heading);
-            entries.forEach((entry, position) => section.appendChild(drawTicket(entry, position, index)));
-            column.appendChild(section);
-        };
-
-        known.forEach(doctor => group(`แพทย์ ${doctor}`, examination.doctors[doctor] ?? [], doctor));
-        if (examination.unassigned.length || !known.length) {
-            group('ยังไม่กำหนดแพทย์', examination.unassigned);
+        // A card that changed its place was taken out of the page for a moment, which takes the focus off it.
+        if (focused?.isConnected && document.activeElement !== focused) {
+            focused.focus({ preventScroll: true });
         }
     }
 
     /**
-     * Draws the control that changes an encounter's doctor.
+     * Makes a stage's column: its head, and the body its cards go in.
+     *
+     * @param {string} id - The stage's id.
+     * @param {string} name - Its name.
+     * @param {string} iconName - Its icon.
+     * @returns {HTMLElement}
+     */
+    function createColumn(id: string, name: string, iconName: string): HTMLElement {
+        const column = el('div', undefined, 'queue');
+        const title = el('h3');
+
+        column.id = `queue-${id}`;
+        column.dataset.stage = id;
+        title.appendChild(el('span', undefined, 'tile')).appendChild(icon(iconName));
+        title.append(el('span', name, 'stage-name'), el('span', undefined, 'count'));
+        column.append(title, el('div', undefined, 'col-body'));
+        if (id === 'examination') {
+            // The doctors the doctor fields suggest.
+            column.appendChild(el('datalist')).id = 'doctor-list';
+        }
+
+        return column;
+    }
+
+    /**
+     * Draws examination's column split by doctor: a group for each doctor, then the patients with no doctor.
+     *
+     * @param {HTMLElement} column - The examination column.
+     * @param {HTMLElement} body - Its body.
+     * @param {Object} examination - Examination's queue split by doctor.
+     * @param {Function} card - Draws an entry's card.
+     * @returns {void}
+     */
+    function drawExamination(column: HTMLElement, body: HTMLElement, examination: IExamination,
+            card: (entry: IQueueEntry, position: number, noDoctor?: boolean) => HTMLElement): void {
+        const known = Object.keys(examination.doctors);
+        const datalist = column.querySelector('datalist') as HTMLDataListElement;
+        const groups: [string, string, IQueueEntry[]][] = known.map(
+            doctor => [ doctor, `แพทย์ ${doctor}`, examination.doctors[doctor] ?? [] ]);
+
+        if (changed(datalist, known)) {
+            datalist.textContent = '';
+            known.forEach(doctor => datalist.appendChild(el('option', doctor)).setAttribute('value', doctor));
+        }
+        groups.push([ '', 'ยังไม่กำหนดแพทย์', examination.unassigned ]);
+        arrange(body, groups.filter(group => group[2].length).map(([ doctor, title, entries ]) => {
+            const section = kept(groupNodes, doctor, () => {
+                const node = el('div', undefined, 'doctor-group');
+                const heading = el('h4');
+
+                node.dataset.doctor = doctor;
+                heading.append(el('span', title), el('span', undefined, 'count'));
+                node.append(heading, el('div', undefined, 'group-body'));
+
+                return node;
+            });
+
+            setText(section.querySelector('h4 .count') as Element, String(entries.length));
+            arrange(section.querySelector('.group-body') as Element,
+                entries.map((entry, position) => card(entry, position, !doctor)));
+
+            return section;
+        }));
+    }
+
+    /**
+     * Makes an encounter's card: its face, with the position, HN, wait, badges and the action that sends the patient
+     * on; and right after the face, the other things that can be done with the encounter, folded away.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string} stage - The stage the encounter is in.
+     * @returns {HTMLElement}
+     */
+    function createTicket(entry: IQueueEntry, stage: string): HTMLElement {
+        const ticket = el('div', undefined, 'ticket');
+        const face = el('div', undefined, 'queue-entry');
+        const line = el('div', undefined, 'card-line');
+        const hn = button(entry.hn || '—', 'hn-link');
+        const wait = el('span', undefined, 'wait');
+        const go = el('button', undefined, 'card-go primary');
+
+        face.dataset.encounter = entry.encounterId;
+        hn.title = 'ดูห้องของผู้ป่วย';
+        hn.addEventListener('click', () => revealRoom(entry.hn || ''));
+        wait.append(icon('clock'), el('span'));
+        go.type = 'button';
+        go.appendChild(icon('arrow'));
+        go.addEventListener('click', event => {
+            // The second click of a double click would send on whichever card has moved under the pointer.
+            if (event.detail < 2) {
+                changeStage(entry, go.dataset.to ?? '', go);
+            }
+        });
+        const end = el('span', undefined, 'card-end');
+
+        end.append(wait, go);
+        line.append(el('span', undefined, 'position'), hn, end);
+        face.append(line, el('div', undefined, 'card-badges'));
+
+        const more = el('details', undefined, 'card-more');
+        const controls = el('div', undefined, 'controls');
+        const pick = el('select', undefined, 'stage-to');
+        const send = button('ส่งไปขั้นที่เลือก', 'stage-go secondary', 'arrow');
+        const done = button('เสร็จสิ้น', 'stage-done secondary', 'check');
+        const video = button('', 'video-toggle secondary', 'play');
+
+        more.appendChild(el('summary', 'ตัวเลือกเพิ่มเติม'));
+        pick.setAttribute('aria-label', `ส่ง ${entry.hn || ''} ไปขั้น`);
+        send.addEventListener('click', () => changeStage(entry, pick.value, send));
+        done.addEventListener('click', () => changeStage(entry, 'done', done));
+        video.addEventListener('click', () => toggleVideo(entry, PLAYING_VIDEOS.has(entry.encounterId), video));
+        controls.append(pick, send, done, video);
+        more.append(controls, createVideoChoice(entry, stage));
+        if (stage === 'examination') {
+            more.appendChild(createDoctorControl(entry));
+        }
+        more.appendChild(createQuestionnaires(entry));
+        ticket.append(face, more);
+
+        return ticket;
+    }
+
+    /**
+     * Brings a card up to date.
+     *
+     * @param {HTMLElement} ticket - The card.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {number} position - Its place in the queue.
+     * @param {number} index - The stage's place in the stages.
+     * @param {boolean} noDoctor - Whether it is in examination with no doctor.
+     * @returns {void}
+     */
+    function updateTicket(ticket: HTMLElement, entry: IQueueEntry, position: number, index: number,
+            noDoctor: boolean): void {
+        const find = <T extends Element = HTMLElement>(selector: string) => ticket.querySelector(selector) as unknown as T;
+        const face = find('.queue-entry');
+        const wait = find('.wait');
+        const nhso = NHSO_STATUSES[entry.encounterId];
+        const seconds = entry.waitedSeconds;
+
+        ticket.dataset.tier = seconds >= WAIT_LONG_SECONDS ? 'long' : seconds >= WAIT_WARN_SECONDS ? 'warn' : '';
+
+        // A card in trouble wears the same red bar as one that has waited too long.
+        ticket.dataset.trouble = String(noDoctor || nhso === 'unavailable');
+        face.classList.toggle('suggested', Boolean(entry.suggested));
+
+        // Staff of a station are with the patient: they are at that station, whatever their stage's queue says.
+        face.classList.toggle('at-station', Boolean(entry.at?.length));
+        setText(find('.position'), String(position + 1));
+        setText(wait.lastElementChild as Element, waited(seconds));
+        wait.title = `รอมาแล้ว ${waitedInWords(seconds)}`;
+
+        const next = STAGES[index + 1];
+        const go = find<HTMLButtonElement>('.card-go');
+        const who = entry.hn || 'ผู้ป่วย';
+
+        go.dataset.to = next?.[0] ?? 'done';
+        go.title = next ? `ส่งต่อไป ${next[1]}` : 'เสร็จสิ้น';
+        go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next[1]}` : `${who} เสร็จสิ้น`);
+        go.querySelector('use')?.setAttribute('href', next ? '#i-arrow' : '#i-check');
+        drawBadges(find('.card-badges'), entry, nhso);
+
+        const pick = find<HTMLSelectElement>('.stage-to');
+        const first = !pick.options.length;
+
+        offer(pick, STAGES.filter(s => s[0] !== STAGES[index][0]).map(s => [ s[0], s[1] ]));
+        if (first) {
+            pick.value = nextStage(index);
+        }
+
+        const playing = PLAYING_VIDEOS.has(entry.encounterId);
+        const video = find<HTMLButtonElement>('.video-toggle');
+
+        setText(video.lastElementChild as Element, playing ? 'หยุดวิดีโอ' : 'เล่นวิดีโอ');
+        video.querySelector('use')?.setAttribute('href', playing ? '#i-x' : '#i-play');
+        find('.video-controls').hidden = !VIDEO_CATALOGUE.length;
+        offer(find<HTMLSelectElement>('.video-pick'), VIDEO_CATALOGUE.map(v => [ v.id, v.title ]));
+        updateQuestionnaires(find('.questionnaires'), entry);
+    }
+
+    /**
+     * Draws a card's badges, each with an icon and words: what else there is to know about the patient.
+     *
+     * @param {HTMLElement} row - Where they go.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string|undefined} nhso - Its NHSO authentication, if it has one.
+     * @returns {void}
+     */
+    function drawBadges(row: HTMLElement, entry: IQueueEntry, nhso?: NhsoStatus): void {
+        const badges: { hint?: string; icon: string; kind: string; text: string; }[] = [];
+
+        if (entry.suggested) {
+            badges.push({ icon: 'arrow', kind: 'next', text: 'ถัดไป' });
+        }
+        if (entry.at?.length) {
+            badges.push({ icon: 'users', kind: 'at', text: `อยู่ที่ ${entry.at.join(', ')}` });
+        }
+
+        // An authenticated patient is the ordinary case, and says nothing.
+        if (nhso && nhso !== 'authenticated') {
+            const [ text, hint ] = NHSO_LABELS[nhso];
+
+            badges.push({ hint, icon: 'key', kind: `nhso nhso-${nhso}`, text });
+        }
+        if (PLAYING_VIDEOS.has(entry.encounterId)) {
+            badges.push({ icon: 'play', kind: 'video', text: 'กำลังเล่นวิดีโอ' });
+        }
+        if (!changed(row, badges)) {
+            return;
+        }
+        row.textContent = '';
+        badges.forEach(b => {
+            const badge = el('span', undefined, `badge ${b.kind}`);
+
+            badge.title = b.hint ?? '';
+            badge.append(icon(b.icon), el('span', b.text));
+            row.appendChild(badge);
+        });
+    }
+
+    /**
+     * Makes the control that changes an encounter's doctor.
      *
      * @param {Object} entry - The encounter's entry in the examination queue.
      * @returns {HTMLElement}
      */
-    function drawDoctorControl(entry: IQueueEntry): HTMLElement {
-        const key = `doctor|${entry.encounterId}`;
+    function createDoctorControl(entry: IQueueEntry): HTMLElement {
         const input = el('input', undefined, 'doctor-to');
         const set = button('กำหนดแพทย์', 'doctor-set secondary');
         const wrap = el('div', undefined, 'controls doctor-controls');
@@ -626,14 +974,10 @@
         input.setAttribute('list', 'doctor-list');
         input.setAttribute('aria-label', `แพทย์ของ ${entry.hn || 'ผู้ป่วย'}`);
         input.placeholder = 'รหัสแพทย์';
-        input.value = choices[key] ?? '';
-        input.addEventListener('input', () => {
-            choices[key] = input.value;
-        });
         set.addEventListener('click', () => {
             const doctor = input.value.trim();
 
-            delete choices[key];
+            input.value = '';
             setDoctor(entry, doctor || null, set);
         });
         wrap.append(input, set);
@@ -642,135 +986,44 @@
     }
 
     /**
-     * Draws one encounter in a queue: the entry, and right after it, its controls.
+     * Makes the place for an encounter's health questionnaires: a list to send one from, and what was sent.
      *
-     * @param {Object} entry - The entry.
-     * @param {number} position - Its place in the queue.
-     * @param {number} index - The stage's place in the stages.
+     * @param {Object} entry - The encounter's entry in its queue.
      * @returns {HTMLElement}
      */
-    function drawTicket(entry: IQueueEntry, position: number, index: number): HTMLElement {
-        const stage = STAGES[index][0];
-        const last = index === STAGES.length - 1;
-        const ticket = el('div', undefined, 'ticket');
-        const row = el('div', undefined, `queue-entry${entry.suggested ? ' suggested' : ''}`);
-        const hn = button(entry.hn || '—', 'hn-link');
-        const tier = entry.waitedSeconds >= WAIT_LONG_SECONDS ? 'long' : entry.waitedSeconds >= WAIT_WARN_SECONDS ? 'warn' : '';
-        const wait = el('span', undefined, `wait ${tier}`);
-
-        row.dataset.encounter = entry.encounterId;
-        row.appendChild(el('span', String(position + 1), 'position'));
-        hn.title = 'ดูห้องของผู้ป่วย';
-        hn.addEventListener('click', () => revealRoom(entry.hn || ''));
-        row.appendChild(hn);
-        if (entry.at?.length) {
-            // Staff of a station are with the patient: they are at that station, whatever their stage's queue says.
-            row.classList.add('at-station');
-            row.appendChild(el('span', `อยู่ที่ ${entry.at.join(', ')}`, 'badge at'));
-        }
-        if (entry.suggested) {
-            row.appendChild(el('span', 'ถัดไป', 'badge next'));
-        }
-
-        const nhso = NHSO_STATUSES[entry.encounterId];
-
-        if (nhso) {
-            const badge = el('span', NHSO_LABELS[nhso][0], `badge nhso nhso-${nhso}`);
-
-            badge.title = NHSO_LABELS[nhso][1];
-            row.appendChild(badge);
-        }
-        wait.title = `รอมาแล้ว ${waitedInWords(entry.waitedSeconds)}`;
-        wait.appendChild(icon('clock'));
-        wait.appendChild(el('span', waited(entry.waitedSeconds)));
-        row.appendChild(wait);
-
-        const key = `stage|${entry.encounterId}`;
-        const pick = el('select', undefined, 'stage-to');
-
-        pick.setAttribute('aria-label', `ส่ง ${entry.hn || ''} ไปขั้น`);
-        STAGES.filter(s => s[0] !== stage).forEach(([ value, name ]) => {
-            const option = el('option', name);
-
-            option.value = value;
-            pick.appendChild(option);
-        });
-        pick.value = choices[key] || nextStage(index);
-        pick.addEventListener('change', () => {
-            choices[key] = pick.value;
-        });
-
-        const go = button('ส่งต่อ', `stage-go ${last ? 'secondary' : 'primary'}`, 'arrow');
-        const done = button('เสร็จสิ้น', `stage-done ${last ? 'primary' : 'secondary'}`, 'check');
-
-        go.addEventListener('click', () => {
-            delete choices[key];
-            changeStage(entry, pick.value, go);
-        });
-        done.addEventListener('click', () => changeStage(entry, 'done', done));
-
+    function createQuestionnaires(entry: IQueueEntry): HTMLElement {
+        const box = el('div', undefined, 'questionnaires');
         const controls = el('div', undefined, 'controls');
+        const pick = el('select', undefined, 'questionnaire-pick');
+        const send = button('ส่งแบบสอบถาม', 'questionnaire-send secondary', 'clipboard');
 
-        const playing = PLAYING_VIDEOS.has(entry.encounterId);
-        const video = button(playing ? 'หยุดวิดีโอ' : 'เล่นวิดีโอ', 'video-toggle secondary', playing ? 'x' : 'arrow');
+        pick.setAttribute('aria-label', `แบบสอบถามที่จะส่งให้ ${entry.hn || ''}`);
+        send.addEventListener('click', () => sendQuestionnaire(entry, pick.value, send));
+        controls.append(pick, send);
+        box.append(controls, el('div', undefined, 'questionnaire-sent'));
 
-        video.addEventListener('click', () => toggleVideo(entry, playing, video));
-        controls.append(pick, go, done, video);
-        ticket.append(row, controls);
-        if (VIDEO_CATALOGUE.length) {
-            ticket.appendChild(drawVideoChoice(entry, stage));
-        }
-        if (stage === 'examination') {
-            ticket.appendChild(drawDoctorControl(entry));
-        }
-
-        const asked = drawQuestionnaires(entry);
-
-        if (asked) {
-            ticket.appendChild(asked);
-        }
-
-        return ticket;
+        return box;
     }
 
     /**
-     * Draws the health questionnaires of an encounter: a list to send one from, and what was sent with the answers.
+     * Draws the health questionnaires of an encounter: those that can be sent, and those sent, with the answers.
      *
+     * @param {HTMLElement} box - Their place on the card.
      * @param {Object} entry - The encounter's entry in its queue.
-     * @returns {HTMLElement|undefined} Undefined when the deployment has none and none was sent.
+     * @returns {void}
      */
-    function drawQuestionnaires(entry: IQueueEntry): HTMLElement | undefined {
+    function updateQuestionnaires(box: HTMLElement, entry: IQueueEntry): void {
         const sent = questionnaires.sent[entry.encounterId] ?? [];
+        const list = box.querySelector('.questionnaire-sent') as HTMLElement;
 
-        if (!questionnaires.catalogue.length && !sent.length) {
-            return undefined;
+        box.hidden = !questionnaires.catalogue.length && !sent.length;
+        (box.querySelector('.controls') as HTMLElement).hidden = !questionnaires.catalogue.length;
+        offer(box.querySelector('.questionnaire-pick') as HTMLSelectElement,
+            questionnaires.catalogue.map(q => [ q.id, q.title ]));
+        if (!changed(list, sent)) {
+            return;
         }
-
-        const box = el('div', undefined, 'questionnaires');
-
-        if (questionnaires.catalogue.length) {
-            const key = `questionnaire|${entry.encounterId}`;
-            const pick = el('select', undefined, 'questionnaire-pick');
-            const send = button('ส่งแบบสอบถาม', 'questionnaire-send secondary', 'clipboard');
-
-            pick.setAttribute('aria-label', `แบบสอบถามที่จะส่งให้ ${entry.hn || ''}`);
-            questionnaires.catalogue.forEach(q => {
-                const option = el('option', q.title);
-
-                option.value = q.id;
-                pick.appendChild(option);
-            });
-            pick.value = choices[key] || questionnaires.catalogue[0].id;
-            pick.addEventListener('change', () => {
-                choices[key] = pick.value;
-            });
-            send.addEventListener('click', () => sendQuestionnaire(entry, pick.value, send));
-
-            const controls = el('div', undefined, 'controls');
-
-            controls.append(pick, send);
-            box.appendChild(controls);
-        }
+        list.textContent = '';
         for (const q of sent) {
             const item = el('div', undefined, 'questionnaire');
             const state = q.answers ? 'ตอบแล้ว' : q.closedAt ? 'ปิดแล้ว (เจ้าหน้าที่เข้าห้อง)' : 'รอคำตอบ';
@@ -779,10 +1032,8 @@
             q.answers?.forEach((answer, i) => {
                 item.appendChild(el('div', `${q.questions[i].text} — ${q.questions[i].choices[answer]}`, 'answer'));
             });
-            box.appendChild(item);
+            list.appendChild(item);
         }
-
-        return box;
     }
 
     /**
@@ -794,8 +1045,9 @@
      * @returns {void}
      */
     function sendQuestionnaire(entry: IQueueEntry, questionnaire: string, trigger: HTMLButtonElement): void {
-        trigger.disabled = true;
-        act(`/encounters/${encodeURIComponent(entry.encounterId)}/questionnaires`, { questionnaire }).then(result => {
+        const path = `/encounters/${encodeURIComponent(entry.encounterId)}/questionnaires`;
+
+        hold(trigger, act(path, { questionnaire }), result => {
             if (result.status === 409) {
                 say('encounter นี้เสร็จสิ้นแล้ว', 'warn');
             } else if (failed(result)) {
@@ -803,7 +1055,6 @@
             } else {
                 say(`ส่งแบบสอบถามให้ ${entry.hn || 'ผู้ป่วย'} แล้ว`, 'ok');
             }
-            refresh();
         });
     }
 
@@ -902,9 +1153,9 @@
      */
     function changeStage(entry: IQueueEntry, stage: string, trigger: HTMLButtonElement): void {
         const hn = entry.hn || 'ผู้ป่วย';
+        const path = `/encounters/${encodeURIComponent(entry.encounterId)}/stage`;
 
-        trigger.disabled = true;
-        act(`/encounters/${encodeURIComponent(entry.encounterId)}/stage`, { stage }).then(result => {
+        hold(trigger, act(path, { stage }), result => {
             if (result.status === 409) {
                 say('encounter นี้เสร็จสิ้นแล้ว', 'warn');
             } else if (failed(result)) {
@@ -914,7 +1165,6 @@
             } else {
                 say(`ส่ง ${hn} ไปขั้น “${STAGES.find(s => s[0] === stage)?.[1] ?? stage}” แล้ว`, 'ok');
             }
-            refresh();
         });
     }
 
@@ -928,44 +1178,36 @@
      */
     function toggleVideo(entry: IQueueEntry, playing: boolean, trigger: HTMLButtonElement): void {
         const hn = entry.hn || 'ผู้ป่วย';
+        const path = `/encounters/${encodeURIComponent(entry.encounterId)}/video${playing ? '/stop' : ''}`;
 
-        trigger.disabled = true;
-        act(`/encounters/${encodeURIComponent(entry.encounterId)}/video${playing ? '/stop' : ''}`, {}).then(result => {
+        hold(trigger, act(path, {}), result => {
             if (failed(result)) {
                 say(playing ? 'หยุดวิดีโอไม่สำเร็จ' : 'เล่นวิดีโอไม่ได้ ขั้นนี้อาจไม่มีวิดีโอ หรือระบบเล่นวิดีโอไม่พร้อม', 'error');
             } else {
                 say(playing ? `หยุดวิดีโอของ ${hn} แล้ว` : `เริ่มเล่นวิดีโอให้ ${hn} แล้ว`, 'ok');
             }
-            refresh();
         });
     }
 
     /**
-     * Draws the control that chooses the waiting video a patient gets at their current stage.
+     * Makes the control that chooses the waiting video a patient gets at their current stage.
      *
      * @param {Object} entry - The encounter's entry in its queue.
      * @param {string} stage - The stage the encounter is in.
      * @returns {HTMLElement}
      */
-    function drawVideoChoice(entry: IQueueEntry, stage: string): HTMLElement {
-        const key = `video|${entry.encounterId}`;
-        const pick = el('select', undefined, 'video-pick') as HTMLSelectElement;
+    function createVideoChoice(entry: IQueueEntry, stage: string): HTMLElement {
+        const pick = el('select', undefined, 'video-pick');
         const set = button('เลือกวิดีโอ', 'video-choose secondary');
         const wrap = el('div', undefined, 'controls video-controls');
         const hn = entry.hn || 'ผู้ป่วย';
+        const path = `/encounters/${encodeURIComponent(entry.encounterId)}/video-choice`;
 
         pick.setAttribute('aria-label', `วิดีโอของ ${hn}`);
-        VIDEO_CATALOGUE.forEach(v => pick.appendChild(el('option', v.title)).setAttribute('value', v.id));
-        pick.value = choices[key] ?? VIDEO_CATALOGUE[0].id;
-        pick.addEventListener('change', () => {
-            choices[key] = pick.value;
-        });
         set.addEventListener('click', () => {
-            delete choices[key];
-            set.disabled = true;
-            act(`/encounters/${encodeURIComponent(entry.encounterId)}/video-choice`, { stage, video: pick.value }).then(result => {
+            hold(set, act(path, { stage,
+                video: pick.value }), result => {
                 say(failed(result) ? 'เลือกวิดีโอไม่สำเร็จ' : `เลือกวิดีโอของ ${hn} แล้ว`, failed(result) ? 'error' : 'ok');
-                refresh();
             });
         });
         wrap.append(pick, set);
@@ -983,9 +1225,9 @@
      */
     function setDoctor(entry: IQueueEntry, doctor: string | null, trigger: HTMLButtonElement): void {
         const hn = entry.hn || 'ผู้ป่วย';
+        const path = `/encounters/${encodeURIComponent(entry.encounterId)}/doctor`;
 
-        trigger.disabled = true;
-        act(`/encounters/${encodeURIComponent(entry.encounterId)}/doctor`, { doctor }).then(result => {
+        hold(trigger, act(path, { doctor }), result => {
             if (result.status === 409) {
                 say('encounter นี้เสร็จสิ้นแล้ว', 'warn');
             } else if (failed(result)) {
@@ -993,7 +1235,6 @@
             } else {
                 say(doctor ? `กำหนดแพทย์ ${doctor} ให้ ${hn} แล้ว` : `ยกเลิกแพทย์ของ ${hn} แล้ว`, 'ok');
             }
-            refresh();
         });
     }
 
@@ -1297,11 +1538,6 @@
             });
     }
 
-    /**
-     * Reads the state from the service and draws it.
-     *
-     * @returns {void}
-     */
     /** Today's NHSO bypass day, as the last refresh found it. */
     let bypass: IBypassDay | null = null;
 
@@ -1345,14 +1581,33 @@
 
     $('nhso-chip').addEventListener('click', () => showNhsoControl(Boolean($('nhso-pop').hidden)));
 
-    // A click elsewhere, or Escape, closes the control.
+    /**
+     * Closes the names of the teams, but for the team that holds an element.
+     *
+     * @param {Node} [keep] - The element.
+     * @returns {void}
+     */
+    function closeTeams(keep?: Node): void {
+        teamNodes.forEach(team => {
+            if (!keep || !team.contains(keep)) {
+                team.open = false;
+            }
+        });
+    }
+
+    // A click elsewhere, or Escape, closes the NHSO control and a team's names.
     document.addEventListener('click', event => {
+        closeTeams(event.target as Node);
         if (!(event.target as Element).closest('.nhso')) {
             showNhsoControl(false);
         }
     });
     document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && !$('nhso-pop').hidden) {
+        if (event.key !== 'Escape') {
+            return;
+        }
+        closeTeams();
+        if (!$('nhso-pop').hidden) {
             showNhsoControl(false);
             $('nhso-chip').focus();
         }
@@ -1379,15 +1634,21 @@
         });
     });
 
-    function refresh(): void {
+    /**
+     * Reads the state from the service and draws it.
+     *
+     * @returns {Promise<void>} Resolved once it is drawn, or could not be read.
+     */
+    function refresh(): Promise<void> {
         const token = sessionStorage.getItem(TOKEN_KEY);
 
         if (!token) {
             showSignIn();
 
-            return;
+            return Promise.resolve();
         }
-        fetch('screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
+
+        return fetch('screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
             .then(response => {
                 if (response.status === 401 || response.status === 403) {
                     return response.json().then((body: { error: string; }) => {
@@ -1417,11 +1678,13 @@
                     drawNhso(state.nhso?.bypass ?? null);
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
-                    // A list being chosen from would close, and a field being typed in would lose its place, if they
-                    // were drawn again.
-                    if (!document.activeElement?.matches('select, input.move-hn, input.doctor-to')) {
-                        drawTeams(state.teams);
-                        drawQueues(state.queues, state.examination);
+                    drawTeams(state.teams);
+                    drawQueues(state.queues, state.examination);
+
+                    // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
+                    // lose its place.
+                    if (!($('rooms').contains(document.activeElement)
+                            && document.activeElement?.matches('select, input.move-hn'))) {
                         drawRooms(state.rooms, state.moves);
                     }
                     drawOutcomes(state.moves);
