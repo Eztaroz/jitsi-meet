@@ -76,6 +76,9 @@ export interface IClinic {
     /** The HIS clinic codes (`CODE_AP`) of the clinic's appointments, for the encounters started from them (ADR 0019). */
     hisCodes?: string[];
     id: string;
+
+    /** What the coordinator's screen calls the clinic; unset, its id. */
+    name?: string;
     pathway?: string;
 }
 

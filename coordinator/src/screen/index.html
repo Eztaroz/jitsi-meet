@@ -61,11 +61,12 @@
                     <strong id="stat-rooms">0</strong>
                     <span class="stat-label">ห้องเปิด</span>
                 </div>
-                <div class="stat" data-tone="lounge">
+                <button id="stat-moves" type="button" class="stat" data-tone="lounge">
                     <svg class="i" aria-hidden="true" focusable="false"><use href="#i-swap"/></svg>
                     <strong id="stat-moving">0</strong>
                     <span class="stat-label">กำลังย้าย</span>
-                </div>
+                    <span class="stat-stuck" hidden><svg class="i" aria-hidden="true" focusable="false"><use href="#i-alert"/></svg><span></span></span>
+                </button>
             </div>
             <div class="nhso">
                 <button id="nhso-chip" type="button" data-bypass="false" aria-expanded="false" aria-controls="nhso-pop">
@@ -107,9 +108,15 @@
 
         <div id="view-queue" class="view">
             <section id="teams-section" aria-label="ทีมของแต่ละสถานี">
-                <span class="teams-label"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg>ทีม</span>
+                <span id="teams-label" class="teams-label"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg>ทีม</span>
                 <div id="team-list"></div>
+                <div id="tier-legend" role="group" aria-label="เวลารอของทั้งกระดาน"></div>
             </section>
+
+            <div id="board-bar" hidden>
+                <span class="board-bar-label">คลินิก</span>
+                <div id="clinic-filter" class="segmented" role="group" aria-label="กรองคิวตามคลินิก"></div>
+            </div>
 
             <section id="queues" aria-label="คิวผู้ป่วย">
                 <div id="queue-list"></div>

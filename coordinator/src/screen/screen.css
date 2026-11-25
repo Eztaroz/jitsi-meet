@@ -143,6 +143,25 @@ h1 { font-size: 1.2rem; font-weight: 700; line-height: 1.3; }
 .stat strong { font-size: 1.25rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 .stat-label { color: var(--muted); font-size: .88rem; font-weight: 500; grid-column: 2; }
 
+/* The moves' figure is a button to the rooms view; a stuck move turns it amber and shows how many are stuck. */
+button.stat { background: transparent; border-radius: 0; border-width: 0 0 0 1px; justify-content: start; row-gap: 0; text-align: left; }
+button.stat:hover { background: var(--surface-2); }
+.stat[data-stuck='true'] { --tone: var(--warn); --tone-soft: var(--warn-soft); grid-template-columns: auto auto auto; }
+.stat-stuck {
+    align-items: center;
+    background: var(--warn-soft);
+    border-radius: 6px;
+    color: var(--warn);
+    display: inline-flex;
+    font-size: .88rem;
+    font-weight: 700;
+    gap: .2rem;
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    padding: .1rem .4rem;
+}
+.stat-stuck .i { height: .85rem; width: .85rem; }
+
 /* NHSO: today's bypass state as a chip, which opens the control that declares or cancels it. */
 .nhso { position: relative; }
 #nhso-chip { border-radius: 999px; font-size: .88rem; }
@@ -243,6 +262,11 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 .team[open] summary { border-color: var(--accent); }
 .team-free { color: var(--ok); font-weight: 700; }
 .team-busy { color: var(--muted); }
+.team-dots { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.team-dots:empty { display: none; }
+.team-dot { border-radius: 50%; height: .6rem; width: .6rem; }
+.team-dot[data-state='free'] { background: var(--tier-ok); }
+.team-dot[data-state='busy'] { box-shadow: inset 0 0 0 2px var(--line-strong); }
 .team-pop {
     background: var(--surface);
     border: 1px solid var(--line-strong);
@@ -262,10 +286,25 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 .team-member .avatar { height: 26px; width: 26px; }
 .team-with { color: var(--muted); font-size: .88rem; margin-left: auto; }
 
+/* One legend for every column's wait bar, on the team strip's row. */
+#tier-legend { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .88rem; gap: .35rem 1.1rem; margin-left: auto; }
+.tier-legend-title { font-weight: 600; }
+.tier-key { --tier: var(--tier-ok); align-items: center; display: inline-flex; gap: .35rem; }
+.tier-key[data-tier='warn'] { --tier: var(--tier-warn); }
+.tier-key[data-tier='long'] { --tier: var(--tier-long); }
+.tier-key .swatch { background: var(--tier); border-radius: 999px; height: 8px; width: 1.4rem; }
+.tier-key .i { color: var(--tier); }
+.tier-key b { color: var(--text); font-variant-numeric: tabular-nums; }
+
 /*
  * The board: a lane for each stage, in one row that scrolls sideways only when the lanes cannot all be 14rem wide.
  * The script sets the columns, as an empty stage's is narrow.
  */
+/* The clinic filter above the board. */
+#board-bar { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem .75rem; }
+#board-bar[hidden] { display: none; }
+.board-bar-label { color: var(--muted); font-size: .88rem; font-weight: 600; }
+.card-badges .badge.clinic { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
 #queue-list { display: grid; gap: .6rem; overflow-x: auto; padding-bottom: .5rem; }
 .queue { --tone: var(--accent); --tone-soft: var(--accent-soft); align-self: start; background: var(--lane); border-radius: var(--radius); min-width: 0; }
 .queue[data-stage='waiting'] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
@@ -276,9 +315,24 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 .queue h3 .stage-name { min-width: 0; overflow-wrap: anywhere; }
 .queue h3 .count { background: var(--surface); margin-left: auto; }
 .col-body { display: flex; flex-direction: column; gap: .6rem; padding: .4rem; }
+
+/* Under a column's title: a thin bar of its wait tiers, then short facts. Only the marks wear the tier colours. */
+.col-stats { display: grid; gap: .4rem; padding: 0 .7rem .2rem; }
+.tier-bar { background: var(--surface); border-radius: 999px; display: flex; gap: 2px; height: 8px; overflow: hidden; }
+.tier-bar span { flex-basis: 0; min-width: 8px; }
+.tier-bar [data-tier='ok'] { background: var(--tier-ok); }
+.tier-bar [data-tier='warn'] { background: var(--tier-warn); }
+.tier-bar [data-tier='long'] { background: var(--tier-long); }
+.col-facts { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .88rem; font-variant-numeric: tabular-nums; gap: .1rem .8rem; }
+.col-fact { align-items: center; display: inline-flex; gap: .3rem; white-space: nowrap; }
+.col-longest[data-tier='warn'] .i { color: var(--tier-warn); }
+.col-longest[data-tier='long'] .i, .col-over .i { color: var(--tier-long); }
+.col-over, .col-staff[data-mood='idle'], .col-staff[data-mood='none'] { color: var(--text); font-weight: 600; }
+.col-staff[data-mood='idle'] .i { color: var(--tier-ok); }
+.col-staff[data-mood='none'] .i { color: var(--tier-warn); }
 .queue.collapsed { align-self: stretch; background: transparent; border: 1.5px dashed var(--line-strong); min-height: 14rem; }
 .queue.collapsed h3 { color: var(--faint); flex-direction: column; padding: .65rem 0; }
-.queue.collapsed h3 .tile, .queue.collapsed .col-body { display: none; }
+.queue.collapsed h3 .tile, .queue.collapsed .col-stats, .queue.collapsed .col-body { display: none; }
 .queue.collapsed h3 .count { margin: 0; order: -1; }
 .queue.collapsed .stage-name { writing-mode: vertical-rl; }
 
@@ -598,6 +652,8 @@ button.step-pick:hover { background: var(--surface-2); }
 .badge.at { background: var(--surface-3); color: var(--text); }
 .badge.video { background: var(--accent-soft); color: var(--accent); }
 .badge.next { background: var(--ok-soft); color: var(--ok); }
+.badge.qwait { color: var(--text); }
+.badge.qdone { background: var(--ok-soft); color: var(--ok); }
 .badge.rec { background: var(--danger-soft); color: var(--danger); }
 .badge.rec::before { animation: pulse 2s ease-in-out infinite; background: currentColor; border-radius: 50%; content: ''; height: 7px; width: 7px; }
 .badge.moving { background: var(--accent-soft); color: var(--accent); white-space: normal; }

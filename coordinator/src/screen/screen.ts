@@ -4,11 +4,27 @@
  */
 (function() {
     const TOKEN_KEY = 'coordinator-token';
+
+    /** Where the tab keeps the clinic its coordinator follows. */
+    const CLINIC_KEY = 'coordinator-clinic';
     const REFRESH_MS = 2000;
 
     /** How long a wait is before it is shown as long, and as too long. */
     const WAIT_WARN_SECONDS = 5 * 60;
     const WAIT_LONG_SECONDS = 15 * 60;
+
+    /** How long a move has run before it is shown as stuck. */
+    const MOVE_STUCK_SECONDS = 60;
+
+    /**
+     * The three wait tiers, with their label and icon. A tier is a status: the legend shows its icon and its words,
+     * never its colour alone.
+     */
+    const TIERS: [Tier, string, string][] = [
+        [ 'ok', 'ไม่ถึง 5 นาที', 'check' ],
+        [ 'warn', '5–15 นาที', 'clock' ],
+        [ 'long', 'เกิน 15 นาที', 'alert' ]
+    ];
 
     /** How long a notice that something went well stays; one that something went wrong stays until it is closed. */
     const OK_NOTICE_MS = 5000;
@@ -52,6 +68,15 @@
 
     /** The NHSO authentication of each open encounter, by id, as the last refresh found it. */
     let NHSO_STATUSES: Record<string, NhsoStatus> = {};
+
+    /** The center's clinics' names, by id, as the last refresh found them. */
+    let CLINIC_NAMES: Record<string, string> = {};
+
+    /** The clinic the board shows the patients of now; none while it shows all. */
+    let CLINIC_SHOWN = '';
+
+    /** The clinic the coordinator follows, in this tab only; none while all are shown. */
+    let clinicPick = sessionStorage.getItem(CLINIC_KEY) ?? '';
 
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
@@ -119,6 +144,8 @@
         unrecorded?: boolean;
     }
 
+    type Tier = 'long' | 'ok' | 'warn';
+
     type NhsoStatus = 'authenticated' | 'bypassed' | 'not_yet' | 'unavailable';
 
     interface IBypassDay {
@@ -141,8 +168,14 @@
 
         /** The stations whose staff are in the patient's room now. */
         at?: string[];
+
+        /** The encounter's clinic, if it has one. */
+        clinic?: string;
         encounterId: string;
         hn?: string;
+
+        /** The stages of the encounter's pathway, in order, from `waiting` to `done`. */
+        pathwayStages: string[];
         suggested?: boolean;
         waitedSeconds: number;
     }
@@ -172,7 +205,13 @@
         sent: Record<string, ISentQuestionnaire[]>;
     }
 
+    interface IClinic {
+        id: string;
+        name: string;
+    }
+
     interface IState {
+        clinics: IClinic[];
         coordinator: { id: string; name?: string; };
         examination: IExamination;
         moves: IMove[];
@@ -216,12 +255,13 @@
     const columnNodes = new Map<string, HTMLElement>();
     const groupNodes = new Map<string, HTMLElement>();
     const ticketNodes = new Map<string, HTMLElement>();
+    const clinicNodes = new Map<string, HTMLButtonElement>();
 
-    /** The encounter whose panel is open, if one is, and the queues the panel is drawn from, as last read. */
+    /** The state the last refresh read, which picking a clinic draws the board from again. */
+    let latest: IState | undefined;
+
+    /** The encounter whose panel is open, if one is. */
     let selected: string | undefined;
-    let QUEUES: Record<string, IQueueEntry[]> = {};
-    let EXAMINATION: IExamination = { doctors: {},
-        unassigned: [] };
 
     /** The health questionnaires the deployment offers, and those sent to each open encounter, from the last refresh. */
     let questionnaires: IQuestionnaires = { catalogue: [],
@@ -575,7 +615,6 @@
             active.map(stage => `${stage[1]} ${inStage(stage[0])}`).join(' · '));
         figure('stat-rooms', open.length, `เปิด ${open.length} จาก ${state.rooms.length} ห้อง · ผู้ป่วย ${
             people('patient')} · เจ้าหน้าที่ ${people('staff')}`);
-        figure('stat-moving', state.moves.filter(isUnderWay).length, 'รอผู้ถูกย้ายไปถึงปลายทาง');
     }
 
     /**
@@ -589,6 +628,31 @@
     }
 
     /**
+     * Draws the header's figure of the moves under way: how many, how many of them are stuck, and as its hint each
+     * move with who, from where, to where and for how long.
+     *
+     * @param {Object[]} moves - The moves under way and recent.
+     * @param {number} now - The service's time, which the moves' starts are told in.
+     * @returns {void}
+     */
+    function drawMoves(moves: IMove[], now: number): void {
+        const underWay = moves.filter(isUnderWay).map(m => {
+            return { move: m,
+                seconds: Math.max(0, Math.floor((now - Date.parse(m.startedAt)) / 1000)) };
+        });
+        const stuck = underWay.filter(m => m.seconds >= MOVE_STUCK_SECONDS).length;
+        const figure = $('stat-moves');
+        const mark = figure.querySelector('.stat-stuck') as HTMLElement;
+
+        setText($('stat-moving'), String(underWay.length));
+        figure.dataset.stuck = String(stuck > 0);
+        mark.hidden = !stuck;
+        setText(mark.lastElementChild as Element, `ค้าง ${stuck}`);
+        figure.title = underWay.map(({ move: m, seconds }) => `${names[m.endpointId] || 'ผู้เข้าร่วม'}: ${m.origin} → ${
+            m.destination || '?'} (${waitedInWords(seconds)})`).join('\n') || 'ไม่มีการย้ายที่กำลังดำเนินอยู่';
+    }
+
+    /**
      * Names the stages a station serves, as the screen shows them.
      *
      * @param {string[]} stages - The stage ids.
@@ -599,14 +663,176 @@
     }
 
     /**
-     * Draws each station as a team in a slim strip: how many of its staff are free and busy, and behind that who they
-     * are, each busy one with the patient they are with.
+     * The tier a wait falls in.
+     *
+     * @param {number} seconds - How long.
+     * @returns {string}
+     */
+    function tierOf(seconds: number): Tier {
+        if (seconds >= WAIT_LONG_SECONDS) {
+            return 'long';
+        }
+
+        return seconds >= WAIT_WARN_SECONDS ? 'warn' : 'ok';
+    }
+
+    /**
+     * How many of these entries wait in each tier.
+     *
+     * @param {Object[]} entries - Queue entries.
+     * @returns {Object} The count by tier.
+     */
+    function tierCounts(entries: IQueueEntry[]): Record<Tier, number> {
+        const counts = { long: 0,
+            ok: 0,
+            warn: 0 };
+
+        entries.forEach(entry => counts[tierOf(entry.waitedSeconds)]++);
+
+        return counts;
+    }
+
+    /**
+     * Whether an encounter's patient is in their own room: it is open, with a patient in it.
+     *
+     * @param {Object|undefined} room - The encounter's room, if it has one.
+     * @returns {boolean}
+     */
+    function isPatientIn(room?: IRoom): boolean {
+        return Boolean(room?.open && room.occupants.some(o => o.role === 'patient'));
+    }
+
+    /**
+     * Whether a patient waits to be called: they are in their own room, and no staff member is with them.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {Object[]} rooms - The rooms now.
+     * @returns {boolean}
+     */
+    function awaitsCall(entry: IQueueEntry, rooms: IRoom[]): boolean {
+        const room = rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
+
+        return !entry.at?.length && isPatientIn(room) && !room?.occupants.some(o => o.role === 'staff');
+    }
+
+    /**
+     * Makes what a column's head says of its queue: a bar of its wait tiers, then the longest wait, how many are past
+     * the limit, and its station's free staff.
+     *
+     * @returns {HTMLElement}
+     */
+    function createColumnStats(): HTMLElement {
+        const box = el('div', undefined, 'col-stats');
+        const bar = el('div', undefined, 'tier-bar');
+        const facts = el('div', undefined, 'col-facts');
+        const fact = (className: string, iconName: string) => {
+            const node = el('span', undefined, `col-fact ${className}`);
+
+            node.append(icon(iconName), el('span'));
+
+            return node;
+        };
+
+        bar.setAttribute('role', 'img');
+        TIERS.forEach(([ tier ]) => bar.appendChild(el('span')).setAttribute('data-tier', tier));
+        facts.append(fact('col-longest', 'clock'), fact('col-over', 'alert'), fact('col-staff', 'users'));
+        box.append(bar, facts);
+
+        return box;
+    }
+
+    /**
+     * Brings a column's head up to date with the patients shown in the column.
+     *
+     * @param {HTMLElement} box - What createColumnStats made.
+     * @param {Object[]} entries - The column's entries.
+     * @param {Object[]} teams - The teams of the stations that serve its stage.
+     * @param {Object[]} rooms - The rooms now.
+     * @returns {void}
+     */
+    function updateColumnStats(box: HTMLElement, entries: IQueueEntry[], teams: ITeam[], rooms: IRoom[]): void {
+        const find = (selector: string) => box.querySelector(selector) as HTMLElement;
+        const counts = tierCounts(entries);
+
+        TIERS.forEach(([ tier, label ]) => {
+            const segment = find(`.tier-bar [data-tier="${tier}"]`);
+            const count = counts[tier];
+
+            segment.hidden = !count;
+            segment.style.flexGrow = String(count);
+            segment.title = `${label}: ${count} ราย (${Math.round(count * 100 / (entries.length || 1))}%)`;
+        });
+        find('.tier-bar').setAttribute('aria-label',
+            TIERS.map(([ tier, label ]) => `${label} ${counts[tier]} ราย`).join(', '));
+
+        const longest = Math.max(0, ...entries.map(e => e.waitedSeconds));
+
+        find('.col-longest').dataset.tier = tierOf(longest);
+        setText(find('.col-longest span'), `นานสุด ${waited(longest)}`);
+        find('.col-over').hidden = !counts.long;
+        setText(find('.col-over span'), `เกินเกณฑ์ ${counts.long}`);
+
+        // A stage that no station serves says nothing of staff.
+        const staff = find('.col-staff');
+        const free = teams.reduce((n, team) => n + team.free.length, 0);
+        const callable = entries.some(entry => awaitsCall(entry, rooms));
+        let mood = '';
+        let text = `ว่าง ${free} คน`;
+
+        if (callable && free) {
+            mood = 'idle';
+            text += ' เรียกได้';
+        } else if (callable) {
+            mood = 'none';
+            text = 'ไม่มีคนว่าง';
+        }
+        staff.hidden = !teams.length;
+        staff.dataset.mood = mood;
+        setText(find('.col-staff span'), text);
+
+        const listed = (members: ITeamMember[]) => members.map(m => m.name || 'ไม่ระบุชื่อ').join(', ') || '—';
+
+        staff.title = teams
+            .map(team => `${team.id}: ว่าง ${listed(team.free)} · ไม่ว่าง ${listed(team.busy)}`)
+            .join('\n');
+    }
+
+    /**
+     * Draws the legend of the columns' wait bars, with the whole board's count in each tier.
+     *
+     * @param {Object} queues - The queues by stage.
+     * @returns {void}
+     */
+    function drawLegend(queues: Record<string, IQueueEntry[]>): void {
+        const legend = $('tier-legend');
+
+        if (!legend.childElementCount) {
+            legend.appendChild(el('span', 'เวลารอ', 'tier-legend-title'));
+            TIERS.forEach(([ tier, label, iconName ]) => {
+                const key = el('span', undefined, 'tier-key');
+
+                key.dataset.tier = tier;
+                key.append(el('i', undefined, 'swatch'), icon(iconName), el('span', label, 'tier-name'), el('b'));
+                legend.appendChild(key);
+            });
+        }
+
+        const counts = tierCounts(STAGES.flatMap(([ id ]) => queues[id] ?? []));
+
+        TIERS.forEach(([ tier ]) => setText(
+            legend.querySelector(`[data-tier="${tier}"] b`) as Element, String(counts[tier])));
+    }
+
+    /**
+     * Draws each station as a team in a slim strip: a dot for each of its staff, how many are free and busy, and
+     * behind that who they are, each busy one with the patient they are with.
      *
      * @param {Object[]} teams - The teams.
      * @returns {void}
      */
     function drawTeams(teams: ITeam[]): void {
-        $('teams-section').hidden = !teams.length;
+        // The wait legend shares the strip's row, and stays when there is no station.
+        $('teams-label').hidden = !teams.length;
         arrange($('team-list'), teams.map(team => {
             const node = kept(teamNodes, team.id, () => createTeam(team.id));
 
@@ -627,7 +853,8 @@
         const summary = el('summary');
 
         node.dataset.station = station;
-        summary.append(el('b', station), el('span', undefined, 'team-free'), el('span', undefined, 'team-busy'));
+        summary.append(el('b', station), el('span', undefined, 'team-dots'), el('span', undefined, 'team-free'),
+            el('span', undefined, 'team-busy'));
         node.append(summary, el('div', undefined, 'team-pop'));
 
         return node;
@@ -647,6 +874,23 @@
         setText(node.querySelector('.team-free') as Element, `ว่าง ${team.free.length}`);
         setText(node.querySelector('.team-busy') as Element, `ไม่ว่าง ${team.busy.length}`);
         (node.querySelector('summary') as HTMLElement).title = stage;
+
+        const dots = node.querySelector('.team-dots') as HTMLElement;
+
+        if (changed(dots, [ team.free, team.busy ])) {
+            const dot = (state: 'busy' | 'free', m: ITeamMember, doing: string) => {
+                const mark = el('i', undefined, 'team-dot');
+
+                mark.dataset.state = state;
+                mark.title = `${m.name || 'ไม่ระบุชื่อ'}: ${doing}`;
+
+                return mark;
+            };
+
+            dots.textContent = '';
+            dots.append(...team.free.map(m => dot('free', m, 'ว่าง')),
+                ...team.busy.map(m => dot('busy', m, `กับ ${m.hn}`)));
+        }
         if (!changed(pop, [ stage, team.free, team.busy ])) {
             return;
         }
@@ -669,14 +913,85 @@
     }
 
     /**
+     * Draws the clinic filter, and below it the board with the patients of the clinic picked, or of every clinic. The
+     * header's figures and everything else stay the center's.
+     *
+     * @param {Object} state - The state.
+     * @returns {void}
+     */
+    function drawBoard(state: IState): void {
+        CLINIC_NAMES = Object.fromEntries(state.clinics.map(c => [ c.id, c.name ]));
+
+        // A clinic kept from before that the center no longer has shows all of them.
+        CLINIC_SHOWN = state.clinics.some(c => c.id === clinicPick) ? clinicPick : '';
+        drawClinicFilter(state);
+
+        const shown = (entries: IQueueEntry[]) =>
+            CLINIC_SHOWN ? entries.filter(e => e.clinic === CLINIC_SHOWN) : entries;
+        const eachShown = (lists: Record<string, IQueueEntry[]>) =>
+            Object.fromEntries(Object.entries(lists).map(([ key, entries ]) => [ key, shown(entries) ]));
+
+        drawQueues(eachShown(state.queues), {
+            doctors: eachShown(state.examination.doctors),
+            unassigned: shown(state.examination.unassigned)
+        }, state.teams, state.rooms);
+    }
+
+    /**
+     * Draws the choice of all clinics and each of the center's clinics, each with how many patients it has. A center
+     * with no clinics has nothing to choose.
+     *
+     * @param {Object} state - The state.
+     * @returns {void}
+     */
+    function drawClinicFilter(state: IState): void {
+        const entries = Object.values(state.queues).flat();
+
+        $('board-bar').hidden = !state.clinics.length;
+        arrange($('clinic-filter'), [ { id: '', name: 'ทุกคลินิก' }, ...state.clinics ].map(({ id, name }) => {
+            const choice = kept(clinicNodes, id, () => {
+                const node = button('', '');
+
+                node.dataset.clinic = id;
+                node.addEventListener('click', () => pickClinic(id));
+
+                return node;
+            });
+
+            setText(choice.firstElementChild as Element, name);
+            choice.dataset.count = String(id ? entries.filter(e => e.clinic === id).length : entries.length);
+            choice.setAttribute('aria-pressed', String(id === CLINIC_SHOWN));
+
+            return choice;
+        }));
+    }
+
+    /**
+     * Follows a clinic, or all of them, and keeps that for this tab.
+     *
+     * @param {string} id - The clinic, or none for all.
+     * @returns {void}
+     */
+    function pickClinic(id: string): void {
+        clinicPick = id;
+        sessionStorage.setItem(CLINIC_KEY, id);
+        if (latest) {
+            drawBoard(latest);
+        }
+    }
+
+    /**
      * Draws the board: a column for each stage, in the pathway's order, with a card for each of its patients. A stage
      * with nobody collapses to a narrow strip.
      *
      * @param {Object} queues - The queues by stage.
      * @param {Object} examination - Examination's queue split by doctor.
+     * @param {Object[]} teams - The stations' teams.
+     * @param {Object[]} rooms - The rooms now.
      * @returns {void}
      */
-    function drawQueues(queues: Record<string, IQueueEntry[]>, examination: IExamination): void {
+    function drawQueues(queues: Record<string, IQueueEntry[]>, examination: IExamination, teams: ITeam[],
+            rooms: IRoom[]): void {
         const list = $('queue-list');
         const focused = document.activeElement as HTMLElement | null;
         const drawn = new Set<string>();
@@ -699,6 +1014,8 @@
             column.title = entries.length ? '' : `${name}: ไม่มีผู้ป่วย`;
             setText(column.querySelector('.stage-name') as Element, name);
             setText(column.querySelector('h3 .count') as Element, String(entries.length));
+            updateColumnStats(column.querySelector('.col-stats') as HTMLElement, entries,
+                teams.filter(team => team.stages.includes(id)), rooms);
             if (id === 'examination') {
                 drawExamination(body, examination, card);
             } else {
@@ -719,7 +1036,7 @@
     }
 
     /**
-     * Makes a stage's column: its head, and the body its cards go in.
+     * Makes a stage's column: its head, what the head says of its queue, and the body its cards go in.
      *
      * @param {string} id - The stage's id.
      * @param {string} name - Its name.
@@ -734,7 +1051,7 @@
         column.dataset.stage = id;
         title.appendChild(el('span', undefined, 'tile')).appendChild(icon(iconName));
         title.append(el('span', name, 'stage-name'), el('span', undefined, 'count'));
-        column.append(title, el('div', undefined, 'col-body'));
+        column.append(title, createColumnStats(), el('div', undefined, 'col-body'));
 
         return column;
     }
@@ -839,7 +1156,9 @@
         const nhso = NHSO_STATUSES[entry.encounterId];
         const seconds = entry.waitedSeconds;
 
-        ticket.dataset.tier = seconds >= WAIT_LONG_SECONDS ? 'long' : seconds >= WAIT_WARN_SECONDS ? 'warn' : '';
+        const tier = tierOf(seconds);
+
+        ticket.dataset.tier = tier === 'ok' ? '' : tier;
 
         // A card in trouble wears the same red bar as one that has waited too long.
         ticket.dataset.trouble = String(noDoctor || nhso === 'unavailable');
@@ -851,13 +1170,15 @@
         setText(wait.lastElementChild as Element, waited(seconds));
         wait.title = `รอมาแล้ว ${waitedInWords(seconds)}`;
 
-        const next = STAGES[index + 1];
+        // The next stage of the encounter's own pathway, which may skip a column of the board.
+        const to = entry.pathwayStages[entry.pathwayStages.indexOf(STAGES[index][0]) + 1] ?? 'done';
+        const next = to === 'done' ? undefined : STAGE_NAMES[to] ?? to;
         const go = find<HTMLButtonElement>('.card-go');
         const who = entry.hn || 'ผู้ป่วย';
 
-        go.dataset.to = next?.[0] ?? 'done';
-        go.title = next ? `ส่งต่อไป ${next[1]}` : 'เสร็จสิ้น';
-        go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next[1]}` : `${who} เสร็จสิ้น`);
+        go.dataset.to = to;
+        go.title = next ? `ส่งต่อไป ${next}` : 'เสร็จสิ้น';
+        go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next}` : `${who} เสร็จสิ้น`);
         go.querySelector('use')?.setAttribute('href', next ? '#i-arrow' : '#i-check');
         drawBadges(find('.card-badges'), entry, nhso);
     }
@@ -873,6 +1194,10 @@
     function drawBadges(row: HTMLElement, entry: IQueueEntry, nhso?: NhsoStatus): void {
         const badges: { hint?: string; icon: string; kind: string; text: string; }[] = [];
 
+        // With one clinic picked, every card is that clinic's: the tag would say nothing.
+        if (entry.clinic && !CLINIC_SHOWN) {
+            badges.push({ hint: 'คลินิก', icon: 'clipboard', kind: 'clinic', text: CLINIC_NAMES[entry.clinic] ?? entry.clinic });
+        }
         if (entry.suggested) {
             badges.push({ icon: 'arrow', kind: 'next', text: 'ถัดไป' });
         }
@@ -888,6 +1213,16 @@
         }
         if (PLAYING_VIDEOS.has(entry.encounterId)) {
             badges.push({ icon: 'play', kind: 'video', text: 'กำลังเล่นวิดีโอ' });
+        }
+
+        // A questionnaire closed without an answer can no longer be answered: it counts as neither.
+        const asked = (questionnaires.sent[entry.encounterId] ?? []).filter(q => q.answers || !q.closedAt);
+        const pending = asked.filter(q => !q.answers).length;
+
+        if (pending) {
+            badges.push({ icon: 'clipboard', kind: 'qwait', text: `รอคำตอบแบบสอบถาม ${pending}` });
+        } else if (asked.length) {
+            badges.push({ icon: 'clipboard', kind: 'qdone', text: 'ตอบแบบสอบถามแล้ว' });
         }
         if (!changed(row, badges)) {
             return;
@@ -964,9 +1299,10 @@
         }
 
         const isIt = (e: IQueueEntry) => e.encounterId === selected;
-        const index = STAGES.findIndex(stage => QUEUES[stage[0]]?.some(isIt));
+        const queues = latest?.queues ?? {};
+        const index = STAGES.findIndex(stage => queues[stage[0]]?.some(isIt));
         const stage = STAGES[index]?.[0];
-        const entry = stage === undefined ? undefined : QUEUES[stage]?.find(isIt);
+        const entry = stage === undefined ? undefined : queues[stage]?.find(isIt);
 
         if (!entry) {
             closeDetail();
@@ -1017,7 +1353,6 @@
         sheet.setAttribute('role', 'dialog');
         sheet.setAttribute('aria-modal', 'true');
         sheet.setAttribute('aria-label', `รายละเอียดผู้ป่วย HN ${entry.hn || ''}`);
-        sheet.dataset.target = STAGES[index + 1]?.[0] ?? 'done';
         hn.title = 'ดูห้องของผู้ป่วย';
         hn.addEventListener('click', () => revealRoom(entry.hn || ''));
         close.type = 'button';
@@ -1028,7 +1363,7 @@
         top.append(title, close);
         head.append(top, createMeter(), el('dl', undefined, 'facts'));
 
-        body.appendChild(createStepper(sheet, index));
+        body.appendChild(createStepper(sheet, entry, STAGES[index][0]));
         if (STAGES[index][0] === 'examination') {
             body.appendChild(createDoctorSection(entry));
         }
@@ -1060,8 +1395,8 @@
      * @returns {void}
      */
     function updateSheet(sheet: HTMLElement, entry: IQueueEntry, index: number): void {
-        const doctor = Object.keys(EXAMINATION.doctors)
-            .find(id => EXAMINATION.doctors[id]?.some(e => e.encounterId === entry.encounterId));
+        const doctors = latest?.examination.doctors ?? {};
+        const doctor = Object.keys(doctors).find(id => doctors[id]?.some(e => e.encounterId === entry.encounterId));
 
         updateMeter(sheet.querySelector('.meter') as HTMLElement, entry.waitedSeconds);
         drawFacts(sheet.querySelector('.facts') as HTMLElement, entry, index, doctor);
@@ -1127,13 +1462,13 @@
      * @returns {void}
      */
     function updateMeter(meter: HTMLElement, seconds: number): void {
-        const over = Math.floor((seconds - WAIT_LONG_SECONDS) / 60);
-        const [ tier, iconName, text ] = seconds >= WAIT_LONG_SECONDS
-            ? [ 'long', 'alert', `เกินเกณฑ์ ${WAIT_LONG_SECONDS / 60} นาทีมาแล้ว ${over} นาที` ]
-            : seconds >= WAIT_WARN_SECONDS
-                ? [ 'warn', 'clock', `เกิน ${WAIT_WARN_SECONDS / 60} นาที อีก ${
-                    Math.ceil((WAIT_LONG_SECONDS - seconds) / 60)} นาทีถึงเกณฑ์` ]
-                : [ 'ok', 'check', `ยังไม่ถึง ${WAIT_WARN_SECONDS / 60} นาที` ];
+        const tier = tierOf(seconds);
+        const text = {
+            long: `เกินเกณฑ์ ${WAIT_LONG_SECONDS / 60} นาทีมาแล้ว ${Math.floor((seconds - WAIT_LONG_SECONDS) / 60)} นาที`,
+            ok: `ยังไม่ถึง ${WAIT_WARN_SECONDS / 60} นาที`,
+            warn: `เกิน ${WAIT_WARN_SECONDS / 60} นาที อีก ${Math.ceil((WAIT_LONG_SECONDS - seconds) / 60)} นาทีถึงเกณฑ์`
+        }[tier];
+        const iconName = TIERS.find(t => t[0] === tier)?.[2] ?? 'clock';
 
         meter.dataset.tier = tier;
         setText(meter.querySelector('.meter-value b') as Element, waited(seconds));
@@ -1169,6 +1504,10 @@
             { icon: 'users', key: 'at', label: 'เจ้าหน้าที่อยู่ด้วย', value: entry.at?.join(', ') || 'ไม่มี' }
         ];
 
+        if (entry.clinic) {
+            facts.push({ icon: 'clipboard', key: 'clinic', label: 'คลินิก', value: CLINIC_NAMES[entry.clinic] ?? entry.clinic });
+        }
+
         if (!changed(list, facts)) {
             return;
         }
@@ -1186,19 +1525,24 @@
     }
 
     /**
-     * Makes the pathway as a vertical stepper: past stages ticked, the current one filled, and any other can be picked
-     * as the stage to send the patient to.
+     * Makes the encounter's pathway as a vertical stepper: past stages ticked, the current one filled, and any other can
+     * be picked as the stage to send the patient to; the next one is picked to begin with.
      *
      * @param {HTMLElement} sheet - The panel, which holds the picked stage.
-     * @param {number} index - The current stage's place in the stages.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string} stage - The stage the encounter is in.
      * @returns {HTMLElement}
      */
-    function createStepper(sheet: HTMLElement, index: number): HTMLElement {
+    function createStepper(sheet: HTMLElement, entry: IQueueEntry, stage: string): HTMLElement {
         const section = createSection('stages', 'swap', 'เปลี่ยนขั้น');
         const steps = el('ol', undefined, 'steps');
 
         section.appendChild(el('p', 'กดเลือกขั้นที่จะส่งไป แล้วกดปุ่มด้านล่าง', 'sheet-hint'));
-        STAGES.forEach(([ id, name ], i) => {
+        const path = entry.pathwayStages.filter(id => id !== 'done');
+        const index = path.indexOf(stage);
+
+        sheet.dataset.target = path[index + 1] ?? 'done';
+        path.forEach((id, i) => {
             const step = el('li', undefined, 'step');
             const current = i === index;
             const row = el(current ? 'div' : 'button', undefined, 'step-pick');
@@ -1213,7 +1557,7 @@
                 mark.textContent = String(i + 1);
             }
             tag.textContent = current ? 'อยู่ที่นี่' : 'จะส่งไป';
-            row.append(mark, el('span', name, 'step-name'), tag);
+            row.append(mark, el('span', STAGE_NAMES[id] ?? id, 'step-name'), tag);
             if (current) {
                 step.setAttribute('aria-current', 'step');
             } else {
@@ -1299,7 +1643,7 @@
      */
     function updateDoctorSection(sheet: HTMLElement, entry: IQueueEntry, doctor?: string): void {
         const chips = sheet.querySelector<HTMLElement>('.doctor-chips');
-        const known = Object.keys(EXAMINATION.doctors);
+        const known = Object.keys(latest?.examination.doctors ?? {});
 
         if (!chips || !changed(chips, [ known, doctor ?? '' ])) {
             return;
@@ -1995,6 +2339,7 @@
         return new Date(at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
     }
 
+    $('stat-moves').addEventListener('click', () => showView('rooms'));
     $('nhso-chip').addEventListener('click', () => showNhsoControl(Boolean($('nhso-pop').hidden)));
 
     /**
@@ -2088,6 +2433,9 @@
                     throw new Error('state');
                 }
 
+                // The desk's clock may be wrong: how long a move has run is told by the service's.
+                const now = Date.parse(response.headers.get('date') ?? '') || Date.now();
+
                 return response.json().then((state: IState) => {
                     const who = state.coordinator.name || state.coordinator.id;
 
@@ -2108,9 +2456,9 @@
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     drawTeams(state.teams);
-                    drawQueues(state.queues, state.examination);
-                    QUEUES = state.queues;
-                    EXAMINATION = state.examination;
+                    drawLegend(state.queues);
+                    latest = state;
+                    drawBoard(state);
                     drawDetail();
 
                     // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
@@ -2120,6 +2468,9 @@
                         drawRooms(state.rooms, state.moves);
                     }
                     drawOutcomes(state.moves);
+
+                    // After the rooms, which tell the movers' names.
+                    drawMoves(state.moves, now);
                 });
             })
             .catch(() => {

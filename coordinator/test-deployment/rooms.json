@@ -19,7 +19,35 @@
                     "lounge": "lounge-aftercare"
                 }
             ],
+            "clinics": [
+                {
+                    "id": "med",
+                    "name": "อายุรกรรม"
+                },
+                {
+                    "id": "gyn",
+                    "name": "นรีเวช",
+                    "pathway": "short"
+                }
+            ],
             "pathways": [
+                {
+                    "id": "short",
+                    "stages": [
+                        {
+                            "id": "waiting",
+                            "name": "รอคิว"
+                        },
+                        {
+                            "id": "examination",
+                            "name": "พบแพทย์"
+                        },
+                        {
+                            "id": "done",
+                            "name": "เสร็จสิ้น"
+                        }
+                    ]
+                },
                 {
                     "id": "default",
                     "stages": [

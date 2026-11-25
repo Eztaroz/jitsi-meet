@@ -134,6 +134,16 @@ describe('the rooms file', () => {
         assert.deepEqual(loadLayout(roomsFile(layout)).centers[0].clinics, layout.centers[0].clinics);
     });
 
+    it('reads a clinic\'s name, and refuses one that is not a text', () => {
+        const withClinics = (clinics: unknown[]) => roomsFile({ centers: [ {
+            clinics, id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ]
+        } ] });
+
+        assert.equal(loadLayout(withClinics([ { id: 'gyn', name: 'นรีเวช' } ])).centers[0].clinics?.[0].name, 'นรีเวช');
+        assert.throws(() => loadLayout(withClinics([ { id: 'gyn', name: ' ' } ])), /clinic "gyn": "name" must be a text/u);
+        assert.throws(() => loadLayout(withClinics([ { id: 'gyn', name: 7 } ])), /clinic "gyn": "name" must be a text/u);
+    });
+
     it('refuses HIS clinic codes that are not a list of codes, or a code in two clinics', () => {
         const withClinics = (clinics: unknown[]) => roomsFile({ centers: [ {
             clinics, id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ]
