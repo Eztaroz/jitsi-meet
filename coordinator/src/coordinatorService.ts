@@ -14,9 +14,10 @@ import {
     unrecordedEntry,
     videoEntry
 } from './audit.ts';
+import { type IAppointment, type IAppointmentSource, appointmentKey } from './his.ts';
 import { signToken } from './jwt.ts';
 import { log } from './log.ts';
-import { nextMidnight } from './midnight.ts';
+import { localDate, nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
 import { DONE, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
@@ -91,6 +92,15 @@ interface IPlayingVideo {
  */
 const ACTIVE_MOVE = new Set([ 'counting_down', 'preparing' ]);
 const POLL_MS = 1000;
+
+/**
+ * How long, in milliseconds, the HIS is not asked again about a patient waiting without an encounter: an appointment
+ * made at the counter meanwhile is found this much later (ADR 0019).
+ */
+const APPOINTMENT_RECHECK_MS = 60_000;
+
+/** What the HIS said of a patient waiting in their room without an encounter (ADR 0019): `IRoom.appointment`. */
+type AppointmentOutcome = 'all_seen' | 'none' | 'unreadable';
 
 /** How old a snapshot of the rooms may be when it is shared by staff reads. */
 const STAFF_READ_ROOMS_MS = 1000;
@@ -212,6 +222,9 @@ function findStaff(rooms: IRoom[], id: string): { occupant: IOccupant; room: IRo
 
 export class CoordinatorService {
     private readonly _opts: {
+
+        /** The HIS, read for each waiting patient's appointments today (ADR 0019). Unset, it is not read. */
+        appointments?: IAppointmentSource;
         auditKey: string;
         layout: ILayout;
 
@@ -243,6 +256,14 @@ export class CoordinatorService {
     private _retention?: NodeJS.Timeout;
 
     private _takeover?: NodeJS.Timeout;
+
+    /**
+     * What the HIS last said of each patient waiting without an encounter, and when, by room (ADR 0019). A room is
+     * forgotten once nobody waits in it without an encounter, so a patient who comes back is looked up again.
+     */
+    private readonly _appointmentChecks = new Map<string, { at: number; outcome?: AppointmentOutcome; }>();
+    private _appointmentWatch?: NodeJS.Timeout;
+    private _checkingAppointments = false;
 
     /**
      * When this process last handed each consultation to a recorder bot, by consultation id, so that a heartbeat sent
@@ -324,7 +345,11 @@ export class CoordinatorService {
             });
 
             if (!encounter) {
-                return { ...room, occupants };
+                const outcome = room.kind === 'patient'
+                    ? this._appointmentChecks.get(backendSafeRoomName(room.name))?.outcome
+                    : undefined;
+
+                return outcome ? { ...room, appointment: outcome, occupants } : { ...room, occupants };
             }
 
             return unrecorded.has(encounter.id)
@@ -597,6 +622,125 @@ export class CoordinatorService {
     startTakeover(everyMs = 5_000): void {
         this._takeover = setInterval(() => void this.takeOverLostConsultations(), everyMs);
         this._takeover.unref();
+    }
+
+    /**
+     * Looks now and then for patients waiting in their own room without an encounter, and starts the encounter of
+     * their appointment today (ADR 0019).
+     *
+     * @param {number} [everyMs] - How often.
+     * @returns {void}
+     */
+    startAppointments(everyMs = 5_000): void {
+        this._appointmentWatch = setInterval(() => {
+            this.checkAppointments().catch(error =>
+                log.warn('could not look for patients waiting without an encounter', { error: (error as Error).name }));
+        }, everyMs);
+        this._appointmentWatch.unref();
+    }
+
+    /**
+     * Starts the encounter of each patient who waits in their own room without one and has an appointment today that
+     * has not had its encounter yet, the earliest first, with the appointment as its visit number and the clinic whose
+     * `hisCodes` have the appointment's clinic code (ADR 0019). The HIS is asked about a waiting patient again only
+     * after `APPOINTMENT_RECHECK_MS`; what it said shows on the patient's room (`appointment`).
+     *
+     * @returns {Promise<void>}
+     */
+    async checkAppointments(): Promise<void> {
+        const source = this._opts.appointments;
+
+        if (!source || this._checkingAppointments) {
+            return;
+        }
+        this._checkingAppointments = true;
+        try {
+            const rooms = await this.rooms();
+            const waiting = rooms.filter(r => r.kind === 'patient' && r.open && !r.encounterId
+                && r.occupants.some(o => o.role === 'patient'));
+            const keys = new Set(waiting.map(r => backendSafeRoomName(r.name)));
+
+            for (const key of this._appointmentChecks.keys()) {
+                if (!keys.has(key)) {
+                    this._appointmentChecks.delete(key);
+                }
+            }
+            for (const room of waiting) {
+                const key = backendSafeRoomName(room.name);
+                const last = this._appointmentChecks.get(key);
+
+                if (!last || Date.now() - last.at >= APPOINTMENT_RECHECK_MS) {
+                    const at = Date.now();
+                    const outcome = await this._startFromAppointment(room.name, source);
+
+                    this._appointmentChecks.set(key, { at, outcome });
+                }
+            }
+        } finally {
+            this._checkingAppointments = false;
+        }
+    }
+
+    /**
+     * Starts the encounter of a waiting patient's next appointment today, if they have one.
+     *
+     * @param {string} hn - The HN, the name of the patient's room.
+     * @param {IAppointmentSource} source - The HIS.
+     * @returns {Promise<AppointmentOutcome|undefined>} Nothing when the encounter was started, or could not be.
+     */
+    private async _startFromAppointment(hn: string, source: IAppointmentSource): Promise<AppointmentOutcome | undefined> {
+        let appointments: IAppointment[];
+
+        try {
+            appointments = await source.appointments(hn, localDate(new Date(), this._opts.timeZone));
+        } catch (error) {
+            log.warn('could not read the appointments from the HIS', { error: (error as Error).name });
+
+            return 'unreadable';
+        }
+
+        // An appointment whose encounter was started, even if done since, is not started again: a patient with two
+        // clinics today gets the second once the first is done (ADR 0013).
+        const seen = new Set(this._state.encounters
+            .filter(e => backendSafeRoomName(e.hn) === backendSafeRoomName(hn))
+            .map(e => e.visitNumber));
+        const next = appointments.find(a => !seen.has(appointmentKey(a)));
+
+        if (!next) {
+            return appointments.length ? 'all_seen' : 'none';
+        }
+
+        try {
+            const { refused } = await this.startEncounter(hn, { ...this._clinicOf(next), visitNumber: appointmentKey(next) });
+
+            if (refused) {
+                log.warn('could not start the encounter of an appointment', { reason: refused });
+            }
+        } catch (error) {
+            // The recorder bot could not take the room, say: the room is asked about again after the recheck time.
+            log.warn('could not start the encounter of an appointment', { error: (error as Error).name });
+        }
+
+        return undefined;
+    }
+
+    /**
+     * The center and clinic whose `hisCodes` have an appointment's clinic code; none, so the first center's pathway,
+     * else.
+     *
+     * @param {IAppointment} appointment - The appointment.
+     * @returns {Object}
+     */
+    private _clinicOf(appointment: IAppointment): { center?: string; clinic?: string; } {
+        for (const center of this._opts.layout.centers) {
+            const clinic = center.clinics?.find(c => c.hisCodes?.includes(appointment.clinicCode));
+
+            if (clinic) {
+                return { center: center.id, clinic: clinic.id };
+            }
+        }
+
+        return {};
     }
 
     /**
@@ -1699,13 +1843,14 @@ export class CoordinatorService {
     }
 
     /**
-     * Stops everything that runs on its own: the sweep, the end of the day and the polling.
+     * Stops everything that runs on its own: the sweep, the end of the day, the polling and the look for appointments.
      *
      * @returns {void}
      */
     stop(): void {
         clearInterval(this._retention);
         clearInterval(this._takeover);
+        clearInterval(this._appointmentWatch);
         clearTimeout(this._midnight);
         for (const timer of this._timers.values()) {
             clearTimeout(timer);

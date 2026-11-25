@@ -43,3 +43,16 @@ export function nextMidnight(now: Date, timeZone = 'UTC'): Date {
 
     return new Date(candidate);
 }
+
+/**
+ * Returns the day of a moment in a time zone.
+ *
+ * @param {Date} now - The moment.
+ * @param {string} timeZone - An IANA time zone; UTC by default.
+ * @returns {string} Such as `2026-11-25`.
+ */
+export function localDate(now: Date, timeZone = 'UTC'): string {
+    const local = new Date(now.getTime() + offsetMs(now, timeZone));
+
+    return local.toISOString().slice(0, 10);
+}

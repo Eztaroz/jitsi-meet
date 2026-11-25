@@ -99,8 +99,12 @@ One patient's attendance at one clinic on one day, through the stages of its pat
 _Avoid_: Visit, appointment, case
 
 **Visit number**:
-The hospital system's number for a patient's attendance on one day (VN). Each encounter carries it, and several encounters can share one.
+The hospital system's number for a patient's attendance on one day (VN). Each encounter carries it, and several encounters can share one. The HIS has no such number, so an encounter started from an appointment carries the appointment's key instead: its day, clinic code and doctor code, such as `2026-11-25/GYN/205` (ADR 0019).
 _Avoid_: Visit ID, encounter ID
+
+**Appointment**:
+A patient's booking with a doctor at a clinic on a day, in the HIS. With the HN, its day, clinic code and doctor code identify it. A patient who waits in their own room with an appointment today gets that appointment's encounter without a coordinator starting it (ADR 0019).
+_Avoid_: Booking, slot
 
 **Center**:
 A part of the hospital with its own staff, stations and coordinator, holding several clinics.

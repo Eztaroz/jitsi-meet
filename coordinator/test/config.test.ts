@@ -125,6 +125,26 @@ describe('the rooms file', () => {
         assert.doesNotThrow(() => loadLayout(withVideos([ { file: 'a.mp4', id: 'nope', title: 'N' } ])));
     });
 
+    it('reads the HIS clinic codes of a clinic (ADR 0019)', () => {
+        const layout = { centers: [ {
+            clinics: [ { hisCodes: [ 'GYN', 'GY2' ], id: 'gyn' }, { id: 'med' } ], id: 'center-1',
+            stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ]
+        } ] };
+
+        assert.deepEqual(loadLayout(roomsFile(layout)).centers[0].clinics, layout.centers[0].clinics);
+    });
+
+    it('refuses HIS clinic codes that are not a list of codes, or a code in two clinics', () => {
+        const withClinics = (clinics: unknown[]) => roomsFile({ centers: [ {
+            clinics, id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ]
+        } ] });
+
+        assert.throws(() => loadLayout(withClinics([ { hisCodes: 'GYN', id: 'gyn' } ])), /clinic "gyn": "hisCodes" must be a list/u);
+        assert.throws(() => loadLayout(withClinics([ { hisCodes: [ '' ], id: 'gyn' } ])), /"hisCodes" must be a list/u);
+        assert.throws(() => loadLayout(withClinics([ { hisCodes: [ 'GYN' ], id: 'gyn' }, { hisCodes: [ 'GYN' ], id: 'gyn2' } ])),
+            /the HIS clinic code "GYN" is in two clinics/u);
+    });
+
     it('refuses two stations with one id, or with one lounge whatever its case', () => {
         assert.throws(() => loadLayout(roomsFile(center([
             { id: 'x', lounge: 'a', stage: 'intake' }, { id: 'x', lounge: 'b', stage: 'aftercare' }
@@ -204,6 +224,19 @@ describe('the settings', () => {
         assert.equal(loadConfig(env({ ...mariadb, COORDINATOR_MARIADB_PORT: '3307' })).database?.port, 3307);
         assert.throws(() => loadConfig(env({ ...mariadb, COORDINATOR_MARIADB_PASSWORD: '' })), /COORDINATOR_MARIADB_PASSWORD must be set/u);
         assert.throws(() => loadConfig(env({ ...mariadb, COORDINATOR_MARIADB_DATABASE: undefined })), /COORDINATOR_MARIADB_DATABASE must be set/u);
+    });
+
+    it('read no HIS unless its host is set, and refuse a half-set one (ADR 0019)', () => {
+        const his = {
+            COORDINATOR_HIS_DATABASE: 'Mydata', COORDINATOR_HIS_HOST: 'his.internal',
+            COORDINATOR_HIS_PASSWORD: 'pw', COORDINATOR_HIS_USER: 'telemed_ro'
+        };
+
+        assert.equal(loadConfig(env()).his, undefined);
+        assert.deepEqual(loadConfig(env(his)).his,
+            { database: 'Mydata', host: 'his.internal', password: 'pw', port: 3306, user: 'telemed_ro' });
+        assert.equal(loadConfig(env({ ...his, COORDINATOR_HIS_PORT: '3307' })).his?.port, 3307);
+        assert.throws(() => loadConfig(env({ ...his, COORDINATOR_HIS_USER: '' })), /COORDINATOR_HIS_USER must be set/u);
     });
 
     it('have no video player without its URL, and refuse a half-set one', () => {

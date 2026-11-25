@@ -72,6 +72,9 @@ export interface IPathway {
 
 /** A specialty service of a center; it may have a pathway of its own. */
 export interface IClinic {
+
+    /** The HIS clinic codes (`CODE_AP`) of the clinic's appointments, for the encounters started from them (ADR 0019). */
+    hisCodes?: string[];
     id: string;
     pathway?: string;
 }
@@ -108,6 +111,13 @@ export interface ILayout {
 }
 
 export interface IRoom {
+
+    /**
+     * For a patient's room without an encounter, when the HIS is read for appointments (ADR 0019): `none` when the
+     * patient has no appointment today, `all_seen` when every one of them has had its encounter, `unreadable` when the
+     * HIS could not be asked.
+     */
+    appointment?: 'all_seen' | 'none' | 'unreadable';
 
     /** For a patient's room, the open encounter of that HN, if there is one. */
     encounterId?: string;
