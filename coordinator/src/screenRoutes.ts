@@ -32,6 +32,26 @@ SCREEN_FILES['/screen/screen.js'] = {
 };
 
 /**
+ * Adds to a queue entry what the screen shows of its encounter. The hospital system's queues do not carry it.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @param {Object} entry - An entry of a stage's queue, or of one of examination's queues.
+ * @returns {Object}
+ */
+function screenEntry<T extends { encounterId: string; }>(service: CoordinatorService, entry: T) {
+    const encounter = service.state.encounters.find(e => e.id === entry.encounterId);
+
+    return {
+        ...entry,
+        clinic: encounter?.clinic,
+        hn: encounter?.hn,
+
+        // Where the encounter can go: its next stage is not the next column when its pathway skips one.
+        pathwayStages: service.pathwayStages(encounter?.pathway ?? '')
+    };
+}
+
+/**
  * Creates the handler of the requests under `/screen`.
  *
  * @param {Object} options - Options.
@@ -101,12 +121,19 @@ export function createScreenRoutes({ act, screen, service }: {
             if (route === '/state' && req.method === 'GET') {
                 const rooms = await service.rooms();
                 const queues = service.queues(rooms);
-                const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
+                const examination = service.examinationQueues(rooms);
+                const onScreen = (entries: { encounterId: string; }[]) => entries.map(e => screenEntry(service, e));
+                const eachOnScreen = (lists: Record<string, { encounterId: string; }[]>) =>
+                    Object.fromEntries(Object.entries(lists).map(([ key, entries ]) => [ key, onScreen(entries) ]));
                 const recent = Date.now() - 2 * 60_000;
 
                 send(res, 200, {
+                    clinics: service.clinics(),
                     coordinator,
-                    examination: service.examinationQueues(rooms),
+                    examination: {
+                        doctors: eachOnScreen(examination.doctors),
+                        unassigned: onScreen(examination.unassigned)
+                    },
                     nhso: {
                         bypass: service.bypassToday() ?? null,
                         statuses: service.nhsoStatuses()
@@ -128,8 +155,7 @@ export function createScreenRoutes({ act, screen, service }: {
                             .filter(e => e.stage !== 'done' && e.questionnaires?.length)
                             .map(e => [ e.id, (e.questionnaires ?? []).map(describeSent) ]))
                     },
-                    queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
-                        [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
+                    queues: eachOnScreen(queues),
                     rooms,
                     videoCatalogue: service.videoCatalogue().map(({ id, title }) => ({ id, title })),
                     videos: service.playingVideos(),

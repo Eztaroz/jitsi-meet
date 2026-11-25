@@ -4,6 +4,9 @@
  */
 (function() {
     const TOKEN_KEY = 'coordinator-token';
+
+    /** Where the tab keeps the clinic its coordinator follows. */
+    const CLINIC_KEY = 'coordinator-clinic';
     const REFRESH_MS = 2000;
 
     /** How long a wait is before it is shown as long, and as too long. */
@@ -52,6 +55,15 @@
 
     /** The NHSO authentication of each open encounter, by id, as the last refresh found it. */
     let NHSO_STATUSES: Record<string, NhsoStatus> = {};
+
+    /** The center's clinics' names, by id, as the last refresh found them. */
+    let CLINIC_NAMES: Record<string, string> = {};
+
+    /** The clinic the board shows the patients of now; none while it shows all. */
+    let CLINIC_SHOWN = '';
+
+    /** The clinic the coordinator follows, in this tab only; none while all are shown. */
+    let clinicPick = sessionStorage.getItem(CLINIC_KEY) ?? '';
 
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
@@ -141,8 +153,14 @@
 
         /** The stations whose staff are in the patient's room now. */
         at?: string[];
+
+        /** The encounter's clinic, if it has one. */
+        clinic?: string;
         encounterId: string;
         hn?: string;
+
+        /** The stages of the encounter's pathway, in order, from `waiting` to `done`. */
+        pathwayStages: string[];
         suggested?: boolean;
         waitedSeconds: number;
     }
@@ -171,7 +189,13 @@
         sent: Record<string, ISentQuestionnaire[]>;
     }
 
+    interface IClinic {
+        id: string;
+        name: string;
+    }
+
     interface IState {
+        clinics: IClinic[];
         coordinator: { id: string; name?: string; };
         examination: IExamination;
         moves: IMove[];
@@ -215,6 +239,10 @@
     const columnNodes = new Map<string, HTMLElement>();
     const groupNodes = new Map<string, HTMLElement>();
     const ticketNodes = new Map<string, HTMLElement>();
+    const clinicNodes = new Map<string, HTMLButtonElement>();
+
+    /** The state the last refresh read, which picking a clinic draws the board from again. */
+    let latest: IState | undefined;
 
     /** The health questionnaires the deployment offers, and those sent to each open encounter, from the last refresh. */
     let questionnaires: IQuestionnaires = { catalogue: [],
@@ -690,6 +718,74 @@
     }
 
     /**
+     * Draws the clinic filter, and below it the board with the patients of the clinic picked, or of every clinic. The
+     * header's figures and everything else stay the center's.
+     *
+     * @param {Object} state - The state.
+     * @returns {void}
+     */
+    function drawBoard(state: IState): void {
+        CLINIC_NAMES = Object.fromEntries(state.clinics.map(c => [ c.id, c.name ]));
+
+        // A clinic kept from before that the center no longer has shows all of them.
+        CLINIC_SHOWN = state.clinics.some(c => c.id === clinicPick) ? clinicPick : '';
+        drawClinicFilter(state);
+
+        const shown = (entries: IQueueEntry[]) =>
+            CLINIC_SHOWN ? entries.filter(e => e.clinic === CLINIC_SHOWN) : entries;
+        const eachShown = (lists: Record<string, IQueueEntry[]>) =>
+            Object.fromEntries(Object.entries(lists).map(([ key, entries ]) => [ key, shown(entries) ]));
+
+        drawQueues(eachShown(state.queues), {
+            doctors: eachShown(state.examination.doctors),
+            unassigned: shown(state.examination.unassigned)
+        });
+    }
+
+    /**
+     * Draws the choice of all clinics and each of the center's clinics, each with how many patients it has. A center
+     * with no clinics has nothing to choose.
+     *
+     * @param {Object} state - The state.
+     * @returns {void}
+     */
+    function drawClinicFilter(state: IState): void {
+        const entries = Object.values(state.queues).flat();
+
+        $('board-bar').hidden = !state.clinics.length;
+        arrange($('clinic-filter'), [ { id: '', name: 'ทุกคลินิก' }, ...state.clinics ].map(({ id, name }) => {
+            const choice = kept(clinicNodes, id, () => {
+                const node = button('', '');
+
+                node.dataset.clinic = id;
+                node.addEventListener('click', () => pickClinic(id));
+
+                return node;
+            });
+
+            setText(choice.firstElementChild as Element, name);
+            choice.dataset.count = String(id ? entries.filter(e => e.clinic === id).length : entries.length);
+            choice.setAttribute('aria-pressed', String(id === CLINIC_SHOWN));
+
+            return choice;
+        }));
+    }
+
+    /**
+     * Follows a clinic, or all of them, and keeps that for this tab.
+     *
+     * @param {string} id - The clinic, or none for all.
+     * @returns {void}
+     */
+    function pickClinic(id: string): void {
+        clinicPick = id;
+        sessionStorage.setItem(CLINIC_KEY, id);
+        if (latest) {
+            drawBoard(latest);
+        }
+    }
+
+    /**
      * Draws the board: a column for each stage, in the pathway's order, with a card for each of its patients. A stage
      * with nobody collapses to a narrow strip.
      *
@@ -892,13 +988,15 @@
         setText(wait.lastElementChild as Element, waited(seconds));
         wait.title = `รอมาแล้ว ${waitedInWords(seconds)}`;
 
-        const next = STAGES[index + 1];
+        // The next stage of the encounter's own pathway, which may skip a column of the board.
+        const to = entry.pathwayStages[entry.pathwayStages.indexOf(STAGES[index][0]) + 1] ?? 'done';
+        const next = to === 'done' ? undefined : STAGE_NAMES[to] ?? to;
         const go = find<HTMLButtonElement>('.card-go');
         const who = entry.hn || 'ผู้ป่วย';
 
-        go.dataset.to = next?.[0] ?? 'done';
-        go.title = next ? `ส่งต่อไป ${next[1]}` : 'เสร็จสิ้น';
-        go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next[1]}` : `${who} เสร็จสิ้น`);
+        go.dataset.to = to;
+        go.title = next ? `ส่งต่อไป ${next}` : 'เสร็จสิ้น';
+        go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next}` : `${who} เสร็จสิ้น`);
         go.querySelector('use')?.setAttribute('href', next ? '#i-arrow' : '#i-check');
         drawBadges(find('.card-badges'), entry, nhso);
 
@@ -931,6 +1029,10 @@
     function drawBadges(row: HTMLElement, entry: IQueueEntry, nhso?: NhsoStatus): void {
         const badges: { hint?: string; icon: string; kind: string; text: string; }[] = [];
 
+        // With one clinic picked, every card is that clinic's: the tag would say nothing.
+        if (entry.clinic && !CLINIC_SHOWN) {
+            badges.push({ hint: 'คลินิก', icon: 'clipboard', kind: 'clinic', text: CLINIC_NAMES[entry.clinic] ?? entry.clinic });
+        }
         if (entry.suggested) {
             badges.push({ icon: 'arrow', kind: 'next', text: 'ถัดไป' });
         }
@@ -1679,7 +1781,8 @@
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     drawTeams(state.teams);
-                    drawQueues(state.queues, state.examination);
+                    latest = state;
+                    drawBoard(state);
 
                     // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
                     // lose its place.
