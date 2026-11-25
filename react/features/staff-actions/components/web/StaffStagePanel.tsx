@@ -81,6 +81,10 @@ const StaffStagePanel = () => {
     const [ error, setError ] = useState<string | undefined>();
     const [ videoError, setVideoError ] = useState<string | undefined>();
     const encounterIdRef = useRef<string | undefined>();
+
+    // Numbers each read of where the staff member is. Only the latest read sent is shown: an earlier one that answers
+    // later, such as a refresh sent before a video choice, would put the old choice back in the picker.
+    const lastReadRef = useRef(0);
     const [ chosenQuestionnaire, setChosenQuestionnaire ] = useState('');
     const [ questionnaireError, setQuestionnaireError ] = useState(false);
     const [ sentQuestionnaires, setSentQuestionnaires ] = useState<IStaffQuestionnaire[]>([]);
@@ -99,13 +103,15 @@ const StaffStagePanel = () => {
             // Both are asked at once, so a refresh costs one round trip: the questionnaires are of the encounter the
             // last refresh found, and are dropped when this one finds another.
             const known = encounterIdRef.current;
+            const read = ++lastReadRef.current;
             const [ fresh, answers ] = await Promise.all([
                 fetchStaffContext(store.getState()),
                 known ? fetchQuestionnaires(store.getState(), known) : undefined
             ]);
             const current = fresh?.encounter?.id;
 
-            if (!cancelled) {
+            // A later read is under way or done: this one's answer is older. The next refresh brings the questionnaires.
+            if (!cancelled && read === lastReadRef.current) {
                 encounterIdRef.current = current;
                 setContext(fresh);
                 setSentQuestionnaires(current && current === known ? answers ?? [] : []);
@@ -141,7 +147,13 @@ const StaffStagePanel = () => {
             return;
         }
         setVideoError(await request(context.encounter.id));
-        setContext(await fetchStaffContext(store.getState()));
+
+        const read = ++lastReadRef.current;
+        const fresh = await fetchStaffContext(store.getState());
+
+        if (read === lastReadRef.current) {
+            setContext(fresh);
+        }
     }, [ context, store ]);
     const onChooseVideo = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
         const video = event.target.value;
