@@ -458,18 +458,6 @@
     }
 
     /**
-     * Describes a long stretch of time, to the whole minute below it.
-     *
-     * @param {number} seconds - How long.
-     * @returns {string}
-     */
-    function hoursInWords(seconds: number): string {
-        const minutes = Math.floor(seconds / 60);
-
-        return minutes < 60 ? `${minutes} นาที` : `${Math.floor(minutes / 60)} ชม. ${minutes % 60} นาที`;
-    }
-
-    /**
      * Tells how long an encounter has been open.
      *
      * @param {Object} entry - The encounter's entry in its queue.
@@ -1458,7 +1446,7 @@
         const inSystem = secondsInSystem(entry);
 
         if (inSystem >= LONG_TOTAL_SECONDS) {
-            badges.push({ icon: 'hourglass', kind: 'total', text: `อยู่ในระบบ ${hoursInWords(inSystem)}` });
+            badges.push({ icon: 'hourglass', kind: 'total', text: `อยู่ในระบบ ${duration(inSystem)}` });
         }
         if (!changed(row, badges)) {
             return;
@@ -1745,7 +1733,7 @@
         facts.push({ icon: 'hourglass',
             key: 'total',
             label: 'อยู่ในระบบมาแล้ว',
-            value: hoursInWords(secondsInSystem(entry)) });
+            value: duration(secondsInSystem(entry)) });
 
         if (!changed(list, facts)) {
             return;
@@ -1835,7 +1823,7 @@
         // The longer the stage, the longer the bar, up to the limit.
         bar.style.width = `${Math.min(1, seconds / WAIT_LONG_SECONDS) * 4.5}rem`;
         box.dataset.tier = tier;
-        box.title = `อยู่ในขั้นนี้ ${hoursInWords(seconds)} (${TIERS.find(t => t[0] === tier)?.[1]})`;
+        box.title = `อยู่ในขั้นนี้ ${duration(seconds)} (${TIERS.find(t => t[0] === tier)?.[1]})`;
         box.append(bar, el('span', `${Math.floor(seconds / 60)} นาที`));
 
         return box;
