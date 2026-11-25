@@ -10,6 +10,9 @@
     const WAIT_WARN_SECONDS = 5 * 60;
     const WAIT_LONG_SECONDS = 15 * 60;
 
+    /** How long a move has run before it is shown as stuck. */
+    const MOVE_STUCK_SECONDS = 60;
+
     /**
      * The three wait tiers, with their label and icon. A tier is a status: the legend shows its icon and its words,
      * never its colour alone.
@@ -598,7 +601,6 @@
             active.map(stage => `${stage[1]} ${inStage(stage[0])}`).join(' · '));
         figure('stat-rooms', open.length, `เปิด ${open.length} จาก ${state.rooms.length} ห้อง · ผู้ป่วย ${
             people('patient')} · เจ้าหน้าที่ ${people('staff')}`);
-        figure('stat-moving', state.moves.filter(isUnderWay).length, 'รอผู้ถูกย้ายไปถึงปลายทาง');
     }
 
     /**
@@ -609,6 +611,31 @@
      */
     function isUnderWay(m: IMove): boolean {
         return m.state === 'counting_down';
+    }
+
+    /**
+     * Draws the header's figure of the moves under way: how many, how many of them are stuck, and as its hint each
+     * move with who, from where, to where and for how long.
+     *
+     * @param {Object[]} moves - The moves under way and recent.
+     * @param {number} now - The service's time, which the moves' starts are told in.
+     * @returns {void}
+     */
+    function drawMoves(moves: IMove[], now: number): void {
+        const underWay = moves.filter(isUnderWay).map(m => {
+            return { move: m,
+                seconds: Math.max(0, Math.floor((now - Date.parse(m.startedAt)) / 1000)) };
+        });
+        const stuck = underWay.filter(m => m.seconds >= MOVE_STUCK_SECONDS).length;
+        const figure = $('stat-moves');
+        const mark = figure.querySelector('.stat-stuck') as HTMLElement;
+
+        setText($('stat-moving'), String(underWay.length));
+        figure.dataset.stuck = String(stuck > 0);
+        mark.hidden = !stuck;
+        setText(mark.lastElementChild as Element, `ค้าง ${stuck}`);
+        figure.title = underWay.map(({ move: m, seconds }) => `${names[m.endpointId] || 'ผู้เข้าร่วม'}: ${m.origin} → ${
+            m.destination || '?'} (${waitedInWords(seconds)})`).join('\n') || 'ไม่มีการย้ายที่กำลังดำเนินอยู่';
     }
 
     /**
@@ -1145,6 +1172,16 @@
         }
         if (PLAYING_VIDEOS.has(entry.encounterId)) {
             badges.push({ icon: 'play', kind: 'video', text: 'กำลังเล่นวิดีโอ' });
+        }
+
+        // A questionnaire closed without an answer can no longer be answered: it counts as neither.
+        const asked = (questionnaires.sent[entry.encounterId] ?? []).filter(q => q.answers || !q.closedAt);
+        const pending = asked.filter(q => !q.answers).length;
+
+        if (pending) {
+            badges.push({ icon: 'clipboard', kind: 'qwait', text: `รอคำตอบแบบสอบถาม ${pending}` });
+        } else if (asked.length) {
+            badges.push({ icon: 'clipboard', kind: 'qdone', text: 'ตอบแบบสอบถามแล้ว' });
         }
         if (!changed(row, badges)) {
             return;
@@ -1778,6 +1815,7 @@
         return new Date(at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
     }
 
+    $('stat-moves').addEventListener('click', () => showView('rooms'));
     $('nhso-chip').addEventListener('click', () => showNhsoControl(Boolean($('nhso-pop').hidden)));
 
     /**
@@ -1858,6 +1896,9 @@
                     throw new Error('state');
                 }
 
+                // The desk's clock may be wrong: how long a move has run is told by the service's.
+                const now = Date.parse(response.headers.get('date') ?? '') || Date.now();
+
                 return response.json().then((state: IState) => {
                     const who = state.coordinator.name || state.coordinator.id;
 
@@ -1888,6 +1929,9 @@
                         drawRooms(state.rooms, state.moves);
                     }
                     drawOutcomes(state.moves);
+
+                    // After the rooms, which tell the movers' names.
+                    drawMoves(state.moves, now);
                 });
             })
             .catch(() => {

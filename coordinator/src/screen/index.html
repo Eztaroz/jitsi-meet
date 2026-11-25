@@ -61,11 +61,12 @@
                     <strong id="stat-rooms">0</strong>
                     <span class="stat-label">ห้องเปิด</span>
                 </div>
-                <div class="stat" data-tone="lounge">
+                <button id="stat-moves" type="button" class="stat" data-tone="lounge">
                     <svg class="i" aria-hidden="true" focusable="false"><use href="#i-swap"/></svg>
                     <strong id="stat-moving">0</strong>
                     <span class="stat-label">กำลังย้าย</span>
-                </div>
+                    <span class="stat-stuck" hidden><svg class="i" aria-hidden="true" focusable="false"><use href="#i-alert"/></svg><span></span></span>
+                </button>
             </div>
             <div class="nhso">
                 <button id="nhso-chip" type="button" data-bypass="false" aria-expanded="false" aria-controls="nhso-pop">
