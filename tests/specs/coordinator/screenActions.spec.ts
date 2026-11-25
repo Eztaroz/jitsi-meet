@@ -294,6 +294,15 @@ describe('Coordinator: acting from the screen', () => {
         await a.driver.waitUntil(async () => (await getExamination()).unassigned.some(e => e.encounterId === id),
             { timeoutMsg: 'not sent to examination' });
 
+        // The panel says how long the patient has been in the system, and how long the stage they left took; a new
+        // encounter's card says nothing of it.
+        const spent = await a.driver.$('.sheet .step[data-stage="waiting"] .step-time');
+
+        await spent.waitForDisplayed({ timeout: 10_000, timeoutMsg: 'the past stage does not say how long it took' });
+        expect(await spent.getText()).toContain('นาที');
+        expect(await (await a.driver.$('.sheet [data-fact="total"] dd')).getText()).toContain('นาที');
+        expect(await (await a.driver.$(`.queue-entry[data-encounter="${id}"] .badge.total`)).isExisting()).toBe(false);
+
         await (await a.driver.$('.sheet .doctor-to')).waitForDisplayed({ timeout: 10_000 });
         await (await a.driver.$('.sheet .doctor-to')).setValue(doctor);
         await a.driver.pause(2500);
@@ -308,6 +317,14 @@ describe('Coordinator: acting from the screen', () => {
         await clickInPanel(a, `.doctor-chip[data-doctor="${otherDoctor}"]`);
         await a.driver.waitUntil(async () => await doctorOf() === otherDoctor,
             { timeoutMsg: 'the picked doctor was not set' });
+
+        // The panel still names the doctor once the patient has left examination.
+        await clickInPanel(a, '.step[data-stage="aftercare"] .step-pick');
+        await clickInPanel(a, '.stage-go');
+        await a.driver.waitUntil(
+            async () => await (await a.driver.$('.sheet[data-key^="aftercare|"] [data-fact="doctor"] dd')).isExisting()
+                && await (await a.driver.$('.sheet [data-fact="doctor"] dd')).getText() === otherDoctor,
+            { timeout: 10_000, timeoutMsg: 'the panel does not name the doctor after examination' });
 
         await clickInPanel(a, '.stage-done');
         await a.driver.waitUntil(

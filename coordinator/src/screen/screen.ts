@@ -20,6 +20,9 @@
     const WAIT_WARN_SECONDS = 5 * 60;
     const WAIT_LONG_SECONDS = 15 * 60;
 
+    /** How long an encounter has been open before its card says how long it has been in the system. */
+    const LONG_TOTAL_SECONDS = 90 * 60;
+
     /** How far past their appointment a patient is before their card says so. */
     const APPOINTMENT_LATE_MINUTES = 30;
 
@@ -214,11 +217,20 @@
 
         /** The encounter's clinic, if it has one. */
         clinic?: string;
+
+        /** The encounter's doctor, if it has one: a staff member's identity id. */
+        doctor?: string;
         encounterId: string;
+
+        /** Every stage the encounter has entered, in order, with when it did. */
+        history: { at: string; stage: string; }[];
         hn?: string;
 
         /** The stages of the encounter's pathway, in order, from `waiting` to `done`. */
         pathwayStages: string[];
+
+        /** When the encounter started. */
+        startedAt: string;
         suggested?: boolean;
         waitedSeconds: number;
     }
@@ -494,6 +506,32 @@
         }
 
         return `${Math.floor(seconds / 60)} นาที ${seconds % 60} วินาที`;
+    }
+
+    /**
+     * Tells how long an encounter has been open.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @returns {number} Seconds.
+     */
+    function secondsInSystem(entry: IQueueEntry): number {
+        return Math.max(0, Math.floor((latestAt - Date.parse(entry.startedAt)) / 1000));
+    }
+
+    /**
+     * Tells how long an encounter spent in a stage it has left, over every time it was there.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string} stage - The stage.
+     * @returns {number|undefined} Seconds; nothing for a stage it has never left.
+     */
+    function secondsSpent(entry: IQueueEntry, stage: string): number | undefined {
+        // A stretch ends where the next one starts: the last one is still open.
+        const stretches = entry.history.slice(0, -1).flatMap((entered, i) => entered.stage === stage
+            ? [ (Date.parse(entry.history[i + 1].at) - Date.parse(entered.at)) / 1000 ]
+            : []);
+
+        return stretches.length ? Math.floor(stretches.reduce((sum, one) => sum + one, 0)) : undefined;
     }
 
     /**
@@ -1481,6 +1519,12 @@
         } else if (asked.length) {
             badges.push({ icon: 'clipboard', kind: 'qdone', text: 'ตอบแบบสอบถามแล้ว' });
         }
+
+        const inSystem = secondsInSystem(entry);
+
+        if (inSystem >= LONG_TOTAL_SECONDS) {
+            badges.push({ icon: 'hourglass', kind: 'total', text: `อยู่ในระบบ ${duration(inSystem)}` });
+        }
         if (!changed(row, badges)) {
             return;
         }
@@ -1652,8 +1696,7 @@
      * @returns {void}
      */
     function updateSheet(sheet: HTMLElement, entry: IQueueEntry, index: number): void {
-        const doctors = latest?.examination.doctors ?? {};
-        const doctor = Object.keys(doctors).find(id => doctors[id]?.some(e => e.encounterId === entry.encounterId));
+        const { doctor } = entry;
 
         updateMeter(sheet.querySelector('.meter') as HTMLElement, entry.waitedSeconds);
         drawFacts(sheet.querySelector('.facts') as HTMLElement, entry, index, doctor);
@@ -1741,7 +1784,7 @@
      * @param {HTMLElement} list - Their place.
      * @param {Object} entry - The encounter's entry in its queue.
      * @param {number} index - The stage's place in the stages.
-     * @param {string|undefined} doctor - The encounter's doctor; the state names it in examination only.
+     * @param {string|undefined} doctor - The encounter's doctor, if it has one.
      * @returns {void}
      */
     function drawFacts(list: HTMLElement, entry: IQueueEntry, index: number, doctor?: string): void {
@@ -1764,6 +1807,10 @@
         if (entry.clinic) {
             facts.push({ icon: 'clipboard', key: 'clinic', label: 'คลินิก', value: CLINIC_NAMES[entry.clinic] ?? entry.clinic });
         }
+        facts.push({ icon: 'hourglass',
+            key: 'total',
+            label: 'อยู่ในระบบมาแล้ว',
+            value: duration(secondsInSystem(entry)) });
         if (entry.appointmentTime) {
             const late = minutesPast(entry.appointmentTime);
 
@@ -1824,6 +1871,13 @@
             }
             tag.textContent = current ? 'อยู่ที่นี่' : 'จะส่งไป';
             row.append(mark, el('span', STAGE_NAMES[id] ?? id, 'step-name'), tag);
+
+            // A stage ahead, even one the patient was sent back from, shows no time: only what is behind them does.
+            const spent = i < index ? secondsSpent(entry, id) : undefined;
+
+            if (spent !== undefined) {
+                tag.before(createStepTime(spent));
+            }
             if (current) {
                 step.setAttribute('aria-current', 'step');
             } else {
@@ -1839,6 +1893,26 @@
         section.appendChild(steps);
 
         return section;
+    }
+
+    /**
+     * Makes the mark of how long a past stage took: a bar in the colour of its wait tier, and the minutes.
+     *
+     * @param {number} seconds - How long.
+     * @returns {HTMLElement}
+     */
+    function createStepTime(seconds: number): HTMLElement {
+        const tier = tierOf(seconds);
+        const box = el('span', undefined, 'step-time');
+        const bar = el('span', undefined, 'step-time-bar');
+
+        // The longer the stage, the longer the bar, up to the limit.
+        bar.style.width = `${Math.min(1, seconds / WAIT_LONG_SECONDS) * 4.5}rem`;
+        box.dataset.tier = tier;
+        box.title = `อยู่ในขั้นนี้ ${duration(seconds)} (${TIERS.find(t => t[0] === tier)?.[1]})`;
+        box.append(bar, el('span', `${Math.floor(seconds / 60)} นาที`));
+
+        return box;
     }
 
     /**

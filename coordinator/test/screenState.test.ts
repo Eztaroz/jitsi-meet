@@ -41,9 +41,12 @@ const LAYOUT: ILayout = {
 interface IScreenEntry {
     appointmentTime?: string;
     clinic?: string;
+    doctor?: string;
     encounterId: string;
+    history: { at: string; stage: string; }[];
     hn?: string;
     pathwayStages: string[];
+    startedAt: string;
 }
 
 /** The parts of the screen's state these tests read. */
@@ -238,6 +241,46 @@ describe('the state of the coordinator screen', () => {
             assert.deepEqual(entryOf(now, short).pathwayStages, [ 'waiting', 'examination', 'done' ]);
             assert.deepEqual(entryOf(now, usual).pathwayStages,
                 [ 'waiting', 'registration', 'intake', 'examination', 'aftercare', 'billing', 'pharmacy', 'done' ]);
+        });
+
+        it('gives each entry when its encounter started and every stage it entered, in order', async () => {
+            const id = await start('HN1', { clinic: 'med' });
+
+            await service.changeStage(id, 'intake', 'coord-1');
+            await service.changeStage(id, 'examination', 'coord-1');
+            await service.changeStage(id, 'intake', 'coord-1');
+
+            const kept = service.describeEncounter(id);
+            const entry = entryOf(await state(), id);
+
+            assert.equal(entry.startedAt, kept?.startedAt.toISOString());
+            assert.deepEqual(entry.history.map(h => h.stage), [ 'waiting', 'intake', 'examination', 'intake' ]);
+            assert.deepEqual(entry.history,
+                kept?.history.map(h => ({ at: h.at.toISOString(), stage: h.stage })));
+        });
+
+        it('carries the start and history on the entries of the queues by doctor too', async () => {
+            const id = await start('HN1', { clinic: 'med' });
+
+            await service.changeStage(id, 'examination', 'coord-1');
+
+            const [ entry ] = (await state()).examination.unassigned;
+
+            assert.equal(entry?.startedAt, service.describeEncounter(id)?.startedAt.toISOString());
+            assert.deepEqual(entry?.history.map(h => h.stage), [ 'waiting', 'examination' ]);
+        });
+
+        it('still names the doctor of an encounter on its entry after examination', async () => {
+            const assigned = await start('HN1', { clinic: 'med' });
+            const unassigned = await start('HN2', { clinic: 'med' });
+
+            await service.setDoctor(assigned, 'd-1', 'coord-1');
+            await service.changeStage(assigned, 'aftercare', 'coord-1');
+
+            const now = await state();
+
+            assert.equal(entryOf(now, assigned).doctor, 'd-1');
+            assert.equal('doctor' in entryOf(now, unassigned), false);
         });
     });
 

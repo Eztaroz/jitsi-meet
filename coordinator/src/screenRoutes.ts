@@ -47,10 +47,13 @@ function screenEntry<T extends { encounterId: string; }>(service: CoordinatorSer
         ...entry,
         appointmentTime: encounter?.appointmentTime,
         clinic: encounter?.clinic,
+        doctor: encounter?.doctor,
+        history: encounter?.history,
         hn: encounter?.hn,
 
         // Where the encounter can go: its next stage is not the next column when its pathway skips one.
-        pathwayStages: service.pathwayStages(encounter?.pathway ?? '')
+        pathwayStages: service.pathwayStages(encounter?.pathway ?? ''),
+        startedAt: encounter?.startedAt
     };
 }
 
