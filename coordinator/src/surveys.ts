@@ -162,7 +162,7 @@ const CSV_COLUMNS = [ 'submitted_at', 'hn', 'hn_source', 'encounter_id', 'stage'
  * @param {unknown} value - The value.
  * @returns {string}
  */
-function cell(value: unknown): string {
+export function cell(value: unknown): string {
     if (value === undefined || value === null) {
         return '';
     }

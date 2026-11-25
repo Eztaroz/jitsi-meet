@@ -11,12 +11,18 @@ import type { IMove, Stage } from './rules.ts';
 
 export interface IAuditEntry {
 
-    /** For a video entry, what was asked: `play`, `stop` or `choose` (the video of a stage). */
-    action?: 'choose' | 'play' | 'stop';
+    /**
+     * For a video entry, what was asked: `play`, `stop` or `choose` (the video of a stage). For an NHSO bypass day,
+     * `declare` or `cancel` (ADR 0020).
+     */
+    action?: 'cancel' | 'choose' | 'declare' | 'play' | 'stop';
     at: Date;
 
-    /** How many surveys an export held. */
+    /** How many surveys, or encounters of bypass days, an export held. */
     count?: number;
+
+    /** The day an NHSO bypass is for, as `YYYY-MM-DD`; for an export, its first day, with `lastDay` its last. */
+    day?: string;
 
     /** A move's destination: a lounge's name, or a keyed reference to a patient's room. */
     destination?: string;
@@ -30,8 +36,11 @@ export interface IAuditEntry {
 
     /** `system` for the hospital's system, or a coordinator's verified identity id. */
     issuer: string;
-    kind: 'call_next' | 'consultation_unrecorded' | 'doctor' | 'move' | 'questionnaire_sent' | 'stage' | 'survey_export'
-        | 'video';
+    kind: 'call_next' | 'consultation_unrecorded' | 'doctor' | 'move' | 'nhso_bypass' | 'nhso_bypass_export'
+        | 'questionnaire_sent' | 'stage' | 'survey_export' | 'video';
+
+    /** For an export of the NHSO bypass days, its last day, as `YYYY-MM-DD`. */
+    lastDay?: string;
     outcome: string;
 
     /** The moved participant's verified identity id. */

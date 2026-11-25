@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 import type { IAuditEntry } from './audit.ts';
 import { DatabaseError } from './mariadbClient.ts';
+import type { IBypassDay } from './nhso.ts';
 import { DEFAULT_PATHWAY_ID } from './pathways.ts';
 import type { ISentQuestionnaire } from './questionnaires.ts';
 import type { IEncounter, IMove, IState } from './rules.ts';
@@ -108,6 +109,9 @@ export interface IStore {
     /** Reads the newest audit entries, the newest first. */
     audit: (limit: number) => IAuditEntry[];
 
+    /** Reads the NHSO bypass days from one day to another, both included, cancelled ones too, the earliest first. */
+    bypassDays: (from: string, to: string) => IBypassDay[];
+
     /**
      * Checks that a write would be accepted, before anything that cannot be undone is done.
      *
@@ -145,6 +149,9 @@ export interface IStore {
     /** Reads where each patient's own room is, by verified identity id. */
     patientRooms: () => Record<string, string>;
 
+    /** Keeps an NHSO bypass day, or its cancelling: one per day (ADR 0020). */
+    putBypassDay: (day: IBypassDay) => void;
+
     /** Reads the station of each staff member, by verified identity id. */
     staffStations: () => Record<string, string>;
 
@@ -164,6 +171,7 @@ export interface IStore {
 /** How many rows a retention sweep deleted, of each kind. */
 export type ISweepResult = {
     audit: number;
+    bypassDays: number;
     consultations: number;
     encounters: number;
     moves: number;
@@ -274,6 +282,22 @@ export function auditOfRow(json: string): IAuditEntry {
 }
 
 /**
+ * Reads a saved NHSO bypass day back, with its times.
+ *
+ * @param {string} json - What was saved.
+ * @returns {IBypassDay}
+ */
+export function bypassDayOfRow(json: string): IBypassDay {
+    const day = JSON.parse(json) as IBypassDay & { cancelledAt?: string; declaredAt: string; };
+
+    return {
+        ...day,
+        declaredAt: new Date(day.declaredAt),
+        ...day.cancelledAt ? { cancelledAt: new Date(day.cancelledAt) } : {}
+    };
+}
+
+/**
  * Reads a saved survey back, with its date.
  *
  * @param {string} json - What was saved.
@@ -334,6 +358,12 @@ export class Store implements IStore {
             survey TEXT NOT NULL
         )`);
         this._db.exec('CREATE INDEX IF NOT EXISTS surveys_submitted_at ON surveys (submitted_at)');
+
+        this._db.exec(`CREATE TABLE IF NOT EXISTS nhso_bypass_days (
+            day TEXT PRIMARY KEY,
+            declared_at TEXT NOT NULL,
+            record TEXT NOT NULL
+        )`);
 
         this._db.exec(`CREATE TABLE IF NOT EXISTS consultations (
             id TEXT PRIMARY KEY,
@@ -611,6 +641,32 @@ export class Store implements IStore {
     }
 
     /**
+     * Keeps an NHSO bypass day, or its cancelling.
+     *
+     * @param {IBypassDay} day - The day.
+     * @returns {void}
+     */
+    putBypassDay(day: IBypassDay): void {
+        this._db.prepare('INSERT INTO nhso_bypass_days (day, declared_at, record) VALUES (?, ?, ?) '
+            + 'ON CONFLICT (day) DO UPDATE SET declared_at = excluded.declared_at, record = excluded.record')
+            .run(day.day, day.declaredAt.toISOString(), JSON.stringify(day));
+    }
+
+    /**
+     * Reads the NHSO bypass days from one day to another.
+     *
+     * @param {string} from - The first day, as `YYYY-MM-DD`, included.
+     * @param {string} to - The last day, included.
+     * @returns {IBypassDay[]} The earliest first.
+     */
+    bypassDays(from: string, to: string): IBypassDay[] {
+        const rows = this._db.prepare('SELECT record FROM nhso_bypass_days WHERE day >= ? AND day <= ? ORDER BY day')
+            .all(from, to) as { record: string; }[];
+
+        return rows.map(r => bypassDayOfRow(r.record));
+    }
+
+    /**
      * Reads the satisfaction surveys submitted in a period.
      *
      * @param {Date} from - The start of the period, included.
@@ -668,6 +724,7 @@ export class Store implements IStore {
 
         return {
             audit: Number(this._db.prepare('DELETE FROM audit WHERE at < ?').run(at).changes),
+            bypassDays: Number(this._db.prepare('DELETE FROM nhso_bypass_days WHERE declared_at < ?').run(at).changes),
             consultations: Number(this._db.prepare('DELETE FROM consultations WHERE started_at < ?').run(at).changes),
             encounters: Number(this._db.prepare('DELETE FROM encounters WHERE started_at < ?').run(at).changes),
             moves: Number(this._db.prepare('DELETE FROM moves WHERE started_at < ?').run(at).changes),

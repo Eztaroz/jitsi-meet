@@ -514,6 +514,14 @@ button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-
 .outcome-meta { color: var(--faint); font-size: .76rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 
 /* Messages */
+.nhso-bar { align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; padding: 10px 14px; }
+.nhso-bar #nhso-text { flex: 1 1 240px; }
+.nhso-bar[data-bypass="true"] { background: var(--lounge-soft); border-color: var(--lounge); color: var(--lounge); }
+.badge.nhso-authenticated { background: var(--ok-soft); color: var(--ok); }
+.badge.nhso-not_yet { background: var(--warn-soft); color: var(--warn); }
+.badge.nhso-unavailable { background: var(--surface-3); color: var(--muted); }
+.badge.nhso-bypassed { background: var(--lounge-soft); color: var(--lounge); }
+
 #problem, #signin-error {
     background: var(--danger-soft);
     border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);

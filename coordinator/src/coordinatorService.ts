@@ -19,6 +19,7 @@ import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { localDate, nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
+import { type IBypassDay, type INhsoChecker, type NhsoStatus, bypassCsv, dayOf } from './nhso.ts';
 import { DONE, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
 import {
@@ -230,6 +231,9 @@ export class CoordinatorService {
 
         /** The recorder bots that have fallen silent; their consultations are taken over (ADR 0016). Unset, none are. */
         lostRecorderBots?: (claimedBy: string[]) => { id: string; lastSeen: Date; }[];
+
+        /** Asks the NHSO API whether patients have authenticated (ADR 0020). Unset, until its spec is here, nothing does. */
+        nhso?: INhsoChecker;
         prosody: Prosody;
         recorderBot: IRecorderBot;
         retentionMs: number;
@@ -256,6 +260,16 @@ export class CoordinatorService {
     private _retention?: NodeJS.Timeout;
 
     private _takeover?: NodeJS.Timeout;
+
+    /** Today's NHSO bypass day as the store holds it, cancelled or not, read once a day (ADR 0020). */
+    private _bypass?: { day: string; record?: IBypassDay; };
+
+    /** What the NHSO API said of each open encounter: whether its patient has authenticated (ADR 0020). */
+    private readonly _nhsoChecked = new Map<string, boolean>();
+
+    /** Whether the NHSO API could not be asked, the last time it was. */
+    private _nhsoDown = false;
+    private _nhsoWatch?: NodeJS.Timeout;
 
     /**
      * What the HIS last said of each patient waiting without an encounter, and when, by room (ADR 0019). A room is
@@ -313,6 +327,15 @@ export class CoordinatorService {
      */
     get state(): IState {
         return this._state;
+    }
+
+    /**
+     * The deployment's IANA time zone, whose days the encounters, the reports and the NHSO bypass days are counted in.
+     *
+     * @returns {string}
+     */
+    get timeZone(): string {
+        return this._opts.timeZone;
     }
 
     /**
@@ -1436,6 +1459,182 @@ export class CoordinatorService {
     }
 
     /**
+     * Today's NHSO bypass day, if a coordinator declared one and it was not cancelled (ADR 0020). It ends at midnight in
+     * the deployment's time zone, as NHSO's rule does.
+     *
+     * @returns {IBypassDay|undefined}
+     */
+    bypassToday(): IBypassDay | undefined {
+        const today = dayOf(new Date(), this._opts.timeZone);
+
+        if (this._bypass?.day !== today) {
+            this._bypass = { day: today, record: this._opts.store.bypassDays(today, today)[0] };
+        }
+
+        return this._bypass.record?.cancelledAt ? undefined : this._bypass.record;
+    }
+
+    /**
+     * Declares today an NHSO bypass day: the NHSO API is down, and every visit of the day is claimed as authenticated.
+     * It covers the whole day, the encounters before it and after, not one patient. Audited, refusals too.
+     *
+     * @param {string} issuer - Who declares it: a coordinator's verified identity id, or `system`.
+     * @returns {Promise<Object>} The day, and whether this request declared it.
+     */
+    declareBypass(issuer: string): Promise<{ created: boolean; day: IBypassDay; }> {
+        return this._serial(async () => {
+            const held = this.bypassToday();
+            const at = new Date();
+
+            if (held) {
+                this._audit({ action: 'declare', at, day: held.day, issuer, kind: 'nhso_bypass', outcome: 'refused',
+                    reason: 'already_declared' });
+
+                return { created: false, day: held };
+            }
+
+            const day: IBypassDay = { day: dayOf(at, this._opts.timeZone), declaredAt: at, declaredBy: issuer };
+
+            this._opts.store.checkWritable();
+            this._opts.store.putBypassDay(day);
+            this._bypass = { day: day.day, record: day };
+            this._audit({ action: 'declare', at, day: day.day, issuer, kind: 'nhso_bypass', outcome: 'ok' });
+            log.info('NHSO bypass day declared', { day: day.day });
+
+            return { created: true, day };
+        });
+    }
+
+    /**
+     * Cancels today's NHSO bypass day, declared by mistake: only on the day itself. Audited, refusals too.
+     *
+     * @param {string} issuer - Who cancels it.
+     * @returns {Promise<Object>} The cancelled day, or why there was none to cancel.
+     */
+    cancelBypass(issuer: string): Promise<{ day?: IBypassDay; refused?: 'no_bypass_today'; }> {
+        return this._serial(async () => {
+            const held = this.bypassToday();
+            const at = new Date();
+
+            if (!held) {
+                this._audit({ action: 'cancel', at, day: dayOf(at, this._opts.timeZone), issuer, kind: 'nhso_bypass',
+                    outcome: 'refused', reason: 'no_bypass_today' });
+
+                return { refused: 'no_bypass_today' };
+            }
+
+            const day: IBypassDay = { ...held, cancelledAt: at, cancelledBy: issuer };
+
+            this._opts.store.checkWritable();
+            this._opts.store.putBypassDay(day);
+            this._bypass = { day: day.day, record: day };
+            this._audit({ action: 'cancel', at, day: day.day, issuer, kind: 'nhso_bypass', outcome: 'ok' });
+            log.info('NHSO bypass day cancelled', { day: day.day });
+
+            return { day };
+        });
+    }
+
+    /**
+     * The list of the encounters of the bypass days in a period, for the claims staff (ADR 0020): CSV, each encounter
+     * with its day and who declared it. An encounter is of the day it started on. Every export is audited.
+     *
+     * @param {string} from - The first day, as `YYYY-MM-DD`.
+     * @param {string} to - The last day.
+     * @param {string} issuer - Who asked.
+     * @returns {string}
+     */
+    bypassReport(from: string, to: string, issuer: string): string {
+        const days = new Map(this._opts.store.bypassDays(from, to).filter(d => !d.cancelledAt).map(d => [ d.day, d ]));
+        const encounters = this._state.encounters
+            .map(e => ({ day: days.get(dayOf(e.startedAt, this._opts.timeZone)), e }))
+            .filter((x): x is { day: IBypassDay; e: IEncounter; } => Boolean(x.day))
+            .sort((a, b) => a.day.day.localeCompare(b.day.day) || a.e.startedAt.getTime() - b.e.startedAt.getTime())
+            .map(({ day, e }) => ({
+                clinic: e.clinic, day, encounterId: e.id, hn: e.hn, startedAt: e.startedAt, visitNumber: e.visitNumber
+            }));
+
+        this._audit({ at: new Date(), count: encounters.length, day: from, issuer, kind: 'nhso_bypass_export',
+            lastDay: to, outcome: 'ok' });
+
+        return bypassCsv(encounters, this._opts.timeZone);
+    }
+
+    /**
+     * The NHSO authentication of each open encounter, for the coordinator's screen (ADR 0020): `authenticated` once the
+     * API said so, else `bypassed` on a bypass day, else `unavailable` while the API cannot be asked (or there is none,
+     * or it was not asked yet), else `not_yet`. It never holds an encounter up.
+     *
+     * @returns {Record<string, NhsoStatus>} By encounter id.
+     */
+    nhsoStatuses(): Record<string, NhsoStatus> {
+        const bypassed = Boolean(this.bypassToday());
+        const status = (id: string): NhsoStatus => {
+            const known = this._nhsoChecked.get(id);
+
+            if (known) {
+                return 'authenticated';
+            }
+            if (bypassed) {
+                return 'bypassed';
+            }
+
+            return !this._opts.nhso || this._nhsoDown || known === undefined ? 'unavailable' : 'not_yet';
+        };
+
+        return Object.fromEntries(this._state.encounters.filter(e => e.stage !== 'done').map(e => [ e.id, status(e.id) ]));
+    }
+
+    /**
+     * Asks the NHSO API about each open encounter whose patient has not authenticated yet (ADR 0020). It stops at the
+     * first that cannot be asked, and the statuses say `unavailable` until the API answers again.
+     *
+     * @returns {Promise<void>}
+     */
+    async checkNhso(): Promise<void> {
+        const checker = this._opts.nhso;
+
+        if (!checker) {
+            return;
+        }
+
+        const open = this._state.encounters.filter(e => e.stage !== 'done');
+        const ids = new Set(open.map(e => e.id));
+
+        for (const id of this._nhsoChecked.keys()) {
+            if (!ids.has(id)) {
+                this._nhsoChecked.delete(id);
+            }
+        }
+        for (const e of open.filter(o => !this._nhsoChecked.get(o.id))) {
+            try {
+                this._nhsoChecked.set(e.id, await checker.authenticated({
+                    day: dayOf(e.startedAt, this._opts.timeZone), hn: e.hn, visitNumber: e.visitNumber
+                }));
+            } catch (error) {
+                if (!this._nhsoDown) {
+                    log.warn('the NHSO API cannot be asked', { error: (error as Error).name });
+                }
+                this._nhsoDown = true;
+
+                return;
+            }
+        }
+        this._nhsoDown = false;
+    }
+
+    /**
+     * Asks the NHSO API now and then, once a checker is configured (ADR 0020).
+     *
+     * @param {number} [everyMs] - How often.
+     * @returns {void}
+     */
+    startNhso(everyMs = 30_000): void {
+        this._nhsoWatch = setInterval(() => void this.checkNhso(), everyMs);
+        this._nhsoWatch.unref();
+    }
+
+    /**
      * The queues of the stages: the open encounters in each, the longest-waiting first.
      *
      * @param {IRoom[]} [rooms] - The rooms now; with them, an encounter whose room holds a station's staff names the
@@ -1851,6 +2050,7 @@ export class CoordinatorService {
         clearInterval(this._retention);
         clearInterval(this._takeover);
         clearInterval(this._appointmentWatch);
+        clearInterval(this._nhsoWatch);
         clearTimeout(this._midnight);
         for (const timer of this._timers.values()) {
             clearTimeout(timer);

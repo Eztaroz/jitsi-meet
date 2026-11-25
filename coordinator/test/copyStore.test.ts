@@ -52,11 +52,16 @@ function fill(store: IStore): void {
         aspects: { care: 5 }, comment: 'ok', encounterId: 'e1', hn: 'A', hnSource: 'known', id: 's-1', rating: 5, room: 'own_room',
         stage: 'examination', submittedAt: T0, tags: [ 'kind' ]
     });
+    store.putBypassDay({ day: '2030-01-01', declaredAt: T0, declaredBy: 'coordinator-1' });
+    store.putBypassDay({
+        cancelledAt: new Date(T0.getTime() + 60_000), cancelledBy: 'coordinator-1', day: '2030-01-02', declaredAt: T0,
+        declaredBy: 'coordinator-1'
+    });
 }
 
 for (const backend of databases) {
     describe(`copying a deployment's SQLite file into ${backend.name}`, () => {
-        it('moves every encounter, move, audit entry, survey and consultation', async () => {
+        it('moves every encounter, move, audit entry, survey, consultation and NHSO bypass day', async () => {
             const [ source, target ] = [ (await databases[0].fresh())(), (await backend.fresh())() ];
 
             fill(source);
@@ -74,7 +79,8 @@ for (const backend of databases) {
             assert.deepEqual(target.allConsultations().find(c => c.id === 'c3')?.endedAt, new Date(T0.getTime() + 60_000));
             assert.deepEqual(target.patientRooms(), { p1: 'r1' });
             assert.deepEqual(target.staffStations(), { s1: 'intake' });
-            assert.deepEqual(counts, { audit: 1200, consultations: 3, encounters: 2, moves: 1, surveys: 1 });
+            assert.deepEqual(target.bypassDays('0000-01-01', '9999-12-31'), source.bypassDays('0000-01-01', '9999-12-31'));
+            assert.deepEqual(counts, { audit: 1200, bypassDays: 2, consultations: 3, encounters: 2, moves: 1, surveys: 1 });
         });
 
         it('refuses a database that already holds something, and changes nothing', async () => {
