@@ -107,7 +107,7 @@ A patient's booking with a doctor at a clinic on a day, in the HIS. With the HN,
 _Avoid_: Booking, slot
 
 **Center**:
-A part of the hospital with its own staff, stations and coordinator, holding several clinics.
+A part of the hospital with its own staff, stations and coordinators, holding several clinics.
 _Avoid_: Department, unit, site
 
 **Clinic**:
@@ -185,7 +185,7 @@ _Avoid_: Feedback, review, rating
 ### Moves
 
 **Coordinator**:
-The hospital person who decides, from one central place, which room each participant should be in.
+The hospital person who, from one central place, watches a center's encounters and steers them: changes their stage, sets their doctor, sends questionnaires, and decides which room each participant should be in. A center may have several.
 _Avoid_: Admin, dispatcher, operator
 
 **Move**:
