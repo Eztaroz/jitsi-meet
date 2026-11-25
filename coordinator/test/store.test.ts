@@ -101,6 +101,23 @@ for (const backend of databases) {
         });
     });
 
+    describe(`an encounter that started from an appointment (${backend.name})`, () => {
+        it('keeps its time of day across a restart, and none for one without', async () => {
+            const open = await fresh();
+            const timed = step(initialState(), { appointmentTime: '09:30', at: T0, hn: 'A', type: 'start_encounter' });
+            const both = step(timed.state, { at: new Date(T0.getTime() + 500), hn: 'B', type: 'start_encounter' });
+            const store = open();
+
+            store.apply(both.state.encounters.map(encounter => ({ encounter, kind: 'encounter' as const })));
+            store.close();
+
+            const loaded = open().load().encounters;
+
+            assert.deepEqual(loaded, both.state.encounters);
+            assert.deepEqual(loaded.map(e => e.appointmentTime), [ '09:30', undefined ]);
+        });
+    });
+
     describe(`writing what changed (${backend.name})`, () => {
         it('writes one encounter and leaves the others as they were', async () => {
             const open = await fresh();
@@ -442,6 +459,33 @@ describe('the MariaDB schema', { skip: !testMariaDb() && 'COORDINATOR_TEST_MARIA
             assert.deepEqual(applyMigrations(client, [ ...MIGRATIONS, next ]), []);
         } finally {
             client.close();
+        }
+    });
+
+    it('brings a database made before appointment times up to date, keeping its encounters', async () => {
+        await wipeMariaDb(config);
+
+        const client = new MariaDbClient(config);
+
+        try {
+            applyMigrations(client, MIGRATIONS.filter(m => m.id < 4));
+            client.query('INSERT INTO encounters (id, hn, stage, started_at) VALUES (?, ?, ?, ?)',
+                [ 'e1', 'A', 'waiting', T0.toISOString() ]);
+        } finally {
+            client.close();
+        }
+
+        const store = new MariaDbStore(config);
+
+        try {
+            const [ before ] = store.load().encounters;
+
+            assert.deepEqual(store.migrationsApplied, MIGRATIONS.filter(m => m.id >= 4).map(m => m.id));
+            assert.equal(before.appointmentTime, undefined);
+            store.apply([ { encounter: { ...before, appointmentTime: '09:30' }, kind: 'encounter' } ]);
+            assert.equal(store.load().encounters[0].appointmentTime, '09:30');
+        } finally {
+            store.close();
         }
     });
 

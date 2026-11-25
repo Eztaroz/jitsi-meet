@@ -13,6 +13,9 @@
     const WAIT_WARN_SECONDS = 5 * 60;
     const WAIT_LONG_SECONDS = 15 * 60;
 
+    /** How far past their appointment a patient is before their card says so. */
+    const APPOINTMENT_LATE_MINUTES = 30;
+
     /** How long a move has run before it is shown as stuck. */
     const MOVE_STUCK_SECONDS = 60;
 
@@ -166,6 +169,9 @@
 
     interface IQueueEntry {
 
+        /** The time of day (`HH:MM`) of the appointment the encounter started from, if it had one. */
+        appointmentTime?: string;
+
         /** The stations whose staff are in the patient's room now. */
         at?: string[];
 
@@ -259,6 +265,9 @@
 
     /** The state the last refresh read, which picking a clinic draws the board from again. */
     let latest: IState | undefined;
+
+    /** The service's time at that read, which lateness for an appointment is told by: the desk's clock may be wrong. */
+    let latestAt = Date.now();
 
     /** The encounter whose panel is open, if one is. */
     let selected: string | undefined;
@@ -443,6 +452,19 @@
         return date.toLocaleTimeString('th-TH', { hour: '2-digit',
             minute: '2-digit',
             second: '2-digit' });
+    }
+
+    /**
+     * How far past their appointment a patient was at the last read. The appointment is today's, at the time of day
+     * the HIS has, in the time zone of the desk, which is the hospital's.
+     *
+     * @param {string} appointmentTime - `HH:MM`.
+     * @returns {number} In whole minutes; negative before the appointment.
+     */
+    function minutesPast(appointmentTime: string): number {
+        const [ hours, minutes ] = appointmentTime.split(':').map(Number);
+
+        return Math.floor((latestAt - new Date(latestAt).setHours(hours, minutes, 0, 0)) / 60000);
     }
 
     /**
@@ -1180,7 +1202,8 @@
         go.title = next ? `ส่งต่อไป ${next}` : 'เสร็จสิ้น';
         go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next}` : `${who} เสร็จสิ้น`);
         go.querySelector('use')?.setAttribute('href', next ? '#i-arrow' : '#i-check');
-        drawBadges(find('.card-badges'), entry, nhso);
+        // Lateness matters only while the patient has not got past the doctor.
+        drawBadges(find('.card-badges'), entry, index <= STAGES.findIndex(stage => stage[0] === 'examination'), nhso);
     }
 
     /**
@@ -1188,10 +1211,11 @@
      *
      * @param {HTMLElement} row - Where they go.
      * @param {Object} entry - The encounter's entry in its queue.
+     * @param {boolean} beforeDoctorDone - Whether its stage is examination or one before it.
      * @param {string|undefined} nhso - Its NHSO authentication, if it has one.
      * @returns {void}
      */
-    function drawBadges(row: HTMLElement, entry: IQueueEntry, nhso?: NhsoStatus): void {
+    function drawBadges(row: HTMLElement, entry: IQueueEntry, beforeDoctorDone: boolean, nhso?: NhsoStatus): void {
         const badges: { hint?: string; icon: string; kind: string; text: string; }[] = [];
 
         // With one clinic picked, every card is that clinic's: the tag would say nothing.
@@ -1213,6 +1237,12 @@
         }
         if (PLAYING_VIDEOS.has(entry.encounterId)) {
             badges.push({ icon: 'play', kind: 'video', text: 'กำลังเล่นวิดีโอ' });
+        }
+
+        const late = entry.appointmentTime ? minutesPast(entry.appointmentTime) : 0;
+
+        if (beforeDoctorDone && late >= APPOINTMENT_LATE_MINUTES) {
+            badges.push({ icon: 'calendar', kind: 'late', text: `เลยนัด ${entry.appointmentTime} มา ${late} นาที` });
         }
 
         // A questionnaire closed without an answer can no longer be answered: it counts as neither.
@@ -1506,6 +1536,15 @@
 
         if (entry.clinic) {
             facts.push({ icon: 'clipboard', key: 'clinic', label: 'คลินิก', value: CLINIC_NAMES[entry.clinic] ?? entry.clinic });
+        }
+        if (entry.appointmentTime) {
+            const late = minutesPast(entry.appointmentTime);
+
+            facts.push({ icon: 'calendar',
+                key: 'appointment',
+                label: 'นัด',
+                tone: late >= APPOINTMENT_LATE_MINUTES ? 'late' : undefined,
+                value: `${entry.appointmentTime} · ${late > 0 ? `เลยมา ${late}` : `อีก ${-late}`} นาที` });
         }
 
         if (!changed(list, facts)) {
@@ -2458,6 +2497,7 @@
                     drawTeams(state.teams);
                     drawLegend(state.queues);
                     latest = state;
+                    latestAt = now;
                     drawBoard(state);
                     drawDetail();
 

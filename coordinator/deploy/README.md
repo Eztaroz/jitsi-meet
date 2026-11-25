@@ -88,6 +88,7 @@ The stages an encounter goes through come from the configuration, not the code (
 
 With `COORDINATOR_HIS_HOST` set, the service looks every five seconds for patients waiting in their own room without an open encounter, and asks the HIS for each one's appointments today, in `COORDINATOR_TIME_ZONE` (ADR 0019). It reads only `DATE_AP`, `TIME_AP`, `CODE_AP` and `C_DOCT` from `Appoint`, by `HN` and `DATE_AP`. It never reads the patient's name and never writes. The appointment that comes first by `TIME_AP` and has not had its encounter gets one, started in `waiting` as `POST /encounters` would start it:
 
+- The encounter keeps the appointment's `TIME_AP`, as `HH:MM` (of a range, its start; nothing when the text is not a time), and the coordinator's screen tells from it how late the patient is: on the card from 30 minutes past, up to examination. The HIS is not asked again.
 - `visitNumber` is the appointment's key, `DATE_AP/CODE_AP/C_DOCT`, such as `2026-11-25/GYN/205`. With the HN it is the row's primary key. The HIS has no VN.
 - `clinic` is the clinic whose `hisCodes` have `CODE_AP`. Without one, the encounter has no clinic and follows the center's pathway.
 - A patient with two appointments today gets the second encounter once the first is done and they wait in the room again.

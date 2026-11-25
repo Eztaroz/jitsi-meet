@@ -14,6 +14,9 @@ export type Stage = string;
 
 export interface IEncounter {
 
+    /** The time of day (`HH:MM`) of the HIS appointment the encounter started from, if it had one (ADR 0019). */
+    appointmentTime?: string;
+
     /** The center the encounter belongs to. */
     center?: string;
 
@@ -137,6 +140,7 @@ export interface IRoomView {
 
 export type RulesEvent = { at: Date; } & (
     | {
+        appointmentTime?: string;
         center?: string;
         clinic?: string;
         hn: string;
@@ -241,6 +245,7 @@ function startEncounter(state: IState, event: RulesEvent & { type: 'start_encoun
         stage: WAITING,
         stageStartedAt: at,
         startedAt: at,
+        ...event.appointmentTime === undefined ? {} : { appointmentTime: event.appointmentTime },
         ...event.center === undefined ? {} : { center: event.center },
         ...event.clinic === undefined ? {} : { clinic: event.clinic },
         ...event.visitNumber === undefined ? {} : { visitNumber: event.visitNumber }

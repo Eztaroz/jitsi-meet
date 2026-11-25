@@ -43,6 +43,7 @@ function screenEntry<T extends { encounterId: string; }>(service: CoordinatorSer
 
     return {
         ...entry,
+        appointmentTime: encounter?.appointmentTime,
         clinic: encounter?.clinic,
         hn: encounter?.hn,
 

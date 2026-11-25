@@ -272,6 +272,16 @@ describe('the HIS appointments lookup', () => {
         ]);
     });
 
+    it('reads the time of day as HH:MM, and none from what is not a time', () => {
+        const timeOf = (time: unknown) =>
+            appointmentsFrom([ { c_doct: 1, code_ap: 'MED', date_ap: '2026-11-25', time_ap: time } ])[0].time;
+
+        assert.deepEqual([ '09:30', ' 9:05 ', '13.00', '08:00-12:00', '09:00:00' ].map(timeOf),
+            [ '09:30', '09:05', '13:00', '08:00', '09:00' ]);
+        assert.deepEqual([ '', '   ', 'เช้า', '0900', '24:00', '09:60', null ].map(timeOf),
+            Array.from({ length: 7 }, () => undefined));
+    });
+
     it('keys an appointment by day, clinic and doctor, with no HN in it', () => {
         assert.equal(appointmentKey({ clinicCode: 'GYN', date: '2026-11-25', doctorCode: 205 }), '2026-11-25/GYN/205');
     });
