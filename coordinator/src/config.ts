@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 
+import type { IHisConfig } from './his.ts';
 import type { IMariaDbConfig } from './mariadbStore.ts';
 import { DONE, EXAMINATION, WAITING, pathwaysOf } from './pathways.ts';
 import { loadQuestionnaires } from './questionnaires.ts';
@@ -36,6 +37,12 @@ export interface IConfig {
 
     /** The MariaDB that keeps the state, when `COORDINATOR_MARIADB_HOST` is set (ADR 0015). Unset, SQLite in `dataDir` does. */
     database?: IMariaDbConfig;
+
+    /**
+     * The hospital's system's database, read for each patient's appointments today when `COORDINATOR_HIS_HOST` is set
+     * (ADR 0019). Unset, every encounter is started by a coordinator or the hospital's system.
+     */
+    his?: IHisConfig;
 
     /** The center, its stations and each station's lounge (`COORDINATOR_ROOMS_FILE`). */
     layout: ILayout;
@@ -135,6 +142,22 @@ export function mariaDbConfig(env: NodeJS.ProcessEnv): IMariaDbConfig {
 }
 
 /**
+ * Reads where the HIS database is (ADR 0019). Its user needs `SELECT` on the appointments table only.
+ *
+ * @param {NodeJS.ProcessEnv} env - The environment.
+ * @returns {IHisConfig}
+ */
+export function hisConfig(env: NodeJS.ProcessEnv): IHisConfig {
+    return {
+        database: required(env, 'COORDINATOR_HIS_DATABASE'),
+        host: required(env, 'COORDINATOR_HIS_HOST'),
+        password: required(env, 'COORDINATOR_HIS_PASSWORD'),
+        port: Number(env.COORDINATOR_HIS_PORT ?? 3306),
+        user: required(env, 'COORDINATOR_HIS_USER')
+    };
+}
+
+/**
  * Loads the settings.
  *
  * @param {NodeJS.ProcessEnv} env - The environment.
@@ -180,6 +203,7 @@ function buildConfig(env: NodeJS.ProcessEnv): IConfig {
             }
             : undefined,
         timeZone: loadTimeZone(env.COORDINATOR_TIME_ZONE?.trim()),
+        ...env.COORDINATOR_HIS_HOST?.trim() ? { his: hisConfig(env) } : {},
         layout: loadLayout(env.COORDINATOR_ROOMS_FILE?.trim()),
         prosodyUrl: required(env, 'COORDINATOR_PROSODY_URL').replace(/\/+$/u, ''),
         recorderBots: workerSecretsFile ? [] : workers.recorderBots ?? [ {
@@ -500,6 +524,9 @@ export function loadLayout(file: string | undefined): ILayout {
     const lounges: string[] = [];
     const ids: string[] = [];
 
+    // A HIS clinic code says which clinic an appointment's encounter is at, so it may name one clinic only (ADR 0019).
+    const hisCodes = new Set<string>();
+
     const centers = (raw.centers as IRawCenter[]).map(center => {
         if (!text(center.id)) {
             throw fail('every center needs an "id"');
@@ -518,6 +545,16 @@ export function loadLayout(file: string | undefined): ILayout {
         for (const clinic of center.clinics ?? []) {
             if (!text(clinic.id)) {
                 throw fail('every clinic needs an "id"');
+            }
+            if (clinic.hisCodes !== undefined
+                    && (!Array.isArray(clinic.hisCodes) || !clinic.hisCodes.every(code => text(code)))) {
+                throw fail(`clinic "${clinic.id}": "hisCodes" must be a list of HIS clinic codes`);
+            }
+            for (const code of clinic.hisCodes ?? []) {
+                if (hisCodes.has(code)) {
+                    throw fail(`the HIS clinic code "${code}" is in two clinics`);
+                }
+                hisCodes.add(code);
             }
         }
         for (const [ what, id ] of [ [ `center "${center.id}"`, center.pathway ],

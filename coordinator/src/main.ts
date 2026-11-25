@@ -6,6 +6,7 @@ import type { Server } from 'node:http';
 import { createApi } from './api.ts';
 import { loadConfig } from './config.ts';
 import { CoordinatorService } from './coordinatorService.ts';
+import { HisAppointments } from './his.ts';
 import { log } from './log.ts';
 import { openStore } from './openStore.ts';
 import { Prosody } from './prosody.ts';
@@ -69,6 +70,7 @@ const waitForWorkers = { waitForWorkersUntil: registry ? Date.now() + HEARTBEAT_
 
 try {
     service = new CoordinatorService({
+        appointments: config.his && new HisAppointments(config.his),
         auditKey: config.auditKey,
         layout: config.layout,
         lostRecorderBots: registry && (claimed => registry.lostRecorderBots(claimed)),
@@ -102,6 +104,10 @@ service.startDayEnds();
 service.startRetention();
 if (registry) {
     service.startTakeover();
+}
+if (config.his) {
+    // Only the active instance reads the HIS: a standby has no service (ADR 0019).
+    service.startAppointments();
 }
 const issuer = config.screen && {
     acceptedAudiences: config.screen.acceptedAudiences,

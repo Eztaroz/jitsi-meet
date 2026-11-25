@@ -35,6 +35,13 @@
     /** The waiting videos a patient's video can be chosen from. */
     let VIDEO_CATALOGUE: { id: string; title: string; }[] = [];
 
+    /** What a patient's room without an encounter says of the HIS's appointments today (ADR 0019): label and hint. */
+    const APPOINTMENT_BADGES: Record<'all_seen' | 'none' | 'unreadable', [string, string]> = {
+        all_seen: [ 'นัดวันนี้ครบแล้ว', 'ทุกนัดของวันนี้มี encounter แล้ว กด "เริ่ม encounter" ถ้าจะรับเพิ่ม' ],
+        none: [ 'ไม่มีนัดวันนี้', 'HIS ไม่มีนัดของ HN นี้วันนี้ กด "เริ่ม encounter" ถ้าจะรับ' ],
+        unreadable: [ 'อ่านนัดจาก HIS ไม่ได้', 'จะลองอ่านใหม่ในหนึ่งนาที หรือกด "เริ่ม encounter" เอง' ]
+    };
+
     /** The kinds of room, in the order they are shown, with their name and icon. */
     const KINDS: [string, string, string][] = [
         [ 'patient', 'ห้องผู้ป่วย', 'door' ],
@@ -87,6 +94,9 @@
     }
 
     interface IRoom {
+
+        /** For a patient's room without an encounter, what the HIS said of their appointments today (ADR 0019). */
+        appointment?: 'all_seen' | 'none' | 'unreadable';
         encounterId?: string;
         kind: string;
         name: string;
@@ -1004,6 +1014,12 @@
         }
         if (unstarted) {
             badges.appendChild(el('span', 'ยังไม่มี encounter', 'badge warn'));
+        }
+        if (unstarted && room.appointment) {
+            const badge = el('span', APPOINTMENT_BADGES[room.appointment][0], 'badge warn appointment');
+
+            badge.title = APPOINTMENT_BADGES[room.appointment][1];
+            badges.appendChild(badge);
         }
         if (people.length !== room.occupants.length) {
             badges.appendChild(el('span', 'กำลังบันทึก', 'badge rec'));
