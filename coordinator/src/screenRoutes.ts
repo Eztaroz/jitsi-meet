@@ -10,6 +10,7 @@ import { HttpError, send } from './http.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { describeSent } from './questionnaires.ts';
 import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
+import { todayFigures } from './today.ts';
 
 /** The files of the coordinator screen, read once. */
 const SCREEN_FILES: Record<string, { body: Buffer; type: string; }> = {};
@@ -79,7 +80,7 @@ export function createScreenRoutes({ act, screen, service }: {
      * @returns {Promise<void>}
      */
     return async function handleScreen(req: IncomingMessage, res: ServerResponse, token: string | undefined) {
-        const { pathname } = new URL(req.url ?? '/', 'http://localhost');
+        const { pathname, searchParams } = new URL(req.url ?? '/', 'http://localhost');
 
         if (!screen) {
             throw new HttpError(404, 'not found');
@@ -165,6 +166,16 @@ export function createScreenRoutes({ act, screen, service }: {
                     stages: service.stages().map(({ id, name }) => ({ id, name })),
                     teams: service.teams(rooms)
                 });
+
+                return;
+            }
+            if (route === '/today' && req.method === 'GET') {
+                send(res, 200, todayFigures(service.state.encounters, {
+                    clinic: searchParams.get('clinic') || undefined,
+                    now: new Date(),
+                    stages: service.stages().map(s => s.id),
+                    timeZone: service.timeZone
+                }));
 
                 return;
             }
