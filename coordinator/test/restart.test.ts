@@ -65,7 +65,7 @@ describe('the coordinator service across a restart', () => {
 
         return new CoordinatorService({
             auditKey: 'audit-key',
-            layout: { centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ] },
+            layout: { centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ] } ] },
             prosody: {
                 rooms: async () => ({ rooms }),
                 sendMove: async ({ endpointId, room }: { endpointId: string; room: string; }) => {

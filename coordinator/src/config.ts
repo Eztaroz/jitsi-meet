@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import type { IMariaDbConfig } from './mariadbStore.ts';
-import { DONE, WAITING, pathwaysOf } from './pathways.ts';
+import { DONE, EXAMINATION, WAITING, pathwaysOf } from './pathways.ts';
 import { loadQuestionnaires } from './questionnaires.ts';
 import {
     type IClinic,
@@ -11,7 +11,6 @@ import {
     type IRoleMarkers,
     type IStation,
     type IVideo,
-    type StationStage,
     parseRoleMarker,
     sameRoom
 } from './rooms.ts';
@@ -423,9 +422,55 @@ function loadPathways(raw: unknown, fail: (why: string) => Error): IPathway[] | 
     });
 }
 
+interface IRawStation {
+    id?: unknown;
+    lounge?: unknown;
+    stage?: unknown;
+    stages?: unknown;
+}
+
+/**
+ * Reads the stages a station of the rooms file serves: its `stage`, or its `stages` (ADR 0018).
+ *
+ * @param {IRawStation} station - The station as the file writes it.
+ * @param {string[]} servable - The stages of the center's pathways a station can serve: all but waiting and done.
+ * @param {Function} fail - Makes the error, from the reason.
+ * @returns {string[]} At least one stage.
+ * @throws {Error} When the station names no stage, both forms, a stage twice, a stage it cannot serve, or examination
+ * with another stage.
+ */
+function stationStages(station: IRawStation, servable: string[], fail: (why: string) => Error): string[] {
+    const choices = `stages of the center's pathways other than "${WAITING}" and "${DONE}" (${servable.join(', ')})`;
+
+    if (station.stage !== undefined && station.stages !== undefined) {
+        throw fail('names both "stage" and "stages": name one stage with "stage", or several with "stages"');
+    }
+
+    const stages = station.stages === undefined ? [ station.stage ] : station.stages;
+
+    if (!Array.isArray(stages) || !stages.length) {
+        throw fail(`needs a "stage", or "stages" as a list of at least one: the ${choices}`);
+    }
+    for (const stage of stages) {
+        if (typeof stage !== 'string' || !servable.includes(stage)) {
+            throw fail(`has the stage ${JSON.stringify(stage)}, which is not one of the ${choices}`);
+        }
+    }
+    if (new Set(stages).size !== stages.length) {
+        throw fail('names a stage twice in "stages"');
+    }
+    if (stages.length > 1 && stages.includes(EXAMINATION)) {
+        throw fail(`combines "${EXAMINATION}" with other stages: its queue is per doctor, so a station serves it alone `
+            + '(ADR 0018)');
+    }
+
+    return stages as string[];
+}
+
 /**
  * Reads the centers, their stations and each station's lounge from a JSON file (ADR 0011):
- * `{ "centers": [ { "id", "stations": [ { "id", "stage", "lounge" } ] } ] }`. There is one center for now.
+ * `{ "centers": [ { "id", "stations": [ { "id", "stage", "lounge" } ] } ] }`. There is one center for now. A station
+ * that serves several stages names `"stages": [ ... ]` instead of `"stage"` (ADR 0018).
  *
  * @param {string|undefined} file - The file; unset for none.
  * @returns {ILayout}
@@ -482,16 +527,17 @@ export function loadLayout(file: string | undefined): ILayout {
             }
         }
 
-        const stations = (center.stations as { id?: unknown; lounge?: unknown; stage?: unknown; }[]).map(s => {
+        const servable = [ ...known ].filter(k => k !== WAITING && k !== DONE);
+        const stations = (center.stations as IRawStation[]).map(s => {
             if (!text(s.id) || !text(s.lounge)) {
                 throw fail('every station needs an "id" and a "lounge"');
             }
-            if (typeof s.stage !== 'string' || s.stage === WAITING || s.stage === DONE || !known.has(s.stage)) {
-                throw fail(`station "${s.id}" needs a "stage": the id of a stage of the center's pathways other than `
-                    + `"${WAITING}" and "${DONE}" (${[ ...known ].filter(k => k !== WAITING && k !== DONE).join(', ')})`);
-            }
 
-            const station: IStation = { id: s.id as string, lounge: s.lounge as string, stage: s.stage as StationStage };
+            const station: IStation = {
+                id: s.id as string,
+                lounge: s.lounge as string,
+                stages: stationStages(s, servable, why => fail(`station "${s.id}" ${why}`))
+            };
 
             if (ids.includes(station.id)) {
                 throw fail(`two stations are "${station.id}"`);

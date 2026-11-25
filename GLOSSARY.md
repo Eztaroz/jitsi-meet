@@ -159,7 +159,7 @@ The patients waiting for one stage, longest-waiting first; in examination, the p
 _Avoid_: Waiting list, backlog, virtual waiting room
 
 **Station**:
-A center's team of staff for one stage, who serve that stage's patients one at a time by joining each patient's own room. It is not a room; its staff wait in its lounge.
+A center's team of staff for one stage, or for several (such as the nurses before and after the doctor), who serve those stages' patients one at a time by joining each patient's own room. It is not a room; its staff wait in its lounge.
 _Avoid_: Staff room, desk, booth, service point
 
 **Lounge**:

@@ -35,7 +35,7 @@ describe('staff change a stage, through the coordinator service', () => {
         service = new CoordinatorService({
             auditKey: 'audit-key',
             layout: {
-                centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ],
+                centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ] } ],
                 questionnaires: [ {
                     id: 'lifestyle',
                     questions: [ { choices: [ 'Yes', 'No' ], text: 'Do you smoke?' } ],

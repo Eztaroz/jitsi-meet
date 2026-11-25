@@ -133,7 +133,9 @@ export interface IRoom {
         station?: string;
     }[];
     open: boolean;
-    stage?: string;
+
+    /** For a lounge, its station's stages (ADR 0018). */
+    stages?: string[];
 
     /** For a lounge, its station. */
     station?: string;

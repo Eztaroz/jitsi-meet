@@ -92,7 +92,7 @@
         name: string;
         occupants: IOccupant[];
         open: boolean;
-        stage?: string;
+        stages?: string[];
 
         /** The room's consultation is not being recorded: its recorder bot was lost and no other had room. */
         unrecorded?: boolean;
@@ -165,7 +165,7 @@
         free: ITeamMember[];
         id: string;
         lounge: string;
-        stage: string;
+        stages: string[];
     }
 
     /** What the coordinator has chosen in the lists and typed in the fields, kept across the redraws. */
@@ -455,6 +455,16 @@
     }
 
     /**
+     * Names the stages a station serves, as the screen shows them.
+     *
+     * @param {string[]} stages - The stage ids.
+     * @returns {string}
+     */
+    function stageNames(stages: string[]): string {
+        return stages.map(id => STAGE_NAMES[id] ?? id).join(' · ');
+    }
+
+    /**
      * Draws each station as a team: its free staff, in its lounge, and its busy staff, each with the patient they are with.
      *
      * @param {Object[]} teams - The teams.
@@ -468,7 +478,7 @@
         teams.forEach(team => {
             const card = el('div', undefined, 'card team');
             const title = el('h3');
-            const stage = STAGE_NAMES[team.stage] ?? team.stage;
+            const stage = stageNames(team.stages);
             const member = (m: ITeamMember, free: boolean, hn?: string) => {
                 const line = el('div', undefined, 'team-member');
                 const who = m.name || 'ไม่ระบุชื่อ';
@@ -784,7 +794,7 @@
      */
     function kindName(room: IRoom): string {
         if (room.kind === 'lounge') {
-            const stage = STAGE_NAMES[room.stage ?? ''];
+            const stage = stageNames(room.stages ?? []);
 
             return stage ? `ห้องพักเจ้าหน้าที่: ${stage}` : 'ห้องพักเจ้าหน้าที่';
         }
@@ -1140,7 +1150,7 @@
             group.label = KINDS.find(k => k[0] === kind)?.[1] ?? kind;
             rooms.filter(other => other.kind === kind && other.name !== room.name)
                 .forEach(other => {
-                    const notes = [ other.kind === 'lounge' ? STAGE_NAMES[other.stage ?? ''] : '' ].filter(Boolean);
+                    const notes = [ other.kind === 'lounge' ? stageNames(other.stages ?? []) : '' ].filter(Boolean);
                     const option = el('option',
                         other.name + (notes.length ? ` — ${notes.join(' · ')}` : '') + (other.open ? '' : ' (ปิดอยู่)'));
 

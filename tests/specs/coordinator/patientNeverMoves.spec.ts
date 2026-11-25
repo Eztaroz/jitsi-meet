@@ -94,7 +94,7 @@ describe('Coordinator: a patient is never moved', () => {
     it('names the station of the staff member in its lounge', async () => {
         const lounge = (await getRooms()).find(r => r.name === LOUNGE)!;
 
-        expect(lounge).toMatchObject({ kind: 'lounge', open: true, stage: 'intake', station: 'intake' });
+        expect(lounge).toMatchObject({ kind: 'lounge', open: true, stages: [ 'intake' ], station: 'intake' });
         expect(lounge.occupants.find(o => o.identity?.id === nurseIdentity.id)?.station).toBe('intake');
     });
 

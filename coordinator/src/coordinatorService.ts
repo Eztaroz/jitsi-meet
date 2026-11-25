@@ -18,7 +18,7 @@ import { signToken } from './jwt.ts';
 import { log } from './log.ts';
 import { nextMidnight } from './midnight.ts';
 import { MoveEffects } from './moveEffects.ts';
-import { DONE, EXAMINATION, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
+import { DONE, allStages, findPathway, resolvePathway, stageName, strandedStages } from './pathways.ts';
 import type { Prosody } from './prosody.ts';
 import {
     type IPatientQuestionnaire,
@@ -54,6 +54,7 @@ import {
     examinationQueues,
     learnStaffStations,
     queues,
+    stationQueue,
     step
 } from './rules.ts';
 import { type StoreChange, diffState } from './stateChanges.ts';
@@ -1538,8 +1539,9 @@ export class CoordinatorService {
 
     /**
      * The patients "next patient" could give a staff member of a station now, the longest-waiting first: those in the
-     * station's stage (in examination, the doctor's own queue) whose room is open, has no staff and is no pending move's
-     * destination. Calling the next patient takes the first; the lounge's queue count is all of them (#24).
+     * station's stages (in examination, the doctor's own queue) whose room is open, has no staff and is no pending
+     * move's destination (ADR 0018). Calling the next patient takes the first; the lounge's queue count is all of them
+     * (#24).
      *
      * @param {IStation} station - The staff member's station.
      * @param {string} staffId - The staff member's verified identity id.
@@ -1548,9 +1550,8 @@ export class CoordinatorService {
      * @returns {Object[]} Each patient's queue entry and room.
      */
     private _callable(station: IStation, staffId: string, rooms: IRoom[], at: Date): { entry: IQueueEntry; room: IRoom; }[] {
-        const entries = station.stage === EXAMINATION
-            ? examinationQueues(this._state, at).doctors[staffId] ?? []
-            : queues(this._state, at, allStages(this._opts.layout).map(s => s.id))[station.stage] ?? [];
+        const entries = stationQueue(this._state, at, { staffId, stages: station.stages },
+            allStages(this._opts.layout).map(s => s.id));
         const pending = new Set(this._state.moves.filter(m => ACTIVE_MOVE.has(m.state)).map(m => m.destination));
         const callable: { entry: IQueueEntry; room: IRoom; }[] = [];
 
@@ -1566,8 +1567,8 @@ export class CoordinatorService {
     }
 
     /**
-     * Moves a staff member in a station's lounge to the longest-waiting patient of the station's stage whose room has
-     * no staff (ADR 0012). In examination the staff member takes from their own doctor queue. A patient that another
+     * Moves a staff member in a station's lounge to the longest-waiting patient of the station's stages whose room has
+     * no staff (ADR 0012, ADR 0018). In examination the staff member takes from their own doctor queue. A patient that another
      * staff member is being moved to counts as having staff, so two staff never get the same patient. With nobody
      * waiting there is no move. Every request is audited with the staff member's identity.
      *

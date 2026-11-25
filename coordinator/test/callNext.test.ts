@@ -43,8 +43,9 @@ describe('staff call the next patient, through the coordinator service', () => {
                 centers: [ {
                     id: 'c1',
                     stations: [
-                        { id: 'intake', lounge: 'lounge-intake', stage: 'intake' },
-                        { id: 'examination', lounge: 'lounge-exam', stage: 'examination' }
+                        { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] },
+                        { id: 'examination', lounge: 'lounge-exam', stages: [ 'examination' ] },
+                        { id: 'nurse', lounge: 'lounge-nurse', stages: [ 'intake', 'aftercare' ] }
                     ]
                 } ]
             },
@@ -104,6 +105,22 @@ describe('staff call the next patient, through the coordinator service', () => {
         assert.equal(result.refused, undefined);
         assert.equal(result.moved, true);
         assert.deepEqual(sent.map(s => [ s.room, s.destination, s.endpointId ]), [ [ 'lounge-intake', 'hn-a', 'e-sam' ] ]);
+    });
+
+    it('takes the longest-waiting patient across all the stages of a station that serves several (ADR 0018)', async () => {
+        await enter('hn-a', 'aftercare');
+        await enter('hn-b', 'intake');
+        await enter('hn-c', 'examination');
+        await enter('hn-d', 'aftercare');
+        rooms = [
+            lounge('lounge-nurse', staffAt('s-1', 'e-sam'), staffAt('s-2', 'e-two')),
+            patientRoom('hn-d'), patientRoom('hn-c'), patientRoom('hn-b'), patientRoom('hn-a')
+        ];
+
+        await service.staffCallNext(SAM);
+        await service.staffCallNext({ id: 's-2' });
+
+        assert.deepEqual(sent.map(s => [ s.destination, s.endpointId ]), [ [ 'hn-a', 'e-sam' ], [ 'hn-b', 'e-two' ] ]);
     });
 
     it('skips a patient who already has staff with them', async () => {

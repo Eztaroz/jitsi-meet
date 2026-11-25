@@ -34,7 +34,43 @@ describe('the rooms file', () => {
             { id: 'aftercare', lounge: 'lounge-aftercare', stage: 'aftercare' }
         ];
 
-        assert.deepEqual(loadLayout(roomsFile(center(stations))), center(stations));
+        assert.deepEqual(loadLayout(roomsFile(center(stations))), center(stations.map(({ stage, ...s }) => ({
+            ...s, stages: [ stage ]
+        }))));
+    });
+
+    it('reads a station that serves several stages (ADR 0018)', () => {
+        const nurse = { id: 'nurse', lounge: 'lounge-nurse', stages: [ 'intake', 'aftercare' ] };
+
+        assert.deepEqual(loadLayout(roomsFile(center([ nurse ]))), center([ nurse ]));
+    });
+
+    it('lets two stations serve one stage, as before', () => {
+        const stations = [
+            { id: 'nurse', lounge: 'lounge-nurse', stages: [ 'intake', 'aftercare' ] },
+            { id: 'aftercare', lounge: 'lounge-aftercare', stages: [ 'aftercare' ] }
+        ];
+
+        assert.deepEqual(loadLayout(roomsFile(center(stations))).centers[0].stations, stations);
+    });
+
+    it('refuses examination with another stage in one station, and says why', () => {
+        assert.throws(() => loadLayout(roomsFile(center([
+            { id: 'x', lounge: 'l', stages: [ 'intake', 'examination' ] }
+        ]))), /station "x".*"examination".*per doctor/u);
+    });
+
+    it('refuses a station with both "stage" and "stages", an empty or repeated "stages", or an unknown stage in it', () => {
+        for (const station of [
+            { id: 'x', lounge: 'l', stage: 'intake', stages: [ 'aftercare' ] },
+            { id: 'x', lounge: 'l', stages: [] },
+            { id: 'x', lounge: 'l', stages: 'intake' },
+            { id: 'x', lounge: 'l', stages: [ 'intake', 'intake' ] },
+            { id: 'x', lounge: 'l', stages: [ 'intake', 'done' ] },
+            { id: 'x', lounge: 'l', stages: [ 'intake', 'nope' ] }
+        ]) {
+            assert.throws(() => loadLayout(roomsFile(center([ station ]))), /station "x"/u, JSON.stringify(station));
+        }
     });
 
     it('refuses the format of station rooms, and says why', () => {

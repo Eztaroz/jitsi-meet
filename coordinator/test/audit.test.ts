@@ -5,7 +5,7 @@ import { auditRef, moveEntry, stageEntry } from '../src/audit.ts';
 import type { IMove } from '../src/rules.ts';
 
 const layout = {
-    centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' as const } ] } ]
+    centers: [ { id: 'center-1', stations: [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ] } ]
 };
 const T = new Date('2030-01-01T08:00:00Z');
 

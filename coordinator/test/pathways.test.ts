@@ -101,7 +101,7 @@ describe('the pathways in the rooms file', () => {
     it('let a station serve any stage of a pathway but waiting and done', () => {
         const stations = [ { id: 'reg', lounge: 'lounge-reg', stage: 'registration' } ];
 
-        assert.equal(layoutOf({ stations }).centers[0].stations[0].stage, 'registration');
+        assert.deepEqual(layoutOf({ stations }).centers[0].stations[0].stages, [ 'registration' ]);
         assert.throws(() => layoutOf({ stations: [ { id: 'x', lounge: 'l', stage: 'billing-typo' } ] }), /stage/u);
     });
 });

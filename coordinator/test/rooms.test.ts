@@ -80,8 +80,8 @@ describe('labelling the rooms from the configured layout', () => {
         centers: [ {
             id: 'center-1',
             stations: [
-                { id: 'intake', lounge: 'lounge-intake', stage: 'intake' as const },
-                { id: 'aftercare', lounge: 'Lounge-Aftercare', stage: 'aftercare' as const }
+                { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] },
+                { id: 'aftercare', lounge: 'Lounge-Aftercare', stages: [ 'aftercare' ] }
             ]
         } ]
     };
@@ -101,10 +101,10 @@ describe('labelling the rooms from the configured layout', () => {
     it('labels a station\'s lounge with its station and stage, and any other room as a patient\'s', () => {
         const rooms = describeRooms(raw, roles, layout);
 
-        assert.deepEqual(rooms.map(r => [ r.name, r.kind, r.station, r.stage ]), [
-            [ 'lounge-intake', 'lounge', 'intake', 'intake' ],
+        assert.deepEqual(rooms.map(r => [ r.name, r.kind, r.station, r.stages ]), [
+            [ 'lounge-intake', 'lounge', 'intake', [ 'intake' ] ],
             [ 'hn/a1', 'patient', undefined, undefined ],
-            [ 'Lounge-Aftercare', 'lounge', 'aftercare', 'aftercare' ]
+            [ 'Lounge-Aftercare', 'lounge', 'aftercare', [ 'aftercare' ] ]
         ]);
     });
 

@@ -41,8 +41,8 @@ describe('stations as teams, through the coordinator service', () => {
                 centers: [ {
                     id: 'c1',
                     stations: [
-                        { id: 'intake', lounge: 'lounge-intake', stage: 'intake' },
-                        { id: 'exam', lounge: 'lounge-exam', stage: 'examination' }
+                        { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] },
+                        { id: 'exam', lounge: 'lounge-exam', stages: [ 'examination' ] }
                     ]
                 } ]
             },
@@ -74,8 +74,8 @@ describe('stations as teams, through the coordinator service', () => {
     it('lists every station, with no one when its lounge is empty', async () => {
         const teams = await service.teams(await service.rooms());
 
-        assert.deepEqual(teams.map(t => [ t.id, t.stage, t.lounge, t.free, t.busy ]),
-            [ [ 'intake', 'intake', 'lounge-intake', [], [] ], [ 'exam', 'examination', 'lounge-exam', [], [] ] ]);
+        assert.deepEqual(teams.map(t => [ t.id, t.stages, t.lounge, t.free, t.busy ]),
+            [ [ 'intake', [ 'intake' ], 'lounge-intake', [], [] ], [ 'exam', [ 'examination' ], 'lounge-exam', [], [] ] ]);
     });
 
     it('shows staff in the lounge as free', async () => {
