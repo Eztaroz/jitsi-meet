@@ -29,8 +29,8 @@
     let STAGES: [string, string, string][] = [];
     let STAGE_NAMES: Record<string, string> = {};
 
-    /** The encounters a waiting video is playing for now. */
-    let PLAYING_VIDEOS = new Set<string>();
+    /** The video playing for each encounter a waiting video is playing for now. */
+    let PLAYING_VIDEOS = new Map<string, string>();
 
     /** The waiting videos a patient's video can be chosen from. */
     let VIDEO_CATALOGUE: { id: string; title: string; }[] = [];
@@ -162,6 +162,7 @@
         answers?: number[];
         closedAt?: string;
         id: string;
+        questionnaire: string;
         questions: { choices: string[]; text: string; }[];
         title: string;
     }
@@ -184,7 +185,7 @@
         stages: { id: string; name: string; }[];
         teams: ITeam[];
         videoCatalogue?: { id: string; title: string; }[];
-        videos?: { encounterId: string; }[];
+        videos?: { encounterId: string; video: string; }[];
     }
 
     interface ITeamMember {
@@ -208,13 +209,19 @@
 
     /**
      * The elements of the queue view, by key. Each refresh patches them in place rather than draw them anew, so that
-     * an open card, a half-typed field, a chosen option and the focus survive it. A card is one element for as long as
-     * its encounter stays in one stage.
+     * open team names, a half-typed field, a picked stage and the focus survive it. A card, and the open panel, is one
+     * element for as long as its encounter stays in one stage.
      */
     const teamNodes = new Map<string, HTMLDetailsElement>();
     const columnNodes = new Map<string, HTMLElement>();
     const groupNodes = new Map<string, HTMLElement>();
     const ticketNodes = new Map<string, HTMLElement>();
+
+    /** The encounter whose panel is open, if one is, and the queues the panel is drawn from, as last read. */
+    let selected: string | undefined;
+    let QUEUES: Record<string, IQueueEntry[]> = {};
+    let EXAMINATION: IExamination = { doctors: {},
+        unassigned: [] };
 
     /** The health questionnaires the deployment offers, and those sent to each open encounter, from the last refresh. */
     let questionnaires: IQuestionnaires = { catalogue: [],
@@ -483,25 +490,6 @@
     }
 
     /**
-     * Fills a list to choose from, when what it offers has changed, keeping the choice if it is still offered.
-     *
-     * @param {HTMLSelectElement} pick - The list.
-     * @param {Array} options - The value and text of each option.
-     * @returns {void}
-     */
-    function offer(pick: HTMLSelectElement, options: [string, string][]): void {
-        if (!changed(pick, options)) {
-            return;
-        }
-
-        const chosen = pick.value;
-
-        pick.textContent = '';
-        options.forEach(([ value, text ]) => pick.appendChild(el('option', text)).setAttribute('value', value));
-        pick.value = options.some(o => o[0] === chosen) ? chosen : options[0]?.[0] ?? '';
-    }
-
-    /**
      * Holds a button down while what it asked for is done and shown.
      *
      * @param {HTMLButtonElement} trigger - The button.
@@ -528,6 +516,7 @@
      */
     function showSignIn(message?: string): void {
         clearTimeout(timer);
+        closeDetail(false);
         sessionStorage.removeItem(TOKEN_KEY);
         say();
         $('signin').hidden = false;
@@ -597,16 +586,6 @@
      */
     function isUnderWay(m: IMove): boolean {
         return m.state === 'counting_down';
-    }
-
-    /**
-     * The stage the stage list offers first for an encounter: the next, or for the last, the one before.
-     *
-     * @param {number} index - The stage's place in the stages.
-     * @returns {string}
-     */
-    function nextStage(index: number): string {
-        return (STAGES[index + 1] ?? STAGES[index - 1] ?? STAGES[index])[0];
     }
 
     /**
@@ -708,7 +687,7 @@
             const body = column.querySelector('.col-body') as HTMLElement;
             const card = (entry: IQueueEntry, position: number, noDoctor = false) => {
                 const key = `${id}|${entry.encounterId}`;
-                const ticket = kept(ticketNodes, key, () => createTicket(entry, id));
+                const ticket = kept(ticketNodes, key, () => createTicket(entry));
 
                 drawn.add(key);
                 updateTicket(ticket, entry, position, index, noDoctor);
@@ -721,7 +700,7 @@
             setText(column.querySelector('.stage-name') as Element, name);
             setText(column.querySelector('h3 .count') as Element, String(entries.length));
             if (id === 'examination') {
-                drawExamination(column, body, examination, card);
+                drawExamination(body, examination, card);
             } else {
                 arrange(body, entries.map((entry, position) => card(entry, position)));
             }
@@ -756,10 +735,6 @@
         title.appendChild(el('span', undefined, 'tile')).appendChild(icon(iconName));
         title.append(el('span', name, 'stage-name'), el('span', undefined, 'count'));
         column.append(title, el('div', undefined, 'col-body'));
-        if (id === 'examination') {
-            // The doctors the doctor fields suggest.
-            column.appendChild(el('datalist')).id = 'doctor-list';
-        }
 
         return column;
     }
@@ -767,23 +742,16 @@
     /**
      * Draws examination's column split by doctor: a group for each doctor, then the patients with no doctor.
      *
-     * @param {HTMLElement} column - The examination column.
-     * @param {HTMLElement} body - Its body.
+     * @param {HTMLElement} body - The examination column's body.
      * @param {Object} examination - Examination's queue split by doctor.
      * @param {Function} card - Draws an entry's card.
      * @returns {void}
      */
-    function drawExamination(column: HTMLElement, body: HTMLElement, examination: IExamination,
+    function drawExamination(body: HTMLElement, examination: IExamination,
             card: (entry: IQueueEntry, position: number, noDoctor?: boolean) => HTMLElement): void {
-        const known = Object.keys(examination.doctors);
-        const datalist = column.querySelector('datalist') as HTMLDataListElement;
-        const groups: [string, string, IQueueEntry[]][] = known.map(
+        const groups: [string, string, IQueueEntry[]][] = Object.keys(examination.doctors).map(
             doctor => [ doctor, `แพทย์ ${doctor}`, examination.doctors[doctor] ?? [] ]);
 
-        if (changed(datalist, known)) {
-            datalist.textContent = '';
-            known.forEach(doctor => datalist.appendChild(el('option', doctor)).setAttribute('value', doctor));
-        }
         groups.push([ '', 'ยังไม่กำหนดแพทย์', examination.unassigned ]);
         arrange(body, groups.filter(group => group[2].length).map(([ doctor, title, entries ]) => {
             const section = kept(groupNodes, doctor, () => {
@@ -806,21 +774,31 @@
     }
 
     /**
-     * Makes an encounter's card: its face, with the position, HN, wait, badges and the action that sends the patient
-     * on; and right after the face, the other things that can be done with the encounter, folded away.
+     * Makes an encounter's card: the position, HN, wait, badges and the action that sends the patient on. A click
+     * anywhere else on it opens the encounter's panel, as does a button the keyboard reaches.
      *
      * @param {Object} entry - The encounter's entry in its queue.
-     * @param {string} stage - The stage the encounter is in.
      * @returns {HTMLElement}
      */
-    function createTicket(entry: IQueueEntry, stage: string): HTMLElement {
+    function createTicket(entry: IQueueEntry): HTMLElement {
         const ticket = el('div', undefined, 'ticket');
         const face = el('div', undefined, 'queue-entry');
         const line = el('div', undefined, 'card-line');
         const hn = button(entry.hn || '—', 'hn-link');
         const wait = el('span', undefined, 'wait');
         const go = el('button', undefined, 'card-go primary');
+        const open = el('button', undefined, 'card-open');
 
+        open.type = 'button';
+        open.setAttribute('aria-haspopup', 'dialog');
+        open.setAttribute('aria-label', `รายละเอียดของ ${entry.hn || 'ผู้ป่วย'}`);
+        open.addEventListener('click', () => openDetail(entry.encounterId));
+        ticket.addEventListener('click', event => {
+            // A second click is the rest of a double click, which was meant for what was there before.
+            if (event.detail < 2 && !(event.target as Element).closest('button')) {
+                openDetail(entry.encounterId);
+            }
+        });
         face.dataset.encounter = entry.encounterId;
         hn.title = 'ดูห้องของผู้ป่วย';
         hn.addEventListener('click', () => revealRoom(entry.hn || ''));
@@ -837,27 +815,8 @@
 
         end.append(wait, go);
         line.append(el('span', undefined, 'position'), hn, end);
-        face.append(line, el('div', undefined, 'card-badges'));
-
-        const more = el('details', undefined, 'card-more');
-        const controls = el('div', undefined, 'controls');
-        const pick = el('select', undefined, 'stage-to');
-        const send = button('ส่งไปขั้นที่เลือก', 'stage-go secondary', 'arrow');
-        const done = button('เสร็จสิ้น', 'stage-done secondary', 'check');
-        const video = button('', 'video-toggle secondary', 'play');
-
-        more.appendChild(el('summary', 'ตัวเลือกเพิ่มเติม'));
-        pick.setAttribute('aria-label', `ส่ง ${entry.hn || ''} ไปขั้น`);
-        send.addEventListener('click', () => changeStage(entry, pick.value, send));
-        done.addEventListener('click', () => changeStage(entry, 'done', done));
-        video.addEventListener('click', () => toggleVideo(entry, PLAYING_VIDEOS.has(entry.encounterId), video));
-        controls.append(pick, send, done, video);
-        more.append(controls, createVideoChoice(entry, stage));
-        if (stage === 'examination') {
-            more.appendChild(createDoctorControl(entry));
-        }
-        more.appendChild(createQuestionnaires(entry));
-        ticket.append(face, more);
+        face.append(open, line, el('div', undefined, 'card-badges'));
+        ticket.appendChild(face);
 
         return ticket;
     }
@@ -901,23 +860,6 @@
         go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next[1]}` : `${who} เสร็จสิ้น`);
         go.querySelector('use')?.setAttribute('href', next ? '#i-arrow' : '#i-check');
         drawBadges(find('.card-badges'), entry, nhso);
-
-        const pick = find<HTMLSelectElement>('.stage-to');
-        const first = !pick.options.length;
-
-        offer(pick, STAGES.filter(s => s[0] !== STAGES[index][0]).map(s => [ s[0], s[1] ]));
-        if (first) {
-            pick.value = nextStage(index);
-        }
-
-        const playing = PLAYING_VIDEOS.has(entry.encounterId);
-        const video = find<HTMLButtonElement>('.video-toggle');
-
-        setText(video.lastElementChild as Element, playing ? 'หยุดวิดีโอ' : 'เล่นวิดีโอ');
-        video.querySelector('use')?.setAttribute('href', playing ? '#i-x' : '#i-play');
-        find('.video-controls').hidden = !VIDEO_CATALOGUE.length;
-        offer(find<HTMLSelectElement>('.video-pick'), VIDEO_CATALOGUE.map(v => [ v.id, v.title ]));
-        updateQuestionnaires(find('.questionnaires'), entry);
     }
 
     /**
@@ -961,79 +903,558 @@
     }
 
     /**
-     * Makes the control that changes an encounter's doctor.
+     * Opens an encounter's panel over the board. What is behind it takes neither clicks nor the keyboard.
+     *
+     * @param {string} encounterId - The encounter.
+     * @returns {void}
+     */
+    function openDetail(encounterId: string): void {
+        selected = encounterId;
+        $('detail').hidden = false;
+        setBehindDetail(true);
+        drawDetail();
+        $('detail').querySelector<HTMLElement>('.sheet-close')?.focus();
+    }
+
+    /**
+     * Closes the encounter's panel, if one is open.
+     *
+     * @param {boolean} [refocus] - Whether the focus goes back to the encounter's card.
+     * @returns {void}
+     */
+    function closeDetail(refocus = true): void {
+        if (selected === undefined) {
+            return;
+        }
+
+        const encounterId = selected;
+
+        selected = undefined;
+        $('detail').hidden = true;
+        $('detail').querySelector('.sheet')?.remove();
+        setBehindDetail(false);
+        ticketNodes.forEach((ticket, key) => {
+            ticket.dataset.selected = 'false';
+            if (refocus && key.endsWith(`|${encounterId}`)) {
+                ticket.querySelector<HTMLElement>('.card-open')?.focus();
+            }
+        });
+    }
+
+    /**
+     * Takes the page behind the panel out of reach, or gives it back.
+     *
+     * @param {boolean} inert - Whether it is out of reach.
+     * @returns {void}
+     */
+    function setBehindDetail(inert: boolean): void {
+        (document.querySelector('.topbar') as HTMLElement).inert = inert;
+        $('view-queue').inert = inert;
+    }
+
+    /**
+     * Draws the open panel from the queues last read. It is made anew only when its encounter changes stage, and
+     * closes when the encounter is in no queue any more.
+     *
+     * @returns {void}
+     */
+    function drawDetail(): void {
+        if (selected === undefined) {
+            return;
+        }
+
+        const isIt = (e: IQueueEntry) => e.encounterId === selected;
+        const index = STAGES.findIndex(stage => QUEUES[stage[0]]?.some(isIt));
+        const stage = STAGES[index]?.[0];
+        const entry = stage === undefined ? undefined : QUEUES[stage]?.find(isIt);
+
+        if (!entry) {
+            closeDetail();
+
+            return;
+        }
+
+        const key = `${stage}|${selected}`;
+        const holder = $('detail');
+        let sheet = holder.querySelector<HTMLElement>('.sheet');
+
+        if (sheet?.dataset.key !== key) {
+            const focused = sheet && (sheet.contains(document.activeElement) || document.activeElement === document.body);
+
+            sheet?.remove();
+            sheet = holder.appendChild(createSheet(entry, index));
+            sheet.dataset.key = key;
+            if (focused) {
+                sheet.querySelector<HTMLElement>('.sheet-close')?.focus();
+            }
+        }
+        updateSheet(sheet, entry, index);
+        ticketNodes.forEach((ticket, ticketKey) => {
+            ticket.dataset.selected = String(ticketKey === key);
+        });
+    }
+
+    /**
+     * Makes an encounter's panel: the HN, the wait and the facts on top; a section for each thing that can be done;
+     * and the action that sends the patient on, pinned at the bottom.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {number} index - The stage's place in the stages.
+     * @returns {HTMLElement}
+     */
+    function createSheet(entry: IQueueEntry, index: number): HTMLElement {
+        const sheet = el('aside', undefined, 'sheet');
+        const head = el('div', undefined, 'sheet-head');
+        const top = el('div', undefined, 'sheet-top');
+        const title = el('div', undefined, 'sheet-title');
+        const hn = button(entry.hn || '—', 'hn-link sheet-hn');
+        const close = el('button', undefined, 'sheet-close ghost');
+        const body = el('div', undefined, 'sheet-body');
+        const foot = el('div', undefined, 'sheet-foot');
+        const go = button('', 'stage-go primary', 'arrow');
+        const done = button('เสร็จสิ้น', 'stage-done secondary', 'check');
+
+        sheet.setAttribute('role', 'dialog');
+        sheet.setAttribute('aria-modal', 'true');
+        sheet.setAttribute('aria-label', `รายละเอียดผู้ป่วย HN ${entry.hn || ''}`);
+        sheet.dataset.target = STAGES[index + 1]?.[0] ?? 'done';
+        hn.title = 'ดูห้องของผู้ป่วย';
+        hn.addEventListener('click', () => revealRoom(entry.hn || ''));
+        close.type = 'button';
+        close.setAttribute('aria-label', 'ปิด');
+        close.appendChild(icon('x'));
+        close.addEventListener('click', () => closeDetail());
+        title.append(el('span', 'ผู้ป่วย HN', 'sheet-eyebrow'), hn);
+        top.append(title, close);
+        head.append(top, createMeter(), el('dl', undefined, 'facts'));
+
+        body.appendChild(createStepper(sheet, index));
+        if (STAGES[index][0] === 'examination') {
+            body.appendChild(createDoctorSection(entry));
+        }
+        body.append(createVideoSection(entry), createQuestionnaireSection());
+
+        // The second click of a double click would send the patient on twice.
+        go.addEventListener('click', event => {
+            if (event.detail < 2) {
+                changeStage(entry, sheet.dataset.target ?? '', go);
+            }
+        });
+        done.addEventListener('click', event => {
+            if (event.detail < 2) {
+                changeStage(entry, 'done', done);
+            }
+        });
+        foot.append(go, done);
+        sheet.append(head, body, foot);
+
+        return sheet;
+    }
+
+    /**
+     * Brings the panel up to date, leaving alone what has not changed.
+     *
+     * @param {HTMLElement} sheet - The panel.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {number} index - The stage's place in the stages.
+     * @returns {void}
+     */
+    function updateSheet(sheet: HTMLElement, entry: IQueueEntry, index: number): void {
+        const doctor = Object.keys(EXAMINATION.doctors)
+            .find(id => EXAMINATION.doctors[id]?.some(e => e.encounterId === entry.encounterId));
+
+        updateMeter(sheet.querySelector('.meter') as HTMLElement, entry.waitedSeconds);
+        drawFacts(sheet.querySelector('.facts') as HTMLElement, entry, index, doctor);
+        updateStepper(sheet);
+        updateDoctorSection(sheet, entry, doctor);
+        updateVideoSection(sheet, entry);
+        updateQuestionnaireSection(sheet, entry);
+    }
+
+    /**
+     * Makes a section of the panel, with its heading.
+     *
+     * @param {string} className - The class.
+     * @param {string} iconName - The heading's icon.
+     * @param {string} title - The heading.
+     * @returns {HTMLElement}
+     */
+    function createSection(className: string, iconName: string, title: string): HTMLElement {
+        const section = el('section', undefined, `sheet-section ${className}`);
+        const heading = el('h3');
+
+        heading.append(icon(iconName), el('span', title));
+        section.appendChild(heading);
+
+        return section;
+    }
+
+    /**
+     * Makes the meter of the patient's wait against the limit, with a tick where a wait starts to be long.
+     *
+     * @returns {HTMLElement}
+     */
+    function createMeter(): HTMLElement {
+        const meter = el('div', undefined, 'meter');
+        const top = el('div', undefined, 'meter-top');
+        const label = el('span', undefined, 'meter-label');
+        const value = el('span', undefined, 'meter-value');
+        const track = el('div', undefined, 'meter-track');
+        const tick = el('span', undefined, 'meter-tick');
+        const scale = el('div', undefined, 'meter-scale');
+        const warnAt = el('span', String(WAIT_WARN_SECONDS / 60), 'meter-warn-at');
+        const caption = el('div', undefined, 'meter-caption');
+        const atWarn = `${WAIT_WARN_SECONDS * 100 / WAIT_LONG_SECONDS}%`;
+
+        label.append(icon('clock'), el('span', 'รอมาแล้ว'));
+        value.append(el('b'), el('span', ` / ${waited(WAIT_LONG_SECONDS)} นาที`));
+        top.append(label, value);
+        tick.style.left = atWarn;
+        track.append(el('span', undefined, 'meter-fill'), tick);
+        warnAt.style.left = atWarn;
+        scale.append(el('span', '0'), warnAt, el('span', String(WAIT_LONG_SECONDS / 60)));
+        caption.append(icon('check'), el('span'));
+        meter.append(top, track, scale, caption);
+
+        return meter;
+    }
+
+    /**
+     * Fills the meter: its colour is the wait's tier, which the caption says with an icon and words.
+     *
+     * @param {HTMLElement} meter - The meter.
+     * @param {number} seconds - How long the patient has waited.
+     * @returns {void}
+     */
+    function updateMeter(meter: HTMLElement, seconds: number): void {
+        const over = Math.floor((seconds - WAIT_LONG_SECONDS) / 60);
+        const [ tier, iconName, text ] = seconds >= WAIT_LONG_SECONDS
+            ? [ 'long', 'alert', `เกินเกณฑ์ ${WAIT_LONG_SECONDS / 60} นาทีมาแล้ว ${over} นาที` ]
+            : seconds >= WAIT_WARN_SECONDS
+                ? [ 'warn', 'clock', `เกิน ${WAIT_WARN_SECONDS / 60} นาที อีก ${
+                    Math.ceil((WAIT_LONG_SECONDS - seconds) / 60)} นาทีถึงเกณฑ์` ]
+                : [ 'ok', 'check', `ยังไม่ถึง ${WAIT_WARN_SECONDS / 60} นาที` ];
+
+        meter.dataset.tier = tier;
+        setText(meter.querySelector('.meter-value b') as Element, waited(seconds));
+        (meter.querySelector('.meter-fill') as HTMLElement).style.width
+            = `${Math.min(100, seconds * 100 / WAIT_LONG_SECONDS)}%`;
+        meter.querySelector('.meter-caption use')?.setAttribute('href', `#i-${iconName}`);
+        setText(meter.querySelector('.meter-caption span') as Element, text);
+    }
+
+    /**
+     * Draws the facts a coordinator checks first, in two columns.
+     *
+     * @param {HTMLElement} list - Their place.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {number} index - The stage's place in the stages.
+     * @param {string|undefined} doctor - The encounter's doctor; the state names it in examination only.
+     * @returns {void}
+     */
+    function drawFacts(list: HTMLElement, entry: IQueueEntry, index: number, doctor?: string): void {
+        const [ stage, stageName, stageIcon ] = STAGES[index];
+        const nhso = NHSO_STATUSES[entry.encounterId];
+        const facts: { icon: string; key: string; label: string; tone?: string; value: string; }[] = [
+            { icon: stageIcon, key: 'stage', label: 'ขั้นปัจจุบัน', value: stageName },
+            { icon: 'stethoscope',
+                key: 'doctor',
+                label: 'แพทย์',
+                value: doctor ?? (stage === 'examination' ? 'ยังไม่กำหนด' : '—') },
+            { icon: 'key',
+                key: 'nhso',
+                label: 'สปสช.',
+                tone: nhso,
+                value: nhso ? NHSO_LABELS[nhso][0].replace('สปสช. ', '') : '—' },
+            { icon: 'users', key: 'at', label: 'เจ้าหน้าที่อยู่ด้วย', value: entry.at?.join(', ') || 'ไม่มี' }
+        ];
+
+        if (!changed(list, facts)) {
+            return;
+        }
+        list.textContent = '';
+        facts.forEach(fact => {
+            const box = el('div');
+            const name = el('dt');
+
+            box.dataset.fact = fact.key;
+            box.dataset.tone = fact.tone ?? '';
+            name.append(icon(fact.icon), el('span', fact.label));
+            box.append(name, el('dd', fact.value));
+            list.appendChild(box);
+        });
+    }
+
+    /**
+     * Makes the pathway as a vertical stepper: past stages ticked, the current one filled, and any other can be picked
+     * as the stage to send the patient to.
+     *
+     * @param {HTMLElement} sheet - The panel, which holds the picked stage.
+     * @param {number} index - The current stage's place in the stages.
+     * @returns {HTMLElement}
+     */
+    function createStepper(sheet: HTMLElement, index: number): HTMLElement {
+        const section = createSection('stages', 'swap', 'เปลี่ยนขั้น');
+        const steps = el('ol', undefined, 'steps');
+
+        section.appendChild(el('p', 'กดเลือกขั้นที่จะส่งไป แล้วกดปุ่มด้านล่าง', 'sheet-hint'));
+        STAGES.forEach(([ id, name ], i) => {
+            const step = el('li', undefined, 'step');
+            const current = i === index;
+            const row = el(current ? 'div' : 'button', undefined, 'step-pick');
+            const mark = el('span', undefined, 'step-mark');
+            const tag = el('span', undefined, 'sheet-tag');
+
+            step.dataset.stage = id;
+            step.dataset.state = i < index ? 'past' : current ? 'current' : 'future';
+            if (i < index) {
+                mark.appendChild(icon('check'));
+            } else {
+                mark.textContent = String(i + 1);
+            }
+            tag.textContent = current ? 'อยู่ที่นี่' : 'จะส่งไป';
+            row.append(mark, el('span', name, 'step-name'), tag);
+            if (current) {
+                step.setAttribute('aria-current', 'step');
+            } else {
+                row.setAttribute('type', 'button');
+                row.addEventListener('click', () => {
+                    sheet.dataset.target = id;
+                    updateStepper(sheet);
+                });
+            }
+            step.appendChild(row);
+            steps.appendChild(step);
+        });
+        section.appendChild(steps);
+
+        return section;
+    }
+
+    /**
+     * Marks the picked stage, and names it on the pinned action.
+     *
+     * @param {HTMLElement} sheet - The panel.
+     * @returns {void}
+     */
+    function updateStepper(sheet: HTMLElement): void {
+        const target = sheet.dataset.target ?? 'done';
+        const toDone = target === 'done';
+        const go = sheet.querySelector('.stage-go') as HTMLElement;
+
+        sheet.querySelectorAll<HTMLElement>('.step').forEach(step => {
+            const picked = step.dataset.stage === target;
+
+            step.classList.toggle('target', picked);
+            if (step.dataset.state !== 'current') {
+                step.querySelector('button')?.setAttribute('aria-pressed', String(picked));
+                (step.querySelector('.sheet-tag') as HTMLElement).hidden = !picked;
+            }
+        });
+        setText(go.lastElementChild as Element, toDone ? 'เสร็จสิ้น' : `ส่งไป ${STAGE_NAMES[target] ?? target}`);
+        go.querySelector('use')?.setAttribute('href', toDone ? '#i-check' : '#i-arrow');
+        (sheet.querySelector('.stage-done') as HTMLElement).hidden = toDone;
+    }
+
+    /**
+     * Makes the section that changes an encounter's doctor: a chip for each doctor who has patients, and a field for
+     * another doctor's code.
      *
      * @param {Object} entry - The encounter's entry in the examination queue.
      * @returns {HTMLElement}
      */
-    function createDoctorControl(entry: IQueueEntry): HTMLElement {
+    function createDoctorSection(entry: IQueueEntry): HTMLElement {
+        const section = createSection('doctors', 'stethoscope', 'แพทย์');
+        const other = el('div', undefined, 'doctor-other');
         const input = el('input', undefined, 'doctor-to');
-        const set = button('กำหนดแพทย์', 'doctor-set secondary');
-        const wrap = el('div', undefined, 'controls doctor-controls');
+        const set = button('กำหนด', 'doctor-set secondary');
 
-        input.setAttribute('list', 'doctor-list');
-        input.setAttribute('aria-label', `แพทย์ของ ${entry.hn || 'ผู้ป่วย'}`);
-        input.placeholder = 'รหัสแพทย์';
+        input.autocomplete = 'off';
+        input.setAttribute('aria-label', `รหัสแพทย์ของ ${entry.hn || 'ผู้ป่วย'}`);
+        input.placeholder = 'รหัสแพทย์อื่น';
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter' && !set.disabled) {
+                set.click();
+            }
+        });
         set.addEventListener('click', () => {
             const doctor = input.value.trim();
 
             input.value = '';
             setDoctor(entry, doctor || null, set);
         });
-        wrap.append(input, set);
+        other.append(input, set);
+        section.append(el('div', undefined, 'doctor-chips'), other);
 
-        return wrap;
+        return section;
     }
 
     /**
-     * Makes the place for an encounter's health questionnaires: a list to send one from, and what was sent.
+     * Draws the doctor chips, the encounter's own pressed.
+     *
+     * @param {HTMLElement} sheet - The panel.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string|undefined} doctor - The encounter's doctor.
+     * @returns {void}
+     */
+    function updateDoctorSection(sheet: HTMLElement, entry: IQueueEntry, doctor?: string): void {
+        const chips = sheet.querySelector<HTMLElement>('.doctor-chips');
+        const known = Object.keys(EXAMINATION.doctors);
+
+        if (!chips || !changed(chips, [ known, doctor ?? '' ])) {
+            return;
+        }
+        chips.textContent = '';
+        [ ...known, '' ].forEach(id => {
+            const chip = el('button', id || 'ยังไม่กำหนด', 'doctor-chip');
+            const pressed = id === (doctor ?? '');
+
+            chip.type = 'button';
+            chip.dataset.doctor = id;
+            chip.setAttribute('aria-pressed', String(pressed));
+            chip.addEventListener('click', () => {
+                if (chip.getAttribute('aria-pressed') !== 'true') {
+                    setDoctor(entry, id || null, chip);
+                }
+            });
+            chips.appendChild(chip);
+        });
+    }
+
+    /**
+     * Makes the section of waiting videos: the stage's own, which plays and stops, and then the catalogue.
      *
      * @param {Object} entry - The encounter's entry in its queue.
      * @returns {HTMLElement}
      */
-    function createQuestionnaires(entry: IQueueEntry): HTMLElement {
-        const box = el('div', undefined, 'questionnaires');
-        const controls = el('div', undefined, 'controls');
-        const pick = el('select', undefined, 'questionnaire-pick');
-        const send = button('ส่งแบบสอบถาม', 'questionnaire-send secondary', 'clipboard');
+    function createVideoSection(entry: IQueueEntry): HTMLElement {
+        const section = createSection('videos', 'play', 'วิดีโอระหว่างรอ');
+        const now = el('div', undefined, 'sheet-item video-stage');
+        const toggle = button('', 'video-toggle secondary', 'play');
 
-        pick.setAttribute('aria-label', `แบบสอบถามที่จะส่งให้ ${entry.hn || ''}`);
-        send.addEventListener('click', () => sendQuestionnaire(entry, pick.value, send));
-        controls.append(pick, send);
-        box.append(controls, el('div', undefined, 'questionnaire-sent'));
+        toggle.addEventListener('click', () => toggleVideo(entry, PLAYING_VIDEOS.has(entry.encounterId), toggle));
+        now.append(el('span', undefined, 'sheet-item-name video-now'), toggle);
 
-        return box;
+        const list = el('div', undefined, 'sheet-list');
+
+        list.append(now, el('div', undefined, 'video-list'));
+        section.appendChild(list);
+
+        return section;
     }
 
     /**
-     * Draws the health questionnaires of an encounter: those that can be sent, and those sent, with the answers.
+     * Brings the waiting videos up to date. While one plays, only it can be stopped: another cannot be played over it.
      *
-     * @param {HTMLElement} box - Their place on the card.
+     * @param {HTMLElement} sheet - The panel.
      * @param {Object} entry - The encounter's entry in its queue.
      * @returns {void}
      */
-    function updateQuestionnaires(box: HTMLElement, entry: IQueueEntry): void {
-        const sent = questionnaires.sent[entry.encounterId] ?? [];
-        const list = box.querySelector('.questionnaire-sent') as HTMLElement;
+    function updateVideoSection(sheet: HTMLElement, entry: IQueueEntry): void {
+        const list = sheet.querySelector('.video-list') as HTMLElement;
+        const toggle = sheet.querySelector('.video-toggle') as HTMLElement;
+        const playing = PLAYING_VIDEOS.get(entry.encounterId);
+        const title = VIDEO_CATALOGUE.find(v => v.id === playing)?.title ?? playing;
+        const stage = sheet.dataset.key?.split('|')[0] ?? '';
 
-        box.hidden = !questionnaires.catalogue.length && !sent.length;
-        (box.querySelector('.controls') as HTMLElement).hidden = !questionnaires.catalogue.length;
-        offer(box.querySelector('.questionnaire-pick') as HTMLSelectElement,
-            questionnaires.catalogue.map(q => [ q.id, q.title ]));
-        if (!changed(list, sent)) {
+        if (changed(list, VIDEO_CATALOGUE)) {
+            list.textContent = '';
+            VIDEO_CATALOGUE.forEach(video => {
+                const row = el('div', undefined, 'sheet-item');
+                const tag = el('span', undefined, 'sheet-tag');
+                const choose = button('ตั้งประจำขั้น', 'video-choose ghost');
+                const play = button('เล่น', 'video-play secondary', 'play');
+
+                row.dataset.video = video.id;
+                tag.append(icon('play'), el('span', 'กำลังเล่น'));
+                choose.dataset.video = video.id;
+                choose.title = 'ตั้งเป็นวิดีโอของขั้นนี้สำหรับผู้ป่วยรายนี้';
+                choose.setAttribute('aria-label', `ตั้ง ${video.title} เป็นวิดีโอของขั้นนี้`);
+                choose.addEventListener('click', () => chooseVideo(entry, stage, video.id, choose));
+                play.dataset.video = video.id;
+                play.setAttribute('aria-label', `เล่น ${video.title}`);
+                play.addEventListener('click', () => toggleVideo(entry, false, play, video.id));
+                row.append(el('span', video.title, 'sheet-item-name'), tag, choose, play);
+                list.appendChild(row);
+            });
+        }
+        list.querySelectorAll<HTMLElement>('.sheet-item').forEach(row => {
+            row.classList.toggle('playing', row.dataset.video === playing);
+            (row.querySelector('.sheet-tag') as HTMLElement).hidden = row.dataset.video !== playing;
+            (row.querySelector('.video-play') as HTMLElement).hidden = playing !== undefined;
+        });
+        (toggle.parentElement as HTMLElement).classList.toggle('playing', playing !== undefined);
+        setText(sheet.querySelector('.video-now') as Element,
+            playing === undefined ? 'วิดีโอประจำขั้นนี้' : `กำลังเล่น: ${title}`);
+        setText(toggle.lastElementChild as Element, playing === undefined ? 'เล่น' : 'หยุด');
+        toggle.querySelector('use')?.setAttribute('href', playing === undefined ? '#i-play' : '#i-x');
+    }
+
+    /**
+     * Makes the section of health questionnaires.
+     *
+     * @returns {HTMLElement}
+     */
+    function createQuestionnaireSection(): HTMLElement {
+        const section = createSection('questionnaires', 'clipboard', 'แบบสอบถามสุขภาพ');
+
+        section.appendChild(el('div', undefined, 'sheet-list'));
+
+        return section;
+    }
+
+    /**
+     * Draws the health questionnaires: each that can be sent or was sent, with what became of each sending, and the
+     * answers.
+     *
+     * @param {HTMLElement} sheet - The panel.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @returns {void}
+     */
+    function updateQuestionnaireSection(sheet: HTMLElement, entry: IQueueEntry): void {
+        const section = sheet.querySelector('.sheet-section.questionnaires') as HTMLElement;
+        const list = section.querySelector('.sheet-list') as HTMLElement;
+        const { catalogue } = questionnaires;
+        const sent = questionnaires.sent[entry.encounterId] ?? [];
+
+        section.hidden = !catalogue.length && !sent.length;
+        if (!changed(list, [ catalogue, sent ])) {
             return;
         }
         list.textContent = '';
-        for (const q of sent) {
-            const item = el('div', undefined, 'questionnaire');
-            const state = q.answers ? 'ตอบแล้ว' : q.closedAt ? 'ปิดแล้ว (เจ้าหน้าที่เข้าห้อง)' : 'รอคำตอบ';
 
-            item.appendChild(el('strong', `${q.title} · ${state}`));
-            q.answers?.forEach((answer, i) => {
-                item.appendChild(el('div', `${q.questions[i].text} — ${q.questions[i].choices[answer]}`, 'answer'));
+        // One that has left the catalogue since it was sent is still listed, to be read.
+        const titles = new Map([ ...sent.map(q => [ q.questionnaire, q.title ] as const),
+            ...catalogue.map(q => [ q.id, q.title ] as const) ]);
+
+        titles.forEach((title, id) => {
+            const row = el('div', undefined, 'sheet-item questionnaire');
+            const sendings = sent.filter(q => q.questionnaire === id);
+
+            row.dataset.questionnaire = id;
+            row.appendChild(el('span', title, 'sheet-item-name'));
+            if (catalogue.some(q => q.id === id)) {
+                const send = button(sendings.length ? 'ส่งอีกครั้ง' : 'ส่ง', 'questionnaire-send secondary', 'arrow');
+
+                send.setAttribute('aria-label', `ส่งแบบสอบถาม ${title}`);
+                send.addEventListener('click', () => sendQuestionnaire(entry, id, send));
+                row.appendChild(send);
+            }
+            sendings.forEach(q => {
+                const [ tone, iconName, state ] = q.answers ? [ 'ok', 'check', 'ตอบแล้ว' ]
+                    : q.closedAt ? [ '', 'ban', 'ปิดแล้ว (เจ้าหน้าที่เข้าห้อง)' ] : [ 'warn', 'clock', 'รอคำตอบ' ];
+                const sending = el('div', undefined, 'sending');
+                const tag = el('span', undefined, `sheet-tag ${tone}`);
+
+                tag.append(icon(iconName), el('span', state));
+                sending.appendChild(tag);
+                q.answers?.forEach((answer, i) => {
+                    sending.appendChild(el('div', `${q.questions[i].text} — ${q.questions[i].choices[answer]}`, 'answer'));
+                });
+                row.appendChild(sending);
             });
-            list.appendChild(item);
-        }
+            list.appendChild(row);
+        });
     }
 
     /**
@@ -1088,6 +1509,7 @@
 
             return;
         }
+        closeDetail(false);
         if (card.hidden) {
             setFilter('', '');
         }
@@ -1169,18 +1591,19 @@
     }
 
     /**
-     * Plays the waiting video of a patient's stage in their room, or stops the one that plays.
+     * Plays a waiting video in the patient's room, or stops the one that plays.
      *
      * @param {Object} entry - The encounter's entry in its queue.
      * @param {boolean} playing - Whether a video plays now, so that the click stops it.
      * @param {HTMLButtonElement} trigger - The button that asked, held down until the answer.
+     * @param {string} [video] - Which video to play; unset for the one of the patient's stage.
      * @returns {void}
      */
-    function toggleVideo(entry: IQueueEntry, playing: boolean, trigger: HTMLButtonElement): void {
+    function toggleVideo(entry: IQueueEntry, playing: boolean, trigger: HTMLButtonElement, video?: string): void {
         const hn = entry.hn || 'ผู้ป่วย';
         const path = `/encounters/${encodeURIComponent(entry.encounterId)}/video${playing ? '/stop' : ''}`;
 
-        hold(trigger, act(path, {}), result => {
+        hold(trigger, act(path, video ? { video } : {}), result => {
             if (failed(result)) {
                 say(playing ? 'หยุดวิดีโอไม่สำเร็จ' : 'เล่นวิดีโอไม่ได้ ขั้นนี้อาจไม่มีวิดีโอ หรือระบบเล่นวิดีโอไม่พร้อม', 'error');
             } else {
@@ -1190,29 +1613,22 @@
     }
 
     /**
-     * Makes the control that chooses the waiting video a patient gets at their current stage.
+     * Chooses the waiting video a patient gets at a stage.
      *
      * @param {Object} entry - The encounter's entry in its queue.
-     * @param {string} stage - The stage the encounter is in.
-     * @returns {HTMLElement}
+     * @param {string} stage - The stage.
+     * @param {string} video - The video.
+     * @param {HTMLButtonElement} trigger - The button that asked, held down until the answer.
+     * @returns {void}
      */
-    function createVideoChoice(entry: IQueueEntry, stage: string): HTMLElement {
-        const pick = el('select', undefined, 'video-pick');
-        const set = button('เลือกวิดีโอ', 'video-choose secondary');
-        const wrap = el('div', undefined, 'controls video-controls');
-        const hn = entry.hn || 'ผู้ป่วย';
+    function chooseVideo(entry: IQueueEntry, stage: string, video: string, trigger: HTMLButtonElement): void {
         const path = `/encounters/${encodeURIComponent(entry.encounterId)}/video-choice`;
 
-        pick.setAttribute('aria-label', `วิดีโอของ ${hn}`);
-        set.addEventListener('click', () => {
-            hold(set, act(path, { stage,
-                video: pick.value }), result => {
-                say(failed(result) ? 'เลือกวิดีโอไม่สำเร็จ' : `เลือกวิดีโอของ ${hn} แล้ว`, failed(result) ? 'error' : 'ok');
-            });
+        hold(trigger, act(path, { stage,
+            video }), result => {
+            say(failed(result) ? 'เลือกวิดีโอไม่สำเร็จ' : `เลือกวิดีโอของ ${entry.hn || 'ผู้ป่วย'} แล้ว`,
+                failed(result) ? 'error' : 'ok');
         });
-        wrap.append(pick, set);
-
-        return wrap;
     }
 
     /**
@@ -1595,7 +2011,8 @@
         });
     }
 
-    // A click elsewhere, or Escape, closes the NHSO control and a team's names.
+    // A click elsewhere, or Escape, closes the NHSO control and a team's names. With neither open, Escape closes the
+    // encounter's panel.
     document.addEventListener('click', event => {
         closeTeams(event.target as Node);
         if (!(event.target as Element).closest('.nhso')) {
@@ -1606,10 +2023,22 @@
         if (event.key !== 'Escape') {
             return;
         }
+
+        const popover = !$('nhso-pop').hidden || Array.from(teamNodes.values()).some(team => team.open);
+
+        if (!popover) {
+            closeDetail();
+        }
         closeTeams();
         if (!$('nhso-pop').hidden) {
             showNhsoControl(false);
             $('nhso-chip').focus();
+        }
+    });
+    // The second click of a double click on a card lands on the scrim, and must not close what the first opened.
+    $('scrim').addEventListener('click', event => {
+        if (event.detail < 2) {
+            closeDetail();
         }
     });
     $('nhso-toggle').addEventListener('click', () => {
@@ -1673,13 +2102,16 @@
                     questionnaires = state.questionnaires ?? { catalogue: [],
                         sent: {} };
                     drawStats(state);
-                    PLAYING_VIDEOS = new Set((state.videos ?? []).map(v => v.encounterId));
+                    PLAYING_VIDEOS = new Map((state.videos ?? []).map(v => [ v.encounterId, v.video ]));
                     NHSO_STATUSES = state.nhso?.statuses ?? {};
                     drawNhso(state.nhso?.bypass ?? null);
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     drawTeams(state.teams);
                     drawQueues(state.queues, state.examination);
+                    QUEUES = state.queues;
+                    EXAMINATION = state.examination;
+                    drawDetail();
 
                     // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
                     // lose its place.

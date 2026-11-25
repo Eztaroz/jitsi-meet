@@ -3,9 +3,16 @@ import { v4 as uuidv4 } from 'uuid';
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
 import {
+    clickInPanel,
     coordinatorUnavailableReason,
     getAudit,
+    getExamination,
+    getQuestionnaires,
     getQueues,
+    openEncounterPanel,
+    postDoctor,
+    postEncounter,
+    postStage,
     screenUrl,
     showScreenView,
     waitForRoom,
@@ -18,9 +25,11 @@ import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
-    description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, \
-sends the patient on from their card to the next stage, picks another stage for them, marks the encounter done from \
-their card at the last stage, and moves a staff member from their lounge into a patient\'s room. \
+    description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none; \
+in the panel a card opens, plays, stops and chooses a waiting video (where the deployment has a video player), sends \
+a health questionnaire, picks a stage on the stepper, sets, takes away and picks a doctor, and marks an encounter \
+done; sends the patient on from their card to the next stage, picks another stage for them, marks the encounter done \
+from their card at the last stage, and moves a staff member from their lounge into a patient\'s room. \
 A patient is offered no move, since patients stay in their own room (ADR 0011). A staff member being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
 staff member, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
@@ -120,6 +129,110 @@ describe('Coordinator: acting from the screen', () => {
         expect((await getQueues()).waiting.some(e => e.hn?.toLowerCase() === room)).toBe(true);
     });
 
+    it('closes an encounter\'s panel with its button, the Escape key and a click on the scrim', async () => {
+        const id = (await getQueues()).waiting.find(e => e.hn?.toLowerCase() === hn.toLowerCase())!.encounterId;
+        const closed = async () => (await a.driver.$('.sheet')).waitForExist(
+            { reverse: true, timeout: 5_000, timeoutMsg: 'the panel is still open' });
+
+        await showScreenView(a, 'queue');
+        await openEncounterPanel(a, id);
+        await clickInPanel(a, '.sheet-close');
+        await closed();
+
+        await openEncounterPanel(a, id);
+        await a.driver.keys('Escape');
+        await closed();
+
+        await openEncounterPanel(a, id);
+
+        // The scrim's middle is left of the panel, which is on the right.
+        await (await a.driver.$('#scrim')).click();
+        await closed();
+    });
+
+    it('plays, stops and chooses a waiting video, and sends a questionnaire from the panel', async () => {
+        const id = (await getQueues()).waiting.find(e => e.hn?.toLowerCase() === hn.toLowerCase())!.encounterId;
+        const videoAudit = async (action: string) => (await getAudit(1000)).find(
+            e => e.kind === 'video' && e.encounterId === id && e.action === action && e.outcome === 'ok');
+
+        await openEncounterPanel(a, id);
+        if (process.env.VIDEO_PLAYER_AVAILABLE === 'true') {
+            const toggleSays = (text: string) => a.driver.waitUntil(
+                async () => (await (await a.driver.$('.sheet .video-toggle')).getText()) === text,
+                { timeout: 15_000, timeoutMsg: `the video's button does not say ${text}` });
+
+            await clickInPanel(a, '.video-toggle');
+            await toggleSays('หยุด');
+            await clickInPanel(a, '.video-toggle');
+            await toggleSays('เล่น');
+
+            await clickInPanel(a, '.video-play[data-video="second"]');
+            await toggleSays('หยุด');
+            expect((await videoAudit('play'))?.issuer).toBe(coordinatorA.id);
+            await clickInPanel(a, '.video-toggle');
+            await toggleSays('เล่น');
+        }
+        await clickInPanel(a, '.video-choose[data-video="second"]');
+        await a.driver.waitUntil(async () => (await videoAudit('choose'))?.issuer === coordinatorA.id,
+            { timeoutMsg: 'the video was not chosen' });
+
+        await clickInPanel(a, '.questionnaire[data-questionnaire="pain"] .questionnaire-send');
+        await a.driver.waitUntil(
+            async () => (await getQuestionnaires(id)).some(q => q.questionnaire === 'pain'),
+            { timeoutMsg: 'the questionnaire was not sent' });
+        await a.driver.waitUntil(
+            async () => (await (await a.driver.$('.sheet .questionnaire[data-questionnaire="pain"]')).getText())
+                .includes('รอคำตอบ'),
+            { timeoutMsg: 'the panel does not show the questionnaire waiting for answers' });
+        await clickInPanel(a, '.sheet-close');
+    });
+
+    it('picks a stage, sets the doctor and marks an encounter done from the panel', async () => {
+        const doctor = `doctor-${uuidv4()}`;
+        const otherDoctor = `doctor-${uuidv4()}`;
+        const id = (await postEncounter(uniqueHn('PANEL'))).body.id;
+        const other = (await postEncounter(uniqueHn('PANELB'))).body.id;
+
+        await postStage(other, 'examination');
+        await postDoctor(other, otherDoctor);
+
+        const doctorOf = async () => Object.entries((await getExamination()).doctors)
+            .find(([ _, entries ]) => entries.some(e => e.encounterId === id))?.[0];
+
+        await openEncounterPanel(a, id);
+        await clickInPanel(a, '.step[data-stage="examination"] .step-pick');
+
+        // The picked stage and the open panel survive the screen's refresh.
+        await a.driver.pause(2500);
+        await clickInPanel(a, '.stage-go');
+        await a.driver.waitUntil(async () => (await getExamination()).unassigned.some(e => e.encounterId === id),
+            { timeoutMsg: 'not sent to examination' });
+
+        await (await a.driver.$('.sheet .doctor-to')).waitForDisplayed({ timeout: 10_000 });
+        await (await a.driver.$('.sheet .doctor-to')).setValue(doctor);
+        await a.driver.pause(2500);
+        expect(await (await a.driver.$('.sheet .doctor-to')).getValue()).toBe(doctor);
+        await clickInPanel(a, '.doctor-set');
+        await a.driver.waitUntil(async () => await doctorOf() === doctor, { timeoutMsg: 'the typed doctor was not set' });
+
+        await clickInPanel(a, '.doctor-chip[data-doctor=""]');
+        await a.driver.waitUntil(async () => await doctorOf() === undefined,
+            { timeoutMsg: 'the doctor was not taken away' });
+
+        await clickInPanel(a, `.doctor-chip[data-doctor="${otherDoctor}"]`);
+        await a.driver.waitUntil(async () => await doctorOf() === otherDoctor,
+            { timeoutMsg: 'the picked doctor was not set' });
+
+        await clickInPanel(a, '.stage-done');
+        await a.driver.waitUntil(
+            async () => !Object.values(await getQueues()).flat().some(e => e.encounterId === id),
+            { timeoutMsg: 'not done' });
+
+        // An encounter that is done has no panel any more.
+        await (await a.driver.$('.sheet')).waitForExist({ reverse: true, timeout: 10_000 });
+        await postStage(other, 'done');
+    });
+
     it('sends a patient on from their card, to a picked stage, and marks it done at the last stage', async () => {
         const room = hn.toLowerCase();
         const entry = async () => (await getQueues()).waiting.find(e => e.hn?.toLowerCase() === room)!;
@@ -140,15 +253,13 @@ describe('Coordinator: acting from the screen', () => {
         await forward('waiting');
         await inStage('registration');
 
-        // Any other stage is picked among the card's other options, which are right after its face.
+        // Any other stage is picked on the stepper of the encounter's panel.
         await (await a.driver.$(face('registration'))).waitForExist({ timeout: 10_000 });
-        await a.driver.execute((selector: string) => {
-            const more = document.querySelector(selector)!.nextElementSibling as HTMLElement;
-
-            (more.querySelector('select') as HTMLSelectElement).value = 'pharmacy';
-            (more.querySelector('.stage-go') as HTMLElement).click();
-        }, face('registration'));
+        await openEncounterPanel(a, id);
+        await clickInPanel(a, '.step[data-stage="pharmacy"] .step-pick');
+        await clickInPanel(a, '.stage-go');
         await inStage('pharmacy');
+        await clickInPanel(a, '.sheet-close');
 
         await forward('pharmacy');
         await a.driver.waitUntil(
