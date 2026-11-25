@@ -9,6 +9,7 @@
 #   REGISTRY_AUTH     base64 of "user:password" for REGISTRY, Protected + Masked  (required to build)
 #   DOCKERHUB_AUTH    base64 of "user:password" for Docker Hub, against pull limits (optional)
 #   PORTAINER_WEBHOOK the full webhook URL of the test stack (optional: without it the deploy jobs are skipped)
+#   PRODUCTION_*      production's Portainer, stack and health checks: see the night deployment's section below
 #
 # A push to master builds and pushes every image; it does not redeploy. The test stack runs every service, the central
 # ones too, so it is redeployed only in the night window: a cron job calls this project's pipeline trigger at 22:00 with
@@ -147,7 +148,7 @@ image-web:
 #   central-verify       redeploys the production central stack and waits for every health check, 2 minutes at most
 #   central-rollback-*   only when something failed: moves :production back to the previous build and redeploys it
 # A failed job stops the pipeline: the later stages do not run, apart from the rollback. Production jobs do nothing without
-# PRODUCTION_WEBHOOK. The scripts are in deploy/production/scripts/ci/ and are tested by
+# PRODUCTION_PORTAINER_URL or PRODUCTION_WEBHOOK. The scripts are in deploy/production/scripts/ci/ and are tested by
 # deploy/production/scripts/test/run-tests.sh against local fake servers.
 #
 # Variables of the health checks, for each of TEST_ and PRODUCTION_ (Settings > CI/CD > Variables; internal names go there):
@@ -156,7 +157,13 @@ image-web:
 #   <P>_JICOFO_HEALTH_URL   http://<host's internal address>:8888/about/health
 #   <P>_JVB_HEALTH_URL      http://<host's internal address>:8080/about/health
 #   <P>_INSECURE            1 when the certificate is self-signed
-#   PRODUCTION_WEBHOOK      the webhook of the production central stack (Protected + Masked); the test stack's is PORTAINER_WEBHOOK
+# and how each stack is redeployed, one of:
+#   <P>_PORTAINER_URL       Portainer's API (ADR 0021), for Portainer CE, which has no stack webhook: https://<host>:9443,
+#   <P>_PORTAINER_TOKEN     with the access token of a Portainer user who can update this stack only (Protected + Masked),
+#   <P>_STACK_ID            the stack's id, <P>_PORTAINER_INSECURE=1 for a self-signed certificate, and optionally
+#   <P>_IMAGE_TAG           the tag the stack must follow (production's is `production` unless set); or
+#   PRODUCTION_WEBHOOK      the webhook of the production central stack (Protected + Masked); the test stack's is PORTAINER_WEBHOOK.
+# The API wins when both are set. The redeploy jobs run in node:24-bookworm, which has node (the API) and curl (the checks).
 .central-only: &central-only
   before_script:
     - |
@@ -165,10 +172,8 @@ image-web:
         exit 0
       fi
 
-.curl: &curl
-  image:
-    name: curlimages/curl:latest
-    entrypoint: [""]
+.redeploy: &redeploy
+  image: node:24-bookworm
   tags:
     - HOSAPP02
 
@@ -183,7 +188,7 @@ image-web:
 
 # The test stack: the night window's deployment, and the first check of the build.
 deploy-stack:
-  <<: [ *curl, *central-only ]
+  <<: [ *redeploy, *central-only ]
   stage: deploy
   script:
     - export TEST_WEBHOOK="$PORTAINER_WEBHOOK"
@@ -193,7 +198,7 @@ deploy-stack:
 
 # By hand, at once, at any hour: the test stack's consultations are cut.
 deploy-stack-now:
-  <<: *curl
+  <<: *redeploy
   stage: deploy
   script:
     - export TEST_WEBHOOK="$PORTAINER_WEBHOOK"
@@ -220,7 +225,7 @@ central-promote:
     - triggers
 
 central-verify:
-  <<: [ *curl, *central-only ]
+  <<: [ *redeploy, *central-only ]
   stage: verify
   script:
     - REDEPLOY_SETTLE=20 sh deploy/production/scripts/ci/redeploy-central.sh PRODUCTION
@@ -245,7 +250,7 @@ central-rollback-tag:
     - triggers
 
 central-rollback-redeploy:
-  <<: [ *curl, *central-only ]
+  <<: [ *redeploy, *central-only ]
   stage: rollback-redeploy
   script:
     # Nothing was promoted: nothing to redeploy.

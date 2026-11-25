@@ -134,7 +134,8 @@ push to the default branch (GitLab)
 22:00, a cron job calls the pipeline trigger with DEPLOY_CENTRAL=1 (every job below refuses outside 22:00-05:00)
   → deploy-stack: the test stack's webhook, then every health check, reported
   → central-promote: :production of coordinator, prosody, web and front moves to this commit's build
-  → central-verify: the production central stack's webhook, then every health check, 2 minutes at most
+  → central-verify: the production central stack redeployed (Portainer's API, or its webhook), then every health check,
+                    2 minutes at most
   → (only on a failure) central-rollback-tag, central-rollback-redeploy: :production back to the previous build, redeployed
 deploy-stack-now (by hand): the test stack, at once, at any hour
 ```
@@ -170,12 +171,25 @@ The scripts are in `scripts/ci/`; `scripts/test/run-tests.sh` tests them against
   the four images; if `central-verify` fails, `rollback-central.sh` moves `production` back and the stack is redeployed, and
   the pipeline stays failed. Jicofo and the videobridge are upstream images pinned by `JITSI_IMAGE_VERSION`: the stack is one
   step, and a change of that version is rolled back by changing it in the stack's environment.
+- **Redeploy:** `redeploy-central.sh` updates the stack through Portainer's API when `<P>_PORTAINER_URL` is set
+  (`deploy/pipeline/redeployStackMain.ts`, ADR 0021): Portainer CE, which runs production, has no stack webhook. It sends
+  the stack's compose file and environment back unchanged with "re-pull images", resends its webhook and auto update (an
+  update without them turns them off), and reads the stack again to check that nothing changed. It refuses a production
+  stack whose `IMAGE_TAG` is not `production`: a pinned stack would pass without deploying anything. Otherwise it calls
+  `<P>_WEBHOOK` (Portainer Business).
 - **Set up once, on the production central stack:** `IMAGE_TAG=production`. Jicofo's and the videobridge's health ports
-  (8888, 8080) are published on `HOST_INTERNAL_IP` only; the runner must reach them there. CI/CD variables: see the header of
-  `.gitlab-ci.yml` (`PRODUCTION_WEBHOOK`, and for `TEST_` and `PRODUCTION_`: `URL`, `COORDINATOR_SECRET`, `JICOFO_HEALTH_URL`,
-  `JVB_HEALTH_URL`).
+  (8888, 8080) are published on `HOST_INTERNAL_IP` only; the runner must reach them there, and Portainer (9443). CI/CD
+  variables: see the header of `.gitlab-ci.yml` (for `TEST_` and `PRODUCTION_`: `URL`, `COORDINATOR_SECRET`,
+  `JICOFO_HEALTH_URL`, `JVB_HEALTH_URL`, `INSECURE`; and either `PORTAINER_URL`, `PORTAINER_TOKEN`, `STACK_ID`,
+  `PORTAINER_INSECURE`, or `PRODUCTION_WEBHOOK`).
+- **Production's Portainer user:** in Portainer, add a user (e.g. `ci-deploy`, not an administrator), give it access to
+  production's environment, and restrict the central stack's Ownership to that user and the administrators. Portainer CE
+  has no roles: the user can also manage the environment's public resources, so keep the other stacks restricted to the
+  administrators. Sign in as it, and add an access token (My account > Access tokens). Put the token in `PRODUCTION_PORTAINER_TOKEN`, Protected and Masked; the stack's id is in its address
+  (`...?id=<id>`).
 
-Roll back by setting `IMAGE_TAG` to a commit hash and updating the stack.
+Roll back by setting `IMAGE_TAG` to a commit hash and updating the stack. The night pipeline then fails, saying the stack is
+pinned, until `IMAGE_TAG` is `production` again.
 
 ## Deploying the workers (ADR 0017)
 

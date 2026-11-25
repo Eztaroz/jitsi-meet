@@ -6,8 +6,8 @@
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib.sh"
 
-if [ -z "${PRODUCTION_WEBHOOK:-}" ]; then
-    log "PRODUCTION_WEBHOOK is not set: production is not deployed, so its tags stay"
+if [ -z "${PRODUCTION_WEBHOOK:-}" ] && [ -z "${PRODUCTION_PORTAINER_URL:-}" ]; then
+    log "Neither PRODUCTION_PORTAINER_URL nor PRODUCTION_WEBHOOK is set: production is not deployed, so its tags stay"
     exit 0
 fi
 require CI_COMMIT_SHA IMAGE_PREFIX

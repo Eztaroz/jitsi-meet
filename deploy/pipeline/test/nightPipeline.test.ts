@@ -30,6 +30,17 @@ describe('the night pipeline (ADR 0017)', () => {
         assert.match(night, /stage: workers/u);
     });
 
+    it('redeploys each central stack in an image that has node, for Portainer\'s API (ADR 0021), and curl', () => {
+        const anchor = /^\.redeploy: &redeploy\n((?: .*\n)*)/mu.exec(ci);
+
+        assert.ok(anchor, 'the redeploy jobs share one image');
+        assert.match(anchor[1], /image: node:\d+-bookworm\n/u, 'the full Debian image: the slim one has no curl');
+        for (const name of [ 'deploy-stack', 'deploy-stack-now', 'central-verify', 'central-rollback-redeploy' ]) {
+            assert.match(job(name), /\*redeploy\b/u, `${name} runs in that image`);
+            assert.match(job(name), /redeploy-central\.sh/u);
+        }
+    });
+
     it('is the only job that sets ALLOW_SINGLE_RECORDER_BOT, and the by-push job does not', () => {
         assert.equal(ci.match(/ALLOW_SINGLE_RECORDER_BOT: "1"/gu)?.length, 1);
         assert.ok(!job('deploy-workers').includes('ALLOW_SINGLE_RECORDER_BOT'));
