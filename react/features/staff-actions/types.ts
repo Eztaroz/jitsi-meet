@@ -7,6 +7,12 @@ export interface IStaffContext {
     /** In a patient's room: the questionnaires the staff member can send. */
     questionnaires?: { id: string; title: string; }[];
 
+    /**
+     * In a lounge: the patients "next patient" could give the staff member now, with no patient data: how many, how long
+     * the longest has waited, and when the latest joined (ISO 8601).
+     */
+    queue?: { lastJoinedAt?: string; longestWaitSeconds?: number; waiting: number; };
+
     /** The stages the staff member can pick: every stage of the encounter's pathway but done. */
     stages?: { id: string; name: string; }[];
     station?: string;

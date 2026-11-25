@@ -68,6 +68,49 @@ export function callStaffApi(state: IReduxState, route: string, init: RequestIni
 }
 
 /**
+ * Tells whether a patient joined the station's queue between two reads of a lounge's queue: the latest arrival is
+ * later than before. The first read in a lounge is no arrival, since the staff member sees the count then.
+ *
+ * @param {Object|undefined} before - The queue at the last successful read in the lounge.
+ * @param {Object|undefined} now - The queue now.
+ * @returns {boolean}
+ */
+export function isNewArrival(before: IStaffContext['queue'], now: IStaffContext['queue']): boolean {
+    if (!before || !now?.lastJoinedAt) {
+        return false;
+    }
+
+    // Both are ISO 8601 times in UTC, which sort as strings.
+    return !before.lastJoinedAt || now.lastJoinedAt > before.lastJoinedAt;
+}
+
+/**
+ * Shows a browser notification that patients are waiting, while the page is in the background and the staff member
+ * allowed notifications. It names no patient: only the count. Some browsers (Chrome on Android) refuse a notification
+ * without a service worker; the sound still plays there.
+ *
+ * @param {string} title - The notification's title.
+ * @param {string} body - Its text.
+ * @returns {void}
+ */
+export function notifyInBackground(title: string, body: string): void {
+    if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') {
+        return;
+    }
+
+    try {
+        const notification = new Notification(title, { body, tag: 'staff-queue' });
+
+        notification.onclick = () => {
+            window.focus();
+            notification.close();
+        };
+    } catch {
+        // Nothing to show on a browser that refuses page notifications.
+    }
+}
+
+/**
  * Asks where the staff member is. Resolves to undefined when the service does not take the participant for staff, or
  * cannot be reached: the client then shows nothing.
  *

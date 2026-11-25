@@ -58,6 +58,7 @@
         "title": "การรับบริการผ่านวิดีโอคอลครั้งนี้เป็นอย่างไรบ้าง"
     },
     "staffActions": {
+        "allowNotifications": "เปิดการแจ้งเตือน",
         "answer": "{{question}}: {{choice}}",
         "apply": "เปลี่ยนขั้นตอน",
         "currentStage": "ขั้นตอน: {{stage}}",
@@ -69,7 +70,11 @@
         "pickVideo": "วิดีโอระหว่างรอสำหรับขั้นตอนนี้...",
         "playVideo": "เล่นวิดีโอ",
         "questionnaireNotSent": "ส่งแบบสอบถามไม่สำเร็จ",
+        "queueAlertTitle": "มีผู้ป่วยรอที่สถานีของคุณ",
         "queueEmpty": "ไม่มีผู้ป่วยรอที่สถานีของคุณ",
+        "queueLongest": "นานสุด {{minutes}} นาที",
+        "queueNobody": "ไม่มีผู้ป่วยรอ",
+        "queueWaiting": "รอ {{waiting}} คน",
         "refused": "ไม่ได้เปลี่ยนขั้นตอน",
         "sendQuestionnaire": "ส่งแบบสอบถาม",
         "stopVideo": "หยุดวิดีโอ",

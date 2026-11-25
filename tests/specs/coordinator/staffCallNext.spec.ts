@@ -17,7 +17,8 @@ import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
     description: 'A staff member in a station\'s lounge presses "next patient" and is moved into the room of the \
-longest-waiting patient of their station\'s stage. With nobody waiting the service answers that the queue is empty \
+longest-waiting patient of their station\'s stage. The lounge shows how many patients wait for the station. With \
+nobody waiting the service answers that the queue is empty \
 and the staff member stays in the lounge. The call is audited with the staff member. Skipped unless the deployment \
 is the JWT variant of the recorder bot\'s test deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1', 'p2' ]
@@ -82,8 +83,21 @@ describe('Coordinator: staff call the next patient', () => {
         expect(await staff.driver.getUrl()).toContain(lounge);
     });
 
-    it('moves the staff member to the patient waiting for their station', async () => {
+    it('shows the station\'s queue in the lounge, which changes when a patient joins it', async () => {
+        const count = await staff.driver.$('#staff-queue-count');
+
+        await count.waitForExist({ timeout: 15_000 });
+
+        const empty = await count.getText();
+
         await postStage(encounterId, 'intake');
+        await staff.driver.waitUntil(async () => (await count.getText()) !== empty, {
+            timeout: 15_000,
+            timeoutMsg: 'the queue in the lounge did not show the waiting patient'
+        });
+    });
+
+    it('moves the staff member to the patient waiting for their station', async () => {
         await (await staff.driver.$('#staff-next-patient')).click();
 
         await waitForRoom(r => r?.occupants.some(o => o.role === 'staff'), hn, 'the staff member to reach the patient');

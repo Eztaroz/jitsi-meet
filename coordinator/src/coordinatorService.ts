@@ -34,6 +34,7 @@ import {
     type IRoleMarkers,
     type IRoom,
     type IStage,
+    type IStation,
     type IVideo,
     describeRooms,
     sameRoom,
@@ -150,6 +151,12 @@ export interface IStaffContext {
 
     /** In a patient's room: the questionnaires the staff member can send. */
     questionnaires?: { id: string; title: string; }[];
+
+    /**
+     * In a lounge: the patients "next patient" could give the staff member now (#24), with no patient data: how many,
+     * how long the longest has waited, and when the latest joined, so that the client can tell a new arrival.
+     */
+    queue?: { lastJoinedAt?: string; longestWaitSeconds?: number; waiting: number; };
 
     /** The stages the staff member can put the encounter in: every stage of its pathway but `done`. */
     stages?: { id: string; name: string; }[];
@@ -1412,13 +1419,28 @@ export class CoordinatorService {
      * @returns {Promise<IStaffContext>}
      */
     async staffContext(staff: { id: string; }): Promise<IStaffContext> {
-        const here = findStaff(await this._roomsForStaffRead(), staff.id);
+        const rooms = await this._roomsForStaffRead();
+        const here = findStaff(rooms, staff.id);
 
         if (!here) {
             return { where: 'nowhere' };
         }
         if (here.room.kind === 'lounge') {
-            return { station: here.room.station, where: 'lounge' };
+            const station = stationsOf(this._opts.layout).find(s => s.id === here.room.station);
+            const callable = station ? this._callable(station, staff.id, rooms, new Date()).map(c => c.entry) : [];
+            const latest = Math.max(...callable.map(e => e.enteredAt.getTime()));
+
+            return {
+                queue: callable.length
+                    ? {
+                        lastJoinedAt: new Date(latest).toISOString(),
+                        longestWaitSeconds: Math.max(...callable.map(e => e.waitedSeconds)),
+                        waiting: callable.length
+                    }
+                    : { waiting: 0 },
+                station: here.room.station,
+                where: 'lounge'
+            };
         }
 
         const encounter = this.describeEncounter(here.room.encounterId ?? '');
@@ -1515,6 +1537,35 @@ export class CoordinatorService {
     }
 
     /**
+     * The patients "next patient" could give a staff member of a station now, the longest-waiting first: those in the
+     * station's stage (in examination, the doctor's own queue) whose room is open, has no staff and is no pending move's
+     * destination. Calling the next patient takes the first; the lounge's queue count is all of them (#24).
+     *
+     * @param {IStation} station - The staff member's station.
+     * @param {string} staffId - The staff member's verified identity id.
+     * @param {IRoom[]} rooms - The rooms now.
+     * @param {Date} at - When.
+     * @returns {Object[]} Each patient's queue entry and room.
+     */
+    private _callable(station: IStation, staffId: string, rooms: IRoom[], at: Date): { entry: IQueueEntry; room: IRoom; }[] {
+        const entries = station.stage === EXAMINATION
+            ? examinationQueues(this._state, at).doctors[staffId] ?? []
+            : queues(this._state, at, allStages(this._opts.layout).map(s => s.id))[station.stage] ?? [];
+        const pending = new Set(this._state.moves.filter(m => ACTIVE_MOVE.has(m.state)).map(m => m.destination));
+        const callable: { entry: IQueueEntry; room: IRoom; }[] = [];
+
+        for (const entry of entries) {
+            const room = rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
+
+            if (room?.open && !pending.has(room.name) && !room.occupants.some(o => o.role === 'staff')) {
+                callable.push({ entry, room });
+            }
+        }
+
+        return callable;
+    }
+
+    /**
      * Moves a staff member in a station's lounge to the longest-waiting patient of the station's stage whose room has
      * no staff (ADR 0012). In examination the staff member takes from their own doctor queue. A patient that another
      * staff member is being moved to counts as having staff, so two staff never get the same patient. With nobody
@@ -1540,19 +1591,9 @@ export class CoordinatorService {
             if (!here || !station) {
                 refused = 'not_in_lounge';
             } else {
-                const entries = station.stage === EXAMINATION
-                    ? examinationQueues(this._state, at).doctors[staff.id] ?? []
-                    : queues(this._state, at, allStages(this._opts.layout).map(s => s.id))[station.stage] ?? [];
-                const pending = new Set(this._state.moves.filter(m => ACTIVE_MOVE.has(m.state)).map(m => m.destination));
+                const first = this._callable(station, staff.id, rooms, at)[0];
 
-                for (const entry of entries) {
-                    const room = rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
-
-                    if (room?.open && !pending.has(room.name) && !room.occupants.some(o => o.role === 'staff')) {
-                        target = { encounterId: entry.encounterId, room };
-                        break;
-                    }
-                }
+                target = first && { encounterId: first.entry.encounterId, room: first.room };
                 refused = target ? undefined : 'queue_empty';
             }
 
