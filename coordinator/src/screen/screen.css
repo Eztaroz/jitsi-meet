@@ -243,6 +243,11 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 .team[open] summary { border-color: var(--accent); }
 .team-free { color: var(--ok); font-weight: 700; }
 .team-busy { color: var(--muted); }
+.team-dots { display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.team-dots:empty { display: none; }
+.team-dot { border-radius: 50%; height: .6rem; width: .6rem; }
+.team-dot[data-state='free'] { background: var(--tier-ok); }
+.team-dot[data-state='busy'] { box-shadow: inset 0 0 0 2px var(--line-strong); }
 .team-pop {
     background: var(--surface);
     border: 1px solid var(--line-strong);
@@ -262,6 +267,16 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 .team-member .avatar { height: 26px; width: 26px; }
 .team-with { color: var(--muted); font-size: .88rem; margin-left: auto; }
 
+/* One legend for every column's wait bar, on the team strip's row. */
+#tier-legend { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .88rem; gap: .35rem 1.1rem; margin-left: auto; }
+.tier-legend-title { font-weight: 600; }
+.tier-key { --tier: var(--tier-ok); align-items: center; display: inline-flex; gap: .35rem; }
+.tier-key[data-tier='warn'] { --tier: var(--tier-warn); }
+.tier-key[data-tier='long'] { --tier: var(--tier-long); }
+.tier-key .swatch { background: var(--tier); border-radius: 999px; height: 8px; width: 1.4rem; }
+.tier-key .i { color: var(--tier); }
+.tier-key b { color: var(--text); font-variant-numeric: tabular-nums; }
+
 /*
  * The board: a lane for each stage, in one row that scrolls sideways only when the lanes cannot all be 14rem wide.
  * The script sets the columns, as an empty stage's is narrow.
@@ -276,9 +291,24 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 .queue h3 .stage-name { min-width: 0; overflow-wrap: anywhere; }
 .queue h3 .count { background: var(--surface); margin-left: auto; }
 .col-body { display: flex; flex-direction: column; gap: .6rem; padding: .4rem; }
+
+/* Under a column's title: a thin bar of its wait tiers, then short facts. Only the marks wear the tier colours. */
+.col-stats { display: grid; gap: .4rem; padding: 0 .7rem .2rem; }
+.tier-bar { background: var(--surface); border-radius: 999px; display: flex; gap: 2px; height: 8px; overflow: hidden; }
+.tier-bar span { flex-basis: 0; min-width: 8px; }
+.tier-bar [data-tier='ok'] { background: var(--tier-ok); }
+.tier-bar [data-tier='warn'] { background: var(--tier-warn); }
+.tier-bar [data-tier='long'] { background: var(--tier-long); }
+.col-facts { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .88rem; font-variant-numeric: tabular-nums; gap: .1rem .8rem; }
+.col-fact { align-items: center; display: inline-flex; gap: .3rem; white-space: nowrap; }
+.col-longest[data-tier='warn'] .i { color: var(--tier-warn); }
+.col-longest[data-tier='long'] .i, .col-over .i { color: var(--tier-long); }
+.col-over, .col-staff[data-mood='idle'], .col-staff[data-mood='none'] { color: var(--text); font-weight: 600; }
+.col-staff[data-mood='idle'] .i { color: var(--tier-ok); }
+.col-staff[data-mood='none'] .i { color: var(--tier-warn); }
 .queue.collapsed { align-self: stretch; background: transparent; border: 1.5px dashed var(--line-strong); min-height: 14rem; }
 .queue.collapsed h3 { color: var(--faint); flex-direction: column; padding: .65rem 0; }
-.queue.collapsed h3 .tile, .queue.collapsed .col-body { display: none; }
+.queue.collapsed h3 .tile, .queue.collapsed .col-stats, .queue.collapsed .col-body { display: none; }
 .queue.collapsed h3 .count { margin: 0; order: -1; }
 .queue.collapsed .stage-name { writing-mode: vertical-rl; }
 

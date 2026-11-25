@@ -10,6 +10,16 @@
     const WAIT_WARN_SECONDS = 5 * 60;
     const WAIT_LONG_SECONDS = 15 * 60;
 
+    /**
+     * The three wait tiers, with their label and icon. A tier is a status: the legend shows its icon and its words,
+     * never its colour alone.
+     */
+    const TIERS: [Tier, string, string][] = [
+        [ 'ok', 'ไม่ถึง 5 นาที', 'check' ],
+        [ 'warn', '5–15 นาที', 'clock' ],
+        [ 'long', 'เกิน 15 นาที', 'alert' ]
+    ];
+
     /** How long a notice that something went well stays; one that something went wrong stays until it is closed. */
     const OK_NOTICE_MS = 5000;
 
@@ -118,6 +128,8 @@
         /** The room's consultation is not being recorded: its recorder bot was lost and no other had room. */
         unrecorded?: boolean;
     }
+
+    type Tier = 'long' | 'ok' | 'warn';
 
     type NhsoStatus = 'authenticated' | 'bypassed' | 'not_yet' | 'unavailable';
 
@@ -620,14 +632,176 @@
     }
 
     /**
-     * Draws each station as a team in a slim strip: how many of its staff are free and busy, and behind that who they
-     * are, each busy one with the patient they are with.
+     * The tier a wait falls in.
+     *
+     * @param {number} seconds - How long.
+     * @returns {string}
+     */
+    function tierOf(seconds: number): Tier {
+        if (seconds >= WAIT_LONG_SECONDS) {
+            return 'long';
+        }
+
+        return seconds >= WAIT_WARN_SECONDS ? 'warn' : 'ok';
+    }
+
+    /**
+     * How many of these entries wait in each tier.
+     *
+     * @param {Object[]} entries - Queue entries.
+     * @returns {Object} The count by tier.
+     */
+    function tierCounts(entries: IQueueEntry[]): Record<Tier, number> {
+        const counts = { long: 0,
+            ok: 0,
+            warn: 0 };
+
+        entries.forEach(entry => counts[tierOf(entry.waitedSeconds)]++);
+
+        return counts;
+    }
+
+    /**
+     * Whether an encounter's patient is in their own room: it is open, with a patient in it.
+     *
+     * @param {Object|undefined} room - The encounter's room, if it has one.
+     * @returns {boolean}
+     */
+    function isPatientIn(room?: IRoom): boolean {
+        return Boolean(room?.open && room.occupants.some(o => o.role === 'patient'));
+    }
+
+    /**
+     * Whether a patient waits to be called: they are in their own room, and no staff member is with them.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {Object[]} rooms - The rooms now.
+     * @returns {boolean}
+     */
+    function awaitsCall(entry: IQueueEntry, rooms: IRoom[]): boolean {
+        const room = rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
+
+        return !entry.at?.length && isPatientIn(room) && !room?.occupants.some(o => o.role === 'staff');
+    }
+
+    /**
+     * Makes what a column's head says of its queue: a bar of its wait tiers, then the longest wait, how many are past
+     * the limit, and its station's free staff.
+     *
+     * @returns {HTMLElement}
+     */
+    function createColumnStats(): HTMLElement {
+        const box = el('div', undefined, 'col-stats');
+        const bar = el('div', undefined, 'tier-bar');
+        const facts = el('div', undefined, 'col-facts');
+        const fact = (className: string, iconName: string) => {
+            const node = el('span', undefined, `col-fact ${className}`);
+
+            node.append(icon(iconName), el('span'));
+
+            return node;
+        };
+
+        bar.setAttribute('role', 'img');
+        TIERS.forEach(([ tier ]) => bar.appendChild(el('span')).setAttribute('data-tier', tier));
+        facts.append(fact('col-longest', 'clock'), fact('col-over', 'alert'), fact('col-staff', 'users'));
+        box.append(bar, facts);
+
+        return box;
+    }
+
+    /**
+     * Brings a column's head up to date with the patients shown in the column.
+     *
+     * @param {HTMLElement} box - What createColumnStats made.
+     * @param {Object[]} entries - The column's entries.
+     * @param {Object[]} teams - The teams of the stations that serve its stage.
+     * @param {Object[]} rooms - The rooms now.
+     * @returns {void}
+     */
+    function updateColumnStats(box: HTMLElement, entries: IQueueEntry[], teams: ITeam[], rooms: IRoom[]): void {
+        const find = (selector: string) => box.querySelector(selector) as HTMLElement;
+        const counts = tierCounts(entries);
+
+        TIERS.forEach(([ tier, label ]) => {
+            const segment = find(`.tier-bar [data-tier="${tier}"]`);
+            const count = counts[tier];
+
+            segment.hidden = !count;
+            segment.style.flexGrow = String(count);
+            segment.title = `${label}: ${count} ราย (${Math.round(count * 100 / (entries.length || 1))}%)`;
+        });
+        find('.tier-bar').setAttribute('aria-label',
+            TIERS.map(([ tier, label ]) => `${label} ${counts[tier]} ราย`).join(', '));
+
+        const longest = Math.max(0, ...entries.map(e => e.waitedSeconds));
+
+        find('.col-longest').dataset.tier = tierOf(longest);
+        setText(find('.col-longest span'), `นานสุด ${waited(longest)}`);
+        find('.col-over').hidden = !counts.long;
+        setText(find('.col-over span'), `เกินเกณฑ์ ${counts.long}`);
+
+        // A stage that no station serves says nothing of staff.
+        const staff = find('.col-staff');
+        const free = teams.reduce((n, team) => n + team.free.length, 0);
+        const callable = entries.some(entry => awaitsCall(entry, rooms));
+        let mood = '';
+        let text = `ว่าง ${free} คน`;
+
+        if (callable && free) {
+            mood = 'idle';
+            text += ' เรียกได้';
+        } else if (callable) {
+            mood = 'none';
+            text = 'ไม่มีคนว่าง';
+        }
+        staff.hidden = !teams.length;
+        staff.dataset.mood = mood;
+        setText(find('.col-staff span'), text);
+
+        const listed = (members: ITeamMember[]) => members.map(m => m.name || 'ไม่ระบุชื่อ').join(', ') || '—';
+
+        staff.title = teams
+            .map(team => `${team.id}: ว่าง ${listed(team.free)} · ไม่ว่าง ${listed(team.busy)}`)
+            .join('\n');
+    }
+
+    /**
+     * Draws the legend of the columns' wait bars, with the whole board's count in each tier.
+     *
+     * @param {Object} queues - The queues by stage.
+     * @returns {void}
+     */
+    function drawLegend(queues: Record<string, IQueueEntry[]>): void {
+        const legend = $('tier-legend');
+
+        if (!legend.childElementCount) {
+            legend.appendChild(el('span', 'เวลารอ', 'tier-legend-title'));
+            TIERS.forEach(([ tier, label, iconName ]) => {
+                const key = el('span', undefined, 'tier-key');
+
+                key.dataset.tier = tier;
+                key.append(el('i', undefined, 'swatch'), icon(iconName), el('span', label, 'tier-name'), el('b'));
+                legend.appendChild(key);
+            });
+        }
+
+        const counts = tierCounts(STAGES.flatMap(([ id ]) => queues[id] ?? []));
+
+        TIERS.forEach(([ tier ]) => setText(
+            legend.querySelector(`[data-tier="${tier}"] b`) as Element, String(counts[tier])));
+    }
+
+    /**
+     * Draws each station as a team in a slim strip: a dot for each of its staff, how many are free and busy, and
+     * behind that who they are, each busy one with the patient they are with.
      *
      * @param {Object[]} teams - The teams.
      * @returns {void}
      */
     function drawTeams(teams: ITeam[]): void {
-        $('teams-section').hidden = !teams.length;
+        // The wait legend shares the strip's row, and stays when there is no station.
+        $('teams-label').hidden = !teams.length;
         arrange($('team-list'), teams.map(team => {
             const node = kept(teamNodes, team.id, () => createTeam(team.id));
 
@@ -648,7 +822,8 @@
         const summary = el('summary');
 
         node.dataset.station = station;
-        summary.append(el('b', station), el('span', undefined, 'team-free'), el('span', undefined, 'team-busy'));
+        summary.append(el('b', station), el('span', undefined, 'team-dots'), el('span', undefined, 'team-free'),
+            el('span', undefined, 'team-busy'));
         node.append(summary, el('div', undefined, 'team-pop'));
 
         return node;
@@ -668,6 +843,23 @@
         setText(node.querySelector('.team-free') as Element, `ว่าง ${team.free.length}`);
         setText(node.querySelector('.team-busy') as Element, `ไม่ว่าง ${team.busy.length}`);
         (node.querySelector('summary') as HTMLElement).title = stage;
+
+        const dots = node.querySelector('.team-dots') as HTMLElement;
+
+        if (changed(dots, [ team.free, team.busy ])) {
+            const dot = (state: 'busy' | 'free', m: ITeamMember, doing: string) => {
+                const mark = el('i', undefined, 'team-dot');
+
+                mark.dataset.state = state;
+                mark.title = `${m.name || 'ไม่ระบุชื่อ'}: ${doing}`;
+
+                return mark;
+            };
+
+            dots.textContent = '';
+            dots.append(...team.free.map(m => dot('free', m, 'ว่าง')),
+                ...team.busy.map(m => dot('busy', m, `กับ ${m.hn}`)));
+        }
         if (!changed(pop, [ stage, team.free, team.busy ])) {
             return;
         }
@@ -695,9 +887,12 @@
      *
      * @param {Object} queues - The queues by stage.
      * @param {Object} examination - Examination's queue split by doctor.
+     * @param {Object[]} teams - The stations' teams.
+     * @param {Object[]} rooms - The rooms now.
      * @returns {void}
      */
-    function drawQueues(queues: Record<string, IQueueEntry[]>, examination: IExamination): void {
+    function drawQueues(queues: Record<string, IQueueEntry[]>, examination: IExamination, teams: ITeam[],
+            rooms: IRoom[]): void {
         const list = $('queue-list');
         const focused = document.activeElement as HTMLElement | null;
         const drawn = new Set<string>();
@@ -720,6 +915,8 @@
             column.title = entries.length ? '' : `${name}: ไม่มีผู้ป่วย`;
             setText(column.querySelector('.stage-name') as Element, name);
             setText(column.querySelector('h3 .count') as Element, String(entries.length));
+            updateColumnStats(column.querySelector('.col-stats') as HTMLElement, entries,
+                teams.filter(team => team.stages.includes(id)), rooms);
             if (id === 'examination') {
                 drawExamination(column, body, examination, card);
             } else {
@@ -740,7 +937,7 @@
     }
 
     /**
-     * Makes a stage's column: its head, and the body its cards go in.
+     * Makes a stage's column: its head, what the head says of its queue, and the body its cards go in.
      *
      * @param {string} id - The stage's id.
      * @param {string} name - Its name.
@@ -755,7 +952,7 @@
         column.dataset.stage = id;
         title.appendChild(el('span', undefined, 'tile')).appendChild(icon(iconName));
         title.append(el('span', name, 'stage-name'), el('span', undefined, 'count'));
-        column.append(title, el('div', undefined, 'col-body'));
+        column.append(title, createColumnStats(), el('div', undefined, 'col-body'));
         if (id === 'examination') {
             // The doctors the doctor fields suggest.
             column.appendChild(el('datalist')).id = 'doctor-list';
@@ -880,7 +1077,9 @@
         const nhso = NHSO_STATUSES[entry.encounterId];
         const seconds = entry.waitedSeconds;
 
-        ticket.dataset.tier = seconds >= WAIT_LONG_SECONDS ? 'long' : seconds >= WAIT_WARN_SECONDS ? 'warn' : '';
+        const tier = tierOf(seconds);
+
+        ticket.dataset.tier = tier === 'ok' ? '' : tier;
 
         // A card in trouble wears the same red bar as one that has waited too long.
         ticket.dataset.trouble = String(noDoctor || nhso === 'unavailable');
@@ -1679,7 +1878,8 @@
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     drawTeams(state.teams);
-                    drawQueues(state.queues, state.examination);
+                    drawLegend(state.queues);
+                    drawQueues(state.queues, state.examination, state.teams, state.rooms);
 
                     // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
                     // lose its place.
