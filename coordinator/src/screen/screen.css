@@ -143,6 +143,25 @@ h1 { font-size: 1.2rem; font-weight: 700; line-height: 1.3; }
 .stat strong { font-size: 1.25rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 .stat-label { color: var(--muted); font-size: .88rem; font-weight: 500; grid-column: 2; }
 
+/* The moves' figure is a button to the rooms view; a stuck move turns it amber and shows how many are stuck. */
+button.stat { background: transparent; border-radius: 0; border-width: 0 0 0 1px; justify-content: start; row-gap: 0; text-align: left; }
+button.stat:hover { background: var(--surface-2); }
+.stat[data-stuck='true'] { --tone: var(--warn); --tone-soft: var(--warn-soft); grid-template-columns: auto auto auto; }
+.stat-stuck {
+    align-items: center;
+    background: var(--warn-soft);
+    border-radius: 6px;
+    color: var(--warn);
+    display: inline-flex;
+    font-size: .88rem;
+    font-weight: 700;
+    gap: .2rem;
+    grid-column: 3;
+    grid-row: 1 / span 2;
+    padding: .1rem .4rem;
+}
+.stat-stuck .i { height: .85rem; width: .85rem; }
+
 /* NHSO: today's bypass state as a chip, which opens the control that declares or cancels it. */
 .nhso { position: relative; }
 #nhso-chip { border-radius: 999px; font-size: .88rem; }
@@ -456,6 +475,8 @@ button.card-go.primary:hover:not(:disabled) { background: var(--accent); color: 
 .badge.at { background: var(--surface-3); color: var(--text); }
 .badge.video { background: var(--accent-soft); color: var(--accent); }
 .badge.next { background: var(--ok-soft); color: var(--ok); }
+.badge.qwait { color: var(--text); }
+.badge.qdone { background: var(--ok-soft); color: var(--ok); }
 .badge.rec { background: var(--danger-soft); color: var(--danger); }
 .badge.rec::before { animation: pulse 2s ease-in-out infinite; background: currentColor; border-radius: 50%; content: ''; height: 7px; width: 7px; }
 .badge.moving { background: var(--accent-soft); color: var(--accent); white-space: normal; }

@@ -6,6 +6,7 @@ import {
     coordinatorUnavailableReason,
     getAudit,
     getQueues,
+    postQuestionnaire,
     screenUrl,
     showScreenView,
     waitForRoom,
@@ -21,6 +22,8 @@ setTestProperties(__filename, {
     description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, \
 sends the patient on from their card to the next stage, picks another stage for them, marks the encounter done from \
 their card at the last stage, and moves a staff member from their lounge into a patient\'s room. \
+The patient\'s card says that a health questionnaire waits for its answers, and then that it is answered. The header \
+counts the moves under way, and its figure leads to the rooms and moves. \
 A patient is offered no move, since patients stay in their own room (ADR 0011). A staff member being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
 staff member, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
@@ -41,6 +44,7 @@ describe('Coordinator: acting from the screen', () => {
     let a: Participant;
     let b: Participant;
     let nurseBrowser: Participant;
+    let patientBrowser: Participant;
 
     /**
      * Opens the screen in a participant's browser and signs a coordinator in.
@@ -82,7 +86,7 @@ describe('Coordinator: acting from the screen', () => {
         }
 
         hn = uniqueHn('ACT');
-        await joinMuc({
+        patientBrowser = await joinMuc({
             name: 'p4',
             token: generateToken({
                 displayName: patient.name,
@@ -118,6 +122,26 @@ describe('Coordinator: acting from the screen', () => {
         await a.driver.waitUntil(async () => !(await roomText(a, room)).includes('ยังไม่มี encounter'),
             { timeout: 15_000, timeoutMsg: 'the encounter was not started' });
         expect((await getQueues()).waiting.some(e => e.hn?.toLowerCase() === room)).toBe(true);
+    });
+
+    it('says on the card whether a health questionnaire waits for answers or is answered', async () => {
+        const room = hn.toLowerCase();
+        const id = (await getQueues()).waiting.find(e => e.hn?.toLowerCase() === room)!.encounterId;
+        const cardSays = (text: string) => a.driver.waitUntil(async () =>
+            (await (await a.driver.$(`.queue-entry[data-encounter="${id}"]`)).getText()).includes(text),
+        { timeout: 15_000, timeoutMsg: `the card does not say "${text}"` });
+
+        await showScreenView(a, 'queue');
+        expect((await postQuestionnaire(id, 'pain')).status).toBe(201);
+        await cardSays('รอคำตอบแบบสอบถาม 1');
+
+        // The one question of "pain".
+        const overlay = await patientBrowser.driver.$('#coordinator-questionnaire');
+
+        await overlay.waitForDisplayed({ timeout: 15_000 });
+        await patientBrowser.driver.$('#coordinator-questionnaire-0-0').click();
+        await patientBrowser.driver.$('#coordinator-questionnaire-submit').click();
+        await cardSays('ตอบแบบสอบถามแล้ว');
     });
 
     it('sends a patient on from their card, to a picked stage, and marks it done at the last stage', async () => {
@@ -205,7 +229,10 @@ describe('Coordinator: acting from the screen', () => {
 
         await showScreenView(b, 'rooms');
         await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
-            async () => (await roomText(screen, LOUNGE)).includes('กำลังย้าย'),
+
+            // The move in the lounge, and in the header's count, which other specs' moves may add to.
+            async () => (await roomText(screen, LOUNGE)).includes('กำลังย้าย')
+                && Number(await (await screen.driver.$('#stat-moving')).getText()) >= 1,
             { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
 
         await cancelMoveNotice(nurseBrowser);
@@ -234,6 +261,12 @@ describe('Coordinator: acting from the screen', () => {
 
         await b.driver.waitUntil(async () => (await (await b.driver.$('#notice')).getText()).includes('ห้องปลายทางยังไม่เปิด'),
             { timeout: 10_000, timeoutMsg: 'the reason is not shown' });
+    });
+
+    it('leads from the header\'s figure of moves to the rooms and moves', async () => {
+        await showScreenView(a, 'queue');
+        await (await a.driver.$('#stat-moves')).click();
+        await (await a.driver.$('#view-rooms')).waitForDisplayed({ timeout: 5_000 });
     });
 
     it('names the coordinator in the audit log for what they did, not the system', async () => {
