@@ -33,6 +33,8 @@ done; sends the patient on from their card to the next stage, picks another stag
 from their card at the last stage, and moves a staff member from their lounge into a patient\'s room. \
 The patient\'s card says that a health questionnaire waits for its answers, and then that it is answered. The header \
 counts the moves under way, and its figure leads to the rooms and moves. \
+The attention list counts what needs the coordinator, as the tab\'s title does; its items open the patient\'s panel, \
+or the rooms for a move, and a refused move stays in it until it is dismissed, in that tab only. \
 A patient is offered no move, since patients stay in their own room (ADR 0011). A staff member being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
 staff member, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
@@ -54,6 +56,9 @@ describe('Coordinator: acting from the screen', () => {
     let b: Participant;
     let nurseBrowser: Participant;
     let patientBrowser: Participant;
+
+    // The room, which nobody is in, that coordinator B's refused move was to.
+    const closedRoom = `closed-${uuidv4()}`;
 
     /**
      * Opens the screen in a participant's browser and signs a coordinator in.
@@ -83,6 +88,61 @@ describe('Coordinator: acting from the screen', () => {
 
             return card ? (card as HTMLElement).innerText : '';
         }, room);
+    }
+
+    /**
+     * Reads what the attention list and the tab's title count, at one moment.
+     *
+     * @param {Participant} browser - Whose screen.
+     * @returns {Promise<Object>}
+     */
+    function attention(browser: Participant): Promise<{ count: string; items: string[]; title: string; }> {
+        return browser.driver.execute(() => {
+            return {
+                count: document.querySelector('#att-count')?.textContent ?? '',
+                items: Array.from(document.querySelectorAll('#att-list .att-item')).map(e => e.textContent ?? ''),
+                title: document.title
+            };
+        });
+    }
+
+    /**
+     * Expects the tab's title and the list's count to say how many items the list has.
+     *
+     * @param {Object} seen - What was read.
+     * @returns {void}
+     */
+    function expectCounted({ count, items, title }: { count: string; items: string[]; title: string; }) {
+        const name = 'หน้าจอผู้ประสานงาน';
+
+        expect(count).toBe(String(items.length));
+        expect(title).toBe(items.length ? `(${items.length}) ${name}` : name);
+    }
+
+    /**
+     * Opens the attention list, if it is closed, and clicks a part of the item that says so.
+     *
+     * @param {Participant} browser - Whose screen.
+     * @param {string} text - What the item says.
+     * @param {string} part - Which part of it.
+     * @returns {Promise<void>}
+     */
+    async function clickAttention(browser: Participant, text: string, part: '.att-dismiss' | '.att-open') {
+        await showScreenView(browser, 'queue');
+        await browser.driver.waitUntil(async () => (await attention(browser)).items.some(item => item.includes(text)),
+            { timeout: 15_000, timeoutMsg: `the attention list has no item that says "${text}"` });
+
+        const toggle = await browser.driver.$('#att-toggle');
+
+        if (await toggle.getAttribute('aria-expanded') !== 'true') {
+            await toggle.click();
+        }
+        await browser.driver.execute((says: string, selector: string) => {
+            const item = Array.from(document.querySelectorAll('#att-list .att-item'))
+                .find(e => e.textContent?.includes(says))!;
+
+            (item.querySelector(selector) as HTMLElement).click();
+        }, text, part);
     }
 
     it('setup', async () => {
@@ -370,10 +430,53 @@ describe('Coordinator: acting from the screen', () => {
             typed.value = to;
             typed.dispatchEvent(new Event('input'));
             (line.querySelector('.move-go') as HTMLElement).click();
-        }, LOUNGE, nurse.name, `closed-${uuidv4()}`);
+        }, LOUNGE, nurse.name, closedRoom);
 
         await b.driver.waitUntil(async () => (await (await b.driver.$('#notice')).getText()).includes('ห้องปลายทางยังไม่เปิด'),
             { timeout: 10_000, timeoutMsg: 'the reason is not shown' });
+    });
+
+    it('counts a refused move in the attention list and the tab\'s title, and leads from it to the rooms', async () => {
+        await clickAttention(b, closedRoom, '.att-open');
+        await (await b.driver.$('#view-rooms')).waitForDisplayed({ timeout: 5_000 });
+
+        const seen = await attention(b);
+
+        expect(seen.items.length).toBeGreaterThan(0);
+        expectCounted(seen);
+    });
+
+    it('keeps a dismissed move dismissed after a reload of the same tab, and shows it in another', async () => {
+        const listed = async (browser: Participant) =>
+            (await attention(browser)).items.some(item => item.includes(closedRoom));
+
+        await clickAttention(b, closedRoom, '.att-dismiss');
+        await b.driver.waitUntil(async () => !await listed(b), { timeoutMsg: 'the dismissed move is still listed' });
+        expectCounted(await attention(b));
+
+        await b.driver.refresh();
+        await (await b.driver.$('#board')).waitForDisplayed({ timeout: 10_000 });
+        await b.driver.waitUntil(async () => (await (await b.driver.$('#stat-rooms')).getText()) !== '0',
+            { timeoutMsg: 'the screen did not draw the state after the reload' });
+        expect(await listed(b)).toBe(false);
+        expectCounted(await attention(b));
+
+        // The other coordinator's screen has a tab of its own, which dismissed nothing.
+        await a.driver.waitUntil(() => listed(a), { timeoutMsg: 'the move is not listed in the other tab' });
+        expectCounted(await attention(a));
+    });
+
+    it('opens a patient\'s panel from an item of the attention list', async () => {
+        const id = (await postEncounter(uniqueHn('ATTN'))).body.id;
+        const noDoctor = 'ยังไม่มีแพทย์';
+
+        await postStage(id, 'examination');
+
+        // The item is the center's, so it may lead to another spec's patient with no doctor.
+        await clickAttention(a, noDoctor, '.att-open');
+        await (await a.driver.$('.sheet .doctor-to')).waitForDisplayed({ timeout: 10_000 });
+        await clickInPanel(a, '.sheet-close');
+        await postStage(id, 'done');
     });
 
     it('leads from the header\'s figure of moves to the rooms and moves', async () => {

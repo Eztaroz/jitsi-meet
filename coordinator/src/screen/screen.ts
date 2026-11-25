@@ -7,6 +7,13 @@
 
     /** Where the tab keeps the clinic its coordinator follows. */
     const CLINIC_KEY = 'coordinator-clinic';
+
+    /** Where the tab keeps the moves that failed or were refused, until dismissed, and the ids of those dismissed. */
+    const FAILED_MOVES_KEY = 'coordinator-failed-moves';
+    const DISMISSED_MOVES_KEY = 'coordinator-dismissed-moves';
+
+    /** The page's name, which the tab's title carries beside the count of the attention list's items. */
+    const SCREEN_NAME = document.title;
     const REFRESH_MS = 2000;
 
     /** How long a wait is before it is shown as long, and as too long. */
@@ -164,6 +171,36 @@
         state: string;
     }
 
+    /** A move that failed or was refused, as the tab keeps it: the state forgets a move after two minutes. */
+    interface IFailedMove {
+        destination?: string;
+        id: string;
+        origin: string;
+        reason?: string;
+        startedAt: string;
+        state: string;
+        who?: string;
+    }
+
+    /** One thing that needs the coordinator: a row of the attention list. */
+    interface IAttention {
+
+        /** Takes the item off the list; an item without it stays while its trouble does. */
+        dismiss?: () => void;
+        icon: string;
+
+        /** Which row it is, from one refresh to the next. */
+        key: string;
+
+        /** The kind of trouble. */
+        kind: string;
+
+        /** Takes the coordinator to what the item is about. */
+        open?: () => void;
+        severity: 'high' | 'mid';
+        text: string;
+    }
+
     interface IQueueEntry {
 
         /** The stations whose staff are in the patient's room now. */
@@ -256,6 +293,13 @@
     const groupNodes = new Map<string, HTMLElement>();
     const ticketNodes = new Map<string, HTMLElement>();
     const clinicNodes = new Map<string, HTMLButtonElement>();
+    const attentionNodes = new Map<string, HTMLLIElement>();
+
+    /** Whether the attention list shows its rows. */
+    let attentionOpen = false;
+
+    /** Why the last refresh could not read the state, if it could not: the database, or anything else. */
+    let unread: '' | 'database' | 'other' = '';
 
     /** The state the last refresh read, which picking a clinic draws the board from again. */
     let latest: IState | undefined;
@@ -559,6 +603,11 @@
         closeDetail(false);
         sessionStorage.removeItem(TOKEN_KEY);
         say();
+        latest = undefined;
+        unread = '';
+        attentionOpen = false;
+        document.title = SCREEN_NAME;
+        $('attention').hidden = true;
         $('signin').hidden = false;
         $('board').hidden = true;
         $('head').hidden = true;
@@ -2339,6 +2388,320 @@
         return new Date(at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
     }
 
+    /**
+     * Reads what the tab keeps under a key.
+     *
+     * @param {string} key - The key.
+     * @returns {Array} The list kept, or an empty one.
+     */
+    function stored<T>(key: string): T[] {
+        try {
+            return JSON.parse(sessionStorage.getItem(key) ?? '[]');
+        } catch {
+            return [];
+        }
+    }
+
+    /**
+     * Keeps the moves that failed or were refused, but for those dismissed: the state names a move for two minutes
+     * only, and one that nobody saw must not go unnoticed.
+     *
+     * @param {Object[]} moves - The moves under way and recent.
+     * @returns {void}
+     */
+    function keepFailedMoves(moves: IMove[]): void {
+        const dismissed = new Set(stored<string>(DISMISSED_MOVES_KEY));
+        const failures = new Map(stored<IFailedMove>(FAILED_MOVES_KEY).map(m => [ m.id, m ]));
+
+        moves.filter(m => (m.state === 'failed' || m.state === 'refused') && !dismissed.has(m.id))
+            .forEach(({ destination, endpointId, id, origin, reason, startedAt, state }) => {
+                failures.set(id, { destination,
+                    id,
+                    origin,
+                    reason,
+                    startedAt,
+                    state,
+                    who: names[endpointId] ?? failures.get(id)?.who });
+            });
+        sessionStorage.setItem(FAILED_MOVES_KEY, JSON.stringify(Array.from(failures.values())));
+    }
+
+    /**
+     * Takes a failed or refused move off this tab's attention list, for good.
+     *
+     * @param {string} id - The move.
+     * @returns {void}
+     */
+    function dismissMove(id: string): void {
+        sessionStorage.setItem(DISMISSED_MOVES_KEY,
+            JSON.stringify([ ...stored<string>(DISMISSED_MOVES_KEY), id ]));
+        sessionStorage.setItem(FAILED_MOVES_KEY,
+            JSON.stringify(stored<IFailedMove>(FAILED_MOVES_KEY).filter(m => m.id !== id)));
+        drawAttention();
+        $('att-toggle').focus();
+    }
+
+    /**
+     * Opens a patient's panel from the attention list, which is the center's: a card that the clinic filter has taken
+     * off the board is brought back first.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @returns {void}
+     */
+    function openPatient(entry: IQueueEntry): void {
+        if (CLINIC_SHOWN && entry.clinic !== CLINIC_SHOWN) {
+            pickClinic('');
+        }
+        openDetail(entry.encounterId);
+    }
+
+    /**
+     * Every patient of the center who is in a queue, whatever the clinic filter shows, in the stages' order.
+     *
+     * @returns {Object[]}
+     */
+    function allEntries(): IQueueEntry[] {
+        return STAGES.flatMap(([ id ]) => latest?.queues[id] ?? []);
+    }
+
+    /**
+     * Names patients by their HNs.
+     *
+     * @param {Object[]} entries - Their queue entries.
+     * @returns {string}
+     */
+    function hnList(entries: IQueueEntry[]): string {
+        return entries.map(e => e.hn || '—').join(', ');
+    }
+
+    /*
+     * The kinds of trouble the attention list holds. Each function returns the items of its kind there are now; to add
+     * a kind, write one and put it in ATTENTION_KINDS at its place in the order of urgency.
+     */
+
+    /**
+     * The database cannot be read: what the screen shows is from before.
+     *
+     * @returns {Object[]}
+     */
+    function databaseAttention(): IAttention[] {
+        return unread === 'database'
+            ? [ { icon: 'alert',
+                key: 'database',
+                kind: 'database',
+                severity: 'high',
+                text: 'เชื่อมต่อฐานข้อมูลไม่ได้ หน้าจออาจไม่อัปเดต' } ]
+            : [];
+    }
+
+    /**
+     * The moves that failed or were refused and that this tab has not dismissed, the latest first.
+     *
+     * @returns {Object[]}
+     */
+    function moveAttention(): IAttention[] {
+        return stored<IFailedMove>(FAILED_MOVES_KEY)
+            .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt))
+            .map(m => {
+                const who = `${m.who || 'ผู้เข้าร่วม'} ไป ${m.destination || '?'}`;
+                const what = m.state === 'refused' ? `${OUTCOMES.refused} ${who}` : `ย้าย ${who} ไม่สำเร็จ`;
+                const why = m.reason ? `: ${REASONS[m.reason] || m.reason}` : '';
+
+                return { dismiss: () => dismissMove(m.id),
+                    icon: 'swap',
+                    key: `move|${m.id}`,
+                    kind: 'move',
+                    open: () => {
+                        showView('rooms');
+                        revealRoom(m.origin);
+                    },
+                    severity: 'high',
+                    text: `${what}${why} (${clockTime(m.startedAt)})` };
+            });
+    }
+
+    /**
+     * The long waits, one item for each stage that has any, which leads to the longest.
+     *
+     * @returns {Object[]}
+     */
+    function longWaitAttention(): IAttention[] {
+        return STAGES.flatMap(([ id, name ]): IAttention[] => {
+            const long = (latest?.queues[id] ?? []).filter(e => tierOf(e.waitedSeconds) === 'long');
+
+            if (!long.length) {
+                return [];
+            }
+
+            const longest = long.reduce((a, b) => b.waitedSeconds > a.waitedSeconds ? b : a);
+
+            return [ { icon: 'clock',
+                key: `long-wait|${id}`,
+                kind: 'long-wait',
+                open: () => openPatient(longest),
+                severity: 'high',
+                text: `รอนานเกิน ${WAIT_LONG_SECONDS / 60} นาที: ${name} ${long.length} ราย (นานสุด HN ${
+                    longest.hn || '—'} ${Math.floor(longest.waitedSeconds / 60)} นาที)` } ];
+        });
+    }
+
+    /**
+     * One item for the patients it is about, if there are any, which leads to the first of them.
+     *
+     * @param {string} kind - The kind of trouble.
+     * @param {string} severity - How urgent it is.
+     * @param {string} iconName - Its icon.
+     * @param {Object[]} entries - The patients' queue entries.
+     * @param {string} text - What the item says.
+     * @returns {Object[]}
+     */
+    function patientsAttention(kind: string, severity: IAttention['severity'], iconName: string,
+            entries: IQueueEntry[], text: string): IAttention[] {
+        return entries.length
+            ? [ { icon: iconName,
+                key: kind,
+                kind,
+                open: () => openPatient(entries[0]),
+                severity,
+                text } ]
+            : [];
+    }
+
+    /**
+     * The patients whose NHSO authentication cannot be asked.
+     *
+     * @returns {Object[]}
+     */
+    function nhsoUnavailableAttention(): IAttention[] {
+        const entries = allEntries().filter(e => NHSO_STATUSES[e.encounterId] === 'unavailable');
+
+        return patientsAttention('nhso-unavailable', 'high', 'key', entries,
+            `${NHSO_LABELS.unavailable[0]} ${entries.length} ราย: HN ${hnList(entries)}`);
+    }
+
+    /**
+     * The patients in examination who have no doctor.
+     *
+     * @returns {Object[]}
+     */
+    function noDoctorAttention(): IAttention[] {
+        const entries = latest?.examination.unassigned ?? [];
+
+        return patientsAttention('no-doctor', 'mid', 'stethoscope', entries,
+            `${STAGE_NAMES.examination}: ${entries.length} รายยังไม่มีแพทย์`);
+    }
+
+    /**
+     * The patients who have not authenticated with the NHSO yet.
+     *
+     * @returns {Object[]}
+     */
+    function nhsoNotYetAttention(): IAttention[] {
+        const entries = allEntries().filter(e => NHSO_STATUSES[e.encounterId] === 'not_yet');
+
+        return patientsAttention('nhso-not-yet', 'mid', 'key', entries,
+            `${NHSO_LABELS.not_yet[0]} ${entries.length} ราย`);
+    }
+
+    /** The kinds of trouble, the most urgent first. */
+    const ATTENTION_KINDS: (() => IAttention[])[] = [
+        databaseAttention,
+        moveAttention,
+        longWaitAttention,
+        nhsoUnavailableAttention,
+        noDoctorAttention,
+        nhsoNotYetAttention
+    ];
+
+    /**
+     * Draws the attention list, and puts its count in the tab's title, where it is seen from other programs.
+     *
+     * @returns {void}
+     */
+    function drawAttention(): void {
+        const items = ATTENTION_KINDS.flatMap(kind => kind());
+        const calm = !items.length;
+        const banner = $('attention');
+        const list = $('att-list');
+        const toggle = $('att-toggle');
+        const focused = document.activeElement as HTMLElement | null;
+
+        document.title = calm ? SCREEN_NAME : `(${items.length}) ${SCREEN_NAME}`;
+
+        // A screen that cannot read the state does not say that all is well.
+        banner.hidden = calm && unread !== '';
+        banner.dataset.calm = String(calm);
+        setText($('att-count'), String(items.length));
+        setText($('att-first'), calm ? 'ไม่มีเรื่องที่ต้องจัดการ' : `ต้องจัดการ · ${items[0].text}`);
+        setText(toggle, attentionOpen ? 'ซ่อน' : `ดูทั้งหมด (${items.length})`);
+        toggle.setAttribute('aria-expanded', String(attentionOpen));
+        toggle.hidden = calm;
+        list.hidden = calm || !attentionOpen;
+        arrange(list, items.map(item => {
+            const row = kept(attentionNodes, item.key, () => createAttention(item));
+
+            updateAttention(row, item);
+
+            return row;
+        }));
+        attentionNodes.forEach((row, key) => row.isConnected || attentionNodes.delete(key));
+        if (focused?.isConnected && document.activeElement !== focused) {
+            focused.focus({ preventScroll: true });
+        }
+    }
+
+    /**
+     * Makes a row of the attention list: its kind's icon and what it says, which lead to what it is about if it can
+     * be led to, and its dismissal if it can be dismissed.
+     *
+     * @param {Object} item - The item.
+     * @returns {HTMLLIElement}
+     */
+    function createAttention(item: IAttention): HTMLLIElement {
+        const row = el('li', undefined, 'att-item');
+        const what = el(item.open ? 'button' : 'span', undefined, 'att-open');
+
+        row.dataset.key = item.key;
+        row.dataset.kind = item.kind;
+        row.dataset.sev = item.severity;
+        if (item.open) {
+            what.setAttribute('type', 'button');
+        }
+        what.append(icon(item.icon), el('span', undefined, 'att-text'));
+        row.appendChild(what);
+        if (item.dismiss) {
+            row.appendChild(el('button', 'รับทราบ', 'att-dismiss ghost')).setAttribute('type', 'button');
+        }
+
+        return row;
+    }
+
+    /**
+     * Brings a row of the attention list up to date.
+     *
+     * @param {HTMLLIElement} row - The row.
+     * @param {Object} item - Its item now.
+     * @returns {void}
+     */
+    function updateAttention(row: HTMLLIElement, item: IAttention): void {
+        const dismiss = row.querySelector<HTMLElement>('.att-dismiss');
+
+        setText(row.querySelector('.att-text') as Element, item.text);
+        (row.querySelector('.att-open') as HTMLElement).onclick = () => item.open?.();
+        if (dismiss) {
+            // The second click of a double click would dismiss whichever item has moved under the pointer.
+            dismiss.onclick = event => {
+                if (event.detail < 2) {
+                    item.dismiss?.();
+                }
+            };
+        }
+    }
+
+    $('att-toggle').addEventListener('click', () => {
+        attentionOpen = !attentionOpen;
+        drawAttention();
+    });
     $('stat-moves').addEventListener('click', () => showView('rooms'));
     $('nhso-chip').addEventListener('click', () => showNhsoControl(Boolean($('nhso-pop').hidden)));
 
@@ -2430,7 +2793,13 @@
                     });
                 }
                 if (!response.ok) {
-                    throw new Error('state');
+                    return response.json()
+                        .catch(() => {
+                            return {};
+                        })
+                        .then((body: { error?: string; }) => {
+                            throw new Error(body.error);
+                        });
                 }
 
                 // The desk's clock may be wrong: how long a move has run is told by the service's.
@@ -2471,12 +2840,17 @@
 
                     // After the rooms, which tell the movers' names.
                     drawMoves(state.moves, now);
+                    unread = '';
+                    keepFailedMoves(state.moves);
+                    drawAttention();
                 });
             })
-            .catch(() => {
+            .catch((error: Error) => {
                 showLive(false);
                 $('problem').hidden = false;
                 $('problem').textContent = 'ติดต่อระบบไม่ได้ กำลังลองใหม่';
+                unread = error.message === 'database' ? 'database' : 'other';
+                drawAttention();
             })
             .then(() => {
                 clearTimeout(timer);

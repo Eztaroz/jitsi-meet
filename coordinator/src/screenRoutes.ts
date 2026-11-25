@@ -7,6 +7,7 @@ import { stripTypeScriptTypes } from 'node:module';
 
 import type { CoordinatorService } from './coordinatorService.ts';
 import { HttpError, send } from './http.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { describeSent } from './questionnaires.ts';
 import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
@@ -171,6 +172,11 @@ export function createScreenRoutes({ act, screen, service }: {
         } catch (error) {
             if (error instanceof ProsodyUnavailableError) {
                 throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
+            }
+
+            // The screen lists a database it cannot be read from as a trouble of its own.
+            if (error instanceof DatabaseError && pathname === '/screen/api/state') {
+                throw new HttpError(503, 'database');
             }
             throw error;
         }

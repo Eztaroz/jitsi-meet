@@ -166,6 +166,8 @@ From the screen the coordinator can also act. Every action goes through the same
 - change an encounter's stage: its card sends it on to the next stage, and the panel that opens from the card sends it to any stage or marks it done ("เสร็จสิ้น"). The panel also sets the doctor, plays and stops waiting videos and sends health questionnaires;
 - declare today an [NHSO bypass day](#nhso-authentication), or cancel it the same day, from the bar above the queues.
 
+Above the queue, one list says what needs the coordinator, the most urgent first, and the browser tab's title carries its count: a database the state cannot be read from (`503` with `{"error": "database"}` from `GET /screen/api/state`), a move that failed or was refused, the waits over 15 minutes (one item per stage), patients whose NHSO authentication cannot be checked, patients in examination with no doctor and patients not yet authenticated. The list is the whole center's, whatever the clinic filter shows. An item opens the patient's panel, or the rooms view for a move. A failed or refused move stays until the coordinator dismisses it ("รับทราบ"); the screen keeps it, and what was dismissed, in that browser tab only. A move that ended more than two minutes before a tab was opened is not in its list.
+
 A participant being moved shows as "กำลังย้าย" on every coordinator's screen, and what came of each move is listed in Thai with its reason: moved, cancelled by the participant, refused, or failed. A refusal is also shown at once where the coordinator asked.
 
 It refreshes every two seconds. The coordinators' tokens cross the network over the web server's TLS only.

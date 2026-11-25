@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { CoordinatorService } from '../src/coordinatorService.ts';
 import { signToken } from '../src/jwt.ts';
+import { DatabaseError } from '../src/mariadbClient.ts';
 import type { Prosody } from '../src/prosody.ts';
 import type { RecorderBot } from '../src/recorderBot.ts';
 import { type ILayout, parseRoleMarker } from '../src/rooms.ts';
@@ -54,6 +55,7 @@ describe('the state of the coordinator screen', () => {
     let server: Server;
     let service: CoordinatorService;
     let state: () => Promise<IScreenState>;
+    let read: () => Promise<Response>;
     let store: Store;
 
     /**
@@ -137,16 +139,19 @@ describe('the state of the coordinator screen', () => {
         });
 
         server = createServer((req, res) => {
-            handle(req, res, req.headers.authorization?.replace('Bearer ', '')).catch(() => {
-                res.writeHead(500).end();
+            handle(req, res, req.headers.authorization?.replace('Bearer ', '')).catch(error => {
+                // As the service's server answers: the error's own status and message.
+                res.writeHead(error.status ?? 500, { 'content-type': 'application/json' })
+                    .end(JSON.stringify({ error: error.message }));
             });
         });
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
 
         const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/screen/api/state`;
 
+        read = () => fetch(url, { headers: { authorization: `Bearer ${jwt}` } });
         state = async () => {
-            const response = await fetch(url, { headers: { authorization: `Bearer ${jwt}` } });
+            const response = await read();
 
             assert.equal(response.status, 200);
 
@@ -158,6 +163,18 @@ describe('the state of the coordinator screen', () => {
         server.close();
         service.stop();
         store.close();
+    });
+
+    it('says that it is the database that cannot be asked, so that the screen can name that trouble', async () => {
+        await open(LAYOUT);
+        store.consultationsByRecording = () => {
+            throw new DatabaseError('the database did not answer in time');
+        };
+
+        const response = await read();
+
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), { error: 'database' });
     });
 
     describe('of a center with clinics', () => {

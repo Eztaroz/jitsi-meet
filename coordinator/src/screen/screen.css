@@ -239,6 +239,54 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
     text-align: center;
 }
 
+/*
+ * The attention list: a white card with a red edge and the item count, which opens to a row for each item. With no
+ * trouble it says so, in green.
+ */
+#attention { display: grid; gap: .5rem; }
+.att-bar, #att-list { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-sm); }
+.att-bar {
+    align-items: center;
+    border-left: 6px solid var(--danger);
+    border-radius: var(--radius);
+    display: flex;
+    gap: 1.25rem;
+    padding: .7rem 1rem .7rem 1.1rem;
+}
+#att-count {
+    background: var(--danger-soft);
+    border-radius: 10px;
+    color: var(--danger);
+    font-size: 1.5rem;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    min-width: 3rem;
+    padding: .2rem .7rem;
+    text-align: center;
+}
+#att-first { flex: 1; font-weight: 500; min-width: 0; overflow-wrap: anywhere; }
+.att-calm, #attention[data-calm='true'] #att-count { display: none; }
+#attention[data-calm='true'] .att-bar { border-left-color: var(--ok); color: var(--ok); }
+#attention[data-calm='true'] .att-calm { display: block; }
+#att-list { border-radius: var(--radius-sm); list-style: none; margin: 0; padding: .3rem 1rem; }
+.att-item { align-items: center; border-top: 1px solid var(--line); display: flex; gap: .6rem; }
+.att-item:first-child { border-top: 0; }
+.att-open {
+    align-items: center;
+    display: flex;
+    flex: 1;
+    gap: .6rem;
+    justify-content: flex-start;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    padding: .55rem .4rem;
+    text-align: left;
+}
+button.att-open { background: transparent; border: 0; border-radius: 6px; font-weight: 500; }
+button.att-open:hover { background: var(--surface-2); }
+.att-item[data-sev='high'] .att-open .i { color: var(--danger); }
+.att-item[data-sev='mid'] .att-open .i { color: var(--warn); }
+
 /* Team strip: a slim row, each station a chip that opens its names. */
 #teams-section { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem .75rem; }
 .teams-label { align-items: center; color: var(--muted); display: inline-flex; font-size: .88rem; font-weight: 600; gap: .4rem; }

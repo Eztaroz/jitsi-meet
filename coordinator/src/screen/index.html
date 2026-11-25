@@ -107,6 +107,17 @@
         <p id="problem" role="alert" hidden></p>
 
         <div id="view-queue" class="view">
+            <!-- What needs the coordinator, most urgent first. The script lists the items. -->
+            <section id="attention" aria-label="เรื่องที่ต้องจัดการ" hidden>
+                <div class="att-bar">
+                    <svg class="i att-calm" aria-hidden="true" focusable="false"><use href="#i-check"/></svg>
+                    <strong id="att-count">0</strong>
+                    <span id="att-first"></span>
+                    <button id="att-toggle" type="button" class="secondary" aria-expanded="false" aria-controls="att-list"></button>
+                </div>
+                <ul id="att-list" hidden></ul>
+            </section>
+
             <section id="teams-section" aria-label="ทีมของแต่ละสถานี">
                 <span id="teams-label" class="teams-label"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg>ทีม</span>
                 <div id="team-list"></div>
