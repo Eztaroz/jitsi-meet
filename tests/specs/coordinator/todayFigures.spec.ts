@@ -86,7 +86,7 @@ describe('Coordinator: today\'s figures', () => {
                 .map(b => b.querySelector(value)?.textContent ?? '');
 
             return {
-                hours: values('#today-hours .col-bar', '.col-value'),
+                hours: values('#today-hours .hour-bar', '.hour-value'),
                 stages: values('#today-stages .hbar', '.hbar-value')
             };
         });

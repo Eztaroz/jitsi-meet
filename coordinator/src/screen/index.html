@@ -110,8 +110,9 @@
 
         <div id="view-queue" class="view">
             <section id="teams-section" aria-label="ทีมของแต่ละสถานี">
-                <span class="teams-label"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg>ทีม</span>
+                <span id="teams-label" class="teams-label"><svg class="i" aria-hidden="true" focusable="false"><use href="#i-users"/></svg>ทีม</span>
                 <div id="team-list"></div>
+                <div id="tier-legend" role="group" aria-label="เวลารอของทั้งกระดาน"></div>
             </section>
 
             <div id="board-bar">
@@ -191,6 +192,11 @@
                 <ul id="outcomes" aria-live="polite"></ul>
                 <p class="empty activity-empty">ยังไม่มีการย้ายใน 2 นาทีที่ผ่านมา</p>
             </aside>
+        </div>
+
+        <!-- The open encounter's panel, drawn here by the script: a sheet over the board, with a scrim behind it. -->
+        <div id="detail" hidden>
+            <div id="scrim"></div>
         </div>
 
         <div id="notice" role="status" hidden>

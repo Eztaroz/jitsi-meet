@@ -3,9 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
 import {
+    clickInPanel,
     coordinatorUnavailableReason,
     getAudit,
     getExamination,
+    openEncounterPanel,
     postDoctor,
     postEncounter,
     postStage,
@@ -80,16 +82,9 @@ describe('Coordinator: per-doctor examination queues', () => {
             { timeoutMsg: 'the patient is not under their doctor' });
         expect(await groupOf(unassigned)).toBe('');
 
-        await screen.driver.execute((id: string, doctor: string) => {
-            const row = Array.from(document.querySelectorAll('#queue-examination .queue-entry'))
-                .find(e => (e as HTMLElement).dataset.encounter === id)!;
-            const controls = row.parentElement!.querySelector('.doctor-controls') as HTMLElement;
-            const input = controls.querySelector('input') as HTMLInputElement;
-
-            input.value = doctor;
-            input.dispatchEvent(new Event('input'));
-            (controls.querySelector('.doctor-set') as HTMLElement).click();
-        }, unassigned, doctorB);
+        await openEncounterPanel(screen, unassigned);
+        await (await screen.driver.$('.sheet .doctor-to')).setValue(doctorB);
+        await clickInPanel(screen, '.doctor-set');
 
         await screen.driver.waitUntil(async () => await groupOf(unassigned) === doctorB,
             { timeoutMsg: 'the doctor was not changed on the screen' });

@@ -323,6 +323,36 @@ export async function showScreenView(screen: Participant, view: 'queue' | 'rooms
     await (await screen.driver.$(`#views button[data-view="${view}"]`)).click();
 }
 
+/**
+ * Opens an encounter's panel on the screen by clicking its card.
+ *
+ * @param {Participant} screen - The browser the screen is open in, showing the queue.
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<void>}
+ */
+export async function openEncounterPanel(screen: Participant, encounterId: string): Promise<void> {
+    // The card's place number: a part of the card that is no button of its own.
+    const card = await screen.driver.$(`.queue-entry[data-encounter="${encounterId}"] .position`);
+
+    await card.waitForExist({ timeout: 15_000, timeoutMsg: 'the encounter has no card' });
+    await card.click();
+    await (await screen.driver.$('.sheet')).waitForDisplayed({ timeout: 10_000 });
+}
+
+/**
+ * Clicks something in the open panel, once it is there to be clicked.
+ *
+ * @param {Participant} screen - The browser the screen is open in.
+ * @param {string} selector - What, within the panel.
+ * @returns {Promise<void>}
+ */
+export async function clickInPanel(screen: Participant, selector: string): Promise<void> {
+    const target = await screen.driver.$(`.sheet ${selector}`);
+
+    await target.waitForClickable({ timeout: 10_000, timeoutMsg: `the panel offers no ${selector}` });
+    await target.click();
+}
+
 /** An audit entry as the API reports it. */
 export interface IAuditEntry {
     action?: 'choose' | 'play' | 'stop';
