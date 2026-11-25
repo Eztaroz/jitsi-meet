@@ -305,6 +305,7 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
 #board-bar[hidden] { display: none; }
 .board-bar-label { color: var(--muted); font-size: .88rem; font-weight: 600; }
 .card-badges .badge.clinic { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.card-badges .badge.total { background: var(--surface-3); color: var(--text); }
 #queue-list { display: grid; gap: .6rem; overflow-x: auto; padding-bottom: .5rem; }
 .queue { --tone: var(--accent); --tone-soft: var(--accent-soft); align-self: start; background: var(--lane); border-radius: var(--radius); min-width: 0; }
 .queue[data-stage='waiting'] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
@@ -528,6 +529,10 @@ button.step-pick:hover { background: var(--surface-2); }
 .step-name { flex: 1; min-width: 0; }
 .step[data-state='past']:not(.target) .step-name { color: var(--muted); }
 .step[data-state='current'] .sheet-tag { background: var(--surface); color: var(--accent); }
+.step-time { align-items: center; color: var(--muted); display: inline-flex; flex: none; font-size: .88rem; font-variant-numeric: tabular-nums; gap: .4rem; }
+.step-time-bar { background: var(--tier-ok); border-radius: 999px; display: block; height: 6px; min-width: 4px; }
+.step-time[data-tier='warn'] .step-time-bar { background: var(--tier-warn); }
+.step-time[data-tier='long'] .step-time-bar { background: var(--tier-long); }
 .step.target .sheet-tag { background: var(--accent); color: var(--on-accent); }
 
 .doctor-chips { display: flex; flex-wrap: wrap; gap: .5rem; }
