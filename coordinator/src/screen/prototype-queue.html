@@ -1,0 +1,2187 @@
+<!doctype html>
+<!--
+    PROTOTYPE, throwaway. Not part of the coordinator's screen and never served: screenRoutes.ts serves only the files
+    it names. Open this file straight in a browser (double-click it).
+
+    Question it answers: what should the coordinator screen's queue view look like?
+    Three variants of the queue view, switchable via `?variant=A|B|C` and the floating bar at the bottom.
+    Settled before the prototype (grilling, 2026-11-25) and shared by every variant: one-line header with the figures
+    and an NHSO chip, a "queue" view and a "rooms and moves" view, a slim team strip, columns per stage with empty
+    ones collapsed, compact tickets with one primary action, the rest in a panel on the right, an "attention" strip
+    on top, and the attention count in the tab's title.
+    What the variants disagree on: the shape of a ticket, how the attention strip reads, and how the detail panel sits.
+    All data is fake and lives in memory; every action only changes that memory.
+-->
+<html lang="th">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>หน้าจอผู้ประสานงาน</title>
+    <link rel="stylesheet" href="screen.css">
+    <style>
+        /* ---------- Readable for users aged 45 and over: Niramit, larger type, light theme only, higher contrast ---------- */
+        /* Niramit is self-hosted: the real screen may load nothing but its own files. Licence: fonts/OFL.txt. */
+        @font-face { font-family: 'Niramit'; font-weight: 400; font-display: swap; src: url('fonts/Niramit-Regular.ttf') format('truetype'); }
+        @font-face { font-family: 'Niramit'; font-weight: 500; font-display: swap; src: url('fonts/Niramit-Medium.ttf') format('truetype'); }
+        @font-face { font-family: 'Niramit'; font-weight: 600; font-display: swap; src: url('fonts/Niramit-SemiBold.ttf') format('truetype'); }
+        @font-face { font-family: 'Niramit'; font-weight: 700; font-display: swap; src: url('fonts/Niramit-Bold.ttf') format('truetype'); }
+
+        /* Declared after screen.css and without a media query, so these win over its dark tokens too: one light theme. */
+        :root {
+            color-scheme: light;
+            --bg: #eef1f5;
+            --surface: #fff;
+            --surface-2: #f5f7fa;
+            --surface-3: #e8ecf2;
+            --text: #0d1722;
+            --muted: #36414f;
+            --faint: #4f5b6a;
+            --line: #cfd6e0;
+            --line-strong: #9aa7b7;
+            --accent: #0b4fb3;
+            --accent-hover: #083f90;
+            --accent-soft: #e3edfc;
+            --on-accent: #fff;
+            --ok: #0b6a3a;
+            --ok-soft: #dcf2e5;
+            --warn: #8a4700;
+            --warn-soft: #ffeccc;
+            --danger: #b01e17;
+            --danger-soft: #fde4e2;
+            --lounge: #5f33a8;
+            --lounge-soft: #ede4fb;
+            --shadow-sm: 0 1px 2px rgb(13 23 34 / 8%);
+            --shadow-lg: 0 12px 32px -8px rgb(13 23 34 / 28%);
+        }
+        html { font-size: 18px; }
+        body { font: 400 1rem/1.55 'Niramit', 'Leelawadee UI', 'Segoe UI', system-ui, sans-serif; letter-spacing: .005em; }
+        h1 { font-size: 1.25rem; }
+        .tagline { font-size: .92rem; }
+        .badge, .count, .live { font-size: .88rem; font-weight: 600; }
+        .badge { padding: 1px 9px; }
+        button, select, input { font: inherit; font-size: 1rem; }
+        button { min-height: 2.4rem; font-weight: 600; }
+        .segmented button { font-size: 1rem; min-height: 2.2rem; padding: 4px 16px; }
+        .avatar { height: 2.2rem; width: 2.2rem; font-size: .95rem; }
+        .i { height: 1.2em; width: 1.2em; }
+
+        /* ---------- Shared frame: header, views, team strip, board grid ---------- */
+        body { overflow-x: hidden; }
+        .topbar { gap: 16px; padding-left: 20px; padding-right: 20px; }
+        .pv-figures { align-items: center; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: .92rem; color: var(--muted); }
+        .pv-figures b { color: var(--text); font-variant-numeric: tabular-nums; font-size: .95rem; }
+        .pv-figure { align-items: center; display: inline-flex; gap: 5px; }
+        .pv-figure .i { height: 15px; width: 15px; }
+        .pv-chip { align-items: center; border: 1px solid var(--line); border-radius: 999px; display: inline-flex; font-size: .88rem; font-weight: 600; gap: 6px; padding: 3px 10px; background: var(--surface); position: relative; }
+        .pv-chip[data-on='true'] { background: var(--warn); border-color: transparent; color: var(--on-accent); }
+        .pv-chip .i { height: 14px; width: 14px; }
+        .pv-pop { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); color: var(--text); font-weight: 400; padding: 12px; position: absolute; right: 0; top: calc(100% + 6px); width: 280px; z-index: 30; }
+        .pv-pop p { margin: 0 0 8px; font-size: .88rem; }
+        .pv-head-right { align-items: center; display: flex; flex-wrap: wrap; gap: 10px 14px; justify-content: flex-end; }
+        .pv-views { margin-left: 8px; }
+
+        main.pv-main { max-width: none; padding: 14px 20px 90px; }
+        .pv-teams { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 12px; }
+        .pv-teams-label { color: var(--muted); font-size: .88rem; font-weight: 600; margin-right: 4px; }
+        .pv-team { align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; cursor: pointer; display: inline-flex; font-size: .88rem; gap: 6px; padding: 2px 10px; position: relative; }
+        .pv-team .free { color: var(--ok); font-weight: 700; }
+        .pv-team .busy { color: var(--muted); }
+        .pv-team .pv-pop { left: 0; right: auto; cursor: default; }
+
+        .pv-work { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+        .pv-board { display: grid; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+        .pv-col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); min-width: 0; }
+        .pv-col-head { align-items: center; border-bottom: 1px solid var(--line); display: flex; font-size: .92rem; font-weight: 700; gap: 6px; padding: 8px 10px; }
+        .pv-col-head .count { margin-left: auto; }
+        .pv-col-head .i { color: var(--muted); height: 15px; width: 15px; }
+        .pv-col.collapsed { background: var(--surface-2); display: flex; flex-direction: column; align-items: center; padding: 8px 0; gap: 8px; color: var(--faint); }
+        .pv-col.collapsed .pv-vname { writing-mode: vertical-rl; font-size: .88rem; font-weight: 600; }
+        .pv-col-body { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+        .pv-doctor { color: var(--muted); font-size: .92rem; font-weight: 700; margin: 4px 2px 0; display: flex; gap: 6px; }
+        .pv-doctor.none { color: var(--warn); }
+        .pv-hn { font-variant-numeric: tabular-nums; font-weight: 700; }
+        .pv-hn-link { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; padding: 0; text-decoration: underline dotted; text-underline-offset: 3px; }
+        .pv-wait { font-size: .88rem; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+        [data-tier='warn'] .pv-wait { color: var(--warn); font-weight: 700; }
+        [data-tier='long'] .pv-wait { color: var(--danger); font-weight: 700; }
+        .pv-go { padding: 3px 9px; font-size: .88rem; white-space: nowrap; }
+        .pv-selected { box-shadow: 0 0 0 3px var(--accent) !important; position: relative; z-index: 1; }
+        .pv-flag { outline: 2px solid color-mix(in srgb, var(--danger) 60%, transparent); }
+
+        /* Detail panel (shared contents; each variant places it differently) */
+        .pv-panel { background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; }
+        .pv-panel-head { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 10px; padding: 12px 14px; }
+        .pv-panel-head .pv-hn { font-size: 1.2rem; }
+        .pv-panel-head .close { margin-left: auto; }
+        .pv-panel-body { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; padding: 14px; }
+        .pv-field { display: grid; gap: 6px; }
+        .pv-field > span { color: var(--muted); font-size: .88rem; font-weight: 700; }
+        .pv-row { display: flex; gap: 6px; flex-wrap: wrap; }
+        .pv-row > select, .pv-row > input { flex: 1 1 140px; min-width: 0; }
+        .pv-row input { background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--text); font: inherit; padding: 6px 10px; }
+        .pv-q { border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: .92rem; padding: 8px 10px; }
+        .pv-q .state { color: var(--muted); font-size: .92rem; }
+        .pv-q ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+        .pv-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+        .badge.nhso-not_yet { background: var(--warn-soft); color: var(--warn); }
+        .badge.nhso-unavailable { background: var(--danger-soft); color: var(--danger); }
+        .badge.nhso-authenticated, .badge.nhso-bypassed { background: var(--ok-soft); color: var(--ok); }
+        .badge.video { background: var(--accent-soft); color: var(--accent); }
+
+        .pv-rooms { border: 2px dashed var(--line-strong); border-radius: var(--radius); color: var(--muted); padding: 40px; text-align: center; }
+
+        /* ---------- Variant A: calm board. Cards, badges on a second line, attention as chips, panel as an overlay drawer ---------- */
+        .vA .pv-col-body { gap: 8px; }
+        .vA .pv-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: var(--shadow-sm); cursor: pointer; display: grid; gap: 4px; padding: 8px 10px; }
+        .vA .pv-card:hover { border-color: var(--line-strong); }
+        .vA .pv-card-line { align-items: center; display: flex; gap: 8px; min-width: 0; }
+        .vA .pv-pos { color: var(--faint); font-size: .88rem; font-variant-numeric: tabular-nums; width: 14px; }
+        .vA .pv-card-line .pv-waitbox { margin-left: auto; }
+        .vA .pv-card .badge { font-size: .92rem; }
+        .vA [data-tier='long'].pv-card { border-left: 4px solid var(--danger); }
+        .vA [data-tier='warn'].pv-card { border-left: 4px solid var(--warn); }
+        .vA .pv-attn { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .vA .pv-attn-chip { align-items: center; border-radius: 999px; display: inline-flex; font-size: .88rem; font-weight: 600; gap: 6px; padding: 4px 6px 4px 12px; cursor: pointer; border: 1px solid transparent; }
+        .vA .pv-attn-chip[data-sev='high'] { background: var(--danger-soft); color: var(--danger); }
+        .vA .pv-attn-chip[data-sev='mid'] { background: var(--warn-soft); color: var(--warn); }
+        .vA .pv-attn-chip .x { background: none; border: 0; color: inherit; padding: 0 4px; cursor: pointer; }
+        .vA .pv-attn-chip:not(:has(.x)) { padding-right: 12px; }
+        .vA .pv-panel { border-radius: var(--radius) 0 0 var(--radius); bottom: 0; position: fixed; right: 0; top: 0; width: 26rem; z-index: 40; }
+        .vA .pv-scrim { background: rgb(0 0 0 / 18%); inset: 0; position: fixed; z-index: 35; }
+
+        /* ---------- Variant B: dense ledger. Strict one-line rows, icon dots, attention as a list, panel docked ---------- */
+        .vB .pv-col-body { gap: 0; padding: 0; }
+        .vB .pv-line { align-items: center; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; gap: 6px; grid-template-columns: 1.3rem minmax(0, 1fr) auto auto 2.4rem; font-size: .92rem; padding: 4px 8px; }
+        .vB .pv-line:hover { background: var(--surface-2); }
+        .vB .pv-line:last-child { border-bottom: 0; }
+        .vB .pv-pos { color: var(--faint); font-size: .92rem; text-align: right; }
+        .vB .pv-dots { display: flex; gap: 3px; }
+        .vB .pv-dot { border-radius: 50%; height: .7rem; width: .7rem; }
+        .vB .pv-dot.next { background: var(--ok); }
+        .vB .pv-dot.at { background: var(--lounge); }
+        .vB .pv-dot.nhso-not_yet { background: var(--warn); }
+        .vB .pv-dot.nhso-unavailable { background: var(--danger); }
+        .vB .pv-dot.video { background: var(--accent); }
+        .vB .pv-go { padding: 2px 0; width: 2.4rem; justify-content: center; }
+        .vB [data-tier='long'].pv-line { background: var(--danger-soft); }
+        .vB .pv-doctor { border-bottom: 1px solid var(--line); margin: 0; padding: 4px 8px; background: var(--surface-2); }
+        .vB .pv-attn { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--danger); border-radius: var(--radius-sm); margin-top: 10px; }
+        .vB .pv-attn summary { cursor: pointer; font-size: .92rem; font-weight: 700; padding: 8px 12px; }
+        .vB .pv-attn ul { display: grid; gap: 0 24px; grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr)); list-style: none; margin: 0; padding: 0 12px 8px; }
+        .vB .pv-attn li { align-items: center; border-top: 1px solid var(--line); display: flex; font-size: .88rem; gap: 8px; padding: 4px 0; cursor: pointer; }
+        .vB .pv-attn li .sev { border-radius: 50%; flex: none; height: .7rem; width: .7rem; }
+        .vB .pv-attn li[data-sev='high'] .sev { background: var(--danger); }
+        .vB .pv-attn li[data-sev='mid'] .sev { background: var(--warn); }
+        .vB .pv-attn li .x { margin-left: auto; padding: 0 8px; font-size: .92rem; }
+        .vB .pv-legend { color: var(--muted); display: flex; flex-wrap: wrap; font-size: .92rem; gap: 4px 12px; margin: 6px 0 0; }
+        .vB .pv-legend span { align-items: center; display: inline-flex; gap: 4px; }
+        .vB .pv-work.has-panel { grid-template-columns: minmax(0, 1fr) 24rem; }
+        .vB .pv-panel { border-radius: var(--radius-sm); box-shadow: none; position: sticky; top: 12px; max-height: calc(100vh - 24px); }
+
+        /* ---------- Variant C: heat tiles. Tiles coloured by wait, attention as a banner, panel as a tabbed sheet ---------- */
+        .vC .pv-tiles { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
+        .vC .pv-tile { background: var(--ok-soft); border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer; display: grid; gap: 2px; min-height: 5rem; padding: 6px 8px; position: relative; }
+        .vC [data-tier='warn'].pv-tile { background: var(--warn-soft); }
+        .vC [data-tier='long'].pv-tile { background: #c0281f; color: #fff; }
+        .vC [data-tier='long'].pv-tile .pv-wait { color: #fff; }
+        .vC .pv-tile .pv-hn { font-size: .92rem; }
+        .vC .pv-tile .pv-wait { font-size: 1.15rem; }
+        .vC .pv-tile .pv-pos { color: var(--faint); font-size: .92rem; position: absolute; right: 7px; top: 5px; }
+        .vC [data-tier='long'].pv-tile .pv-pos { color: #fff; }
+        .vC .pv-corner { display: flex; gap: 3px; }
+        .vC .pv-corner i { border: 1.5px solid currentColor; border-radius: 3px; font-size: .92rem; font-style: normal; font-weight: 700; line-height: 1; padding: 1px 3px; }
+        .vC .pv-tile .pv-go { bottom: 5px; opacity: 0; position: absolute; right: 5px; padding: 2px 6px; }
+        .vC .pv-tile:hover .pv-go, .vC .pv-tile:focus-within .pv-go { opacity: 1; }
+        .vC .pv-banner { align-items: center; background: #c0281f; border-radius: var(--radius); color: #fff; display: flex; gap: 18px; margin-top: 10px; padding: 10px 16px; }
+        .vC .pv-banner.calm { background: var(--ok-soft); color: var(--ok); }
+        .vC .pv-banner .big { font-size: 2rem; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+        .vC .pv-banner .first { flex: 1; font-size: .92rem; }
+        .vC .pv-banner button { background: rgb(255 255 255 / 18%); border-color: transparent; color: inherit; }
+        .vC .pv-banner-list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-top: 6px; padding: 6px 10px; display: grid; gap: 4px; font-size: .92rem; }
+        .vC .pv-banner-list div { cursor: pointer; display: flex; gap: 8px; align-items: center; }
+        .vC .pv-banner-list .x { margin-left: auto; padding: 0 8px; font-size: .92rem; }
+        .vC .pv-work.has-panel { grid-template-columns: minmax(0, 1fr) 25rem; }
+        .vC .pv-panel { border-radius: var(--radius); position: sticky; top: 12px; max-height: calc(100vh - 24px); }
+        .vC .pv-tabs { display: flex; border-bottom: 1px solid var(--line); }
+        .vC .pv-tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; flex: 1; background: none; }
+        .vC .pv-tabs button[aria-pressed='true'] { border-bottom-color: var(--accent); color: var(--accent); }
+
+        /* ---------- The prototype's own switcher: deliberately not part of any design ---------- */
+        .pv-switch { align-items: center; background: #111; border-radius: 999px; bottom: 16px; box-shadow: 0 8px 30px rgb(0 0 0 / 40%); color: #fff; display: flex; font: 13px/1.3 system-ui, sans-serif; gap: 10px; left: 16px; padding: 6px 8px; position: fixed; z-index: 100; white-space: nowrap; }
+        .pv-switch button { background: #2a2a2a; border: 0; border-radius: 999px; color: #fff; font: inherit; padding: 5px 10px; min-height: 0; }
+        .pv-switch button:hover { background: #444; }
+        .pv-switch button[aria-pressed='true'] { background: #f5c518; color: #111; }
+        .pv-switch .label { font-weight: 700; min-width: 150px; text-align: center; }
+        .pv-switch .state { color: #aaa; font-size: 12px; }
+        .pv-switch .sep { background: #444; height: 18px; width: 1px; }
+
+        /* ---------- Spacing pass for 18px Niramit: Thai vowels above and below need taller lines and roomier boxes ---------- */
+        /* In rem, so the spacing grows with the type. Declared last, so it wins over the spacing above. */
+        .topbar { gap: 1.5rem; padding: .75rem 1.5rem; }
+        .pv-head-right { gap: .6rem 1.1rem; }
+        .pv-figures { gap: .4rem 1.25rem; }
+        .pv-figure { gap: .35rem; }
+        .pv-chip { gap: .45rem; padding: .3rem .9rem; }
+        .pv-pop { padding: 1rem; width: 20rem; }
+        .pv-pop p { line-height: 1.6; margin: 0 0 .6rem; }
+        .pv-views { margin-left: 1rem; }
+        main.pv-main { padding: 1.1rem 1.5rem 7rem; }
+        .pv-teams { gap: .5rem; margin: 1.1rem 0 1rem; }
+        .pv-teams-label { margin-right: .25rem; }
+        .pv-team { gap: .5rem; padding: .3rem .9rem; }
+        .pv-work { gap: 1.25rem; }
+        .pv-board { gap: .9rem; padding-bottom: .5rem; }
+        .pv-col-head { gap: .5rem; padding: .75rem 1rem; }
+        .pv-col.collapsed { gap: .6rem; padding: .75rem 0; }
+        .pv-col-body { gap: .6rem; padding: .75rem; }
+        .pv-doctor { margin: .6rem .25rem .1rem; }
+        .pv-col-body > .pv-doctor:first-child { margin-top: .1rem; }
+        .badge { line-height: 1.45; padding: .2rem .65rem; }
+        .pv-badges { gap: .4rem; }
+        .pv-go { padding: .3rem .7rem; }
+        .pv-panel-head { gap: .75rem; padding: 1rem 1.25rem; }
+        .pv-panel-head > div { display: grid; gap: .35rem; justify-items: start; }
+        .pv-panel-body { gap: 1.25rem; padding: 1.25rem; }
+        .pv-field { gap: .5rem; }
+        .pv-row { gap: .5rem; }
+        .pv-row input, .pv-row select { padding: .45rem .75rem; }
+        /* A list takes its own line, so its choice is never cut; its button goes under it. */
+        .pv-row > select { flex-basis: 100%; }
+        .pv-q { padding: .7rem .9rem; }
+        .pv-q ol { margin-top: .4rem; padding-left: 1.4rem; }
+
+        /* Measured at 1920px: a column's card line has about 230px for position, HN, wait and button. */
+        .vA .pv-col-body { gap: .65rem; padding: .6rem; }
+        .vA .pv-card { gap: .55rem; padding: .7rem; }
+        .vA .pv-card-line { gap: .5rem; }
+        .vA .pv-pos { min-width: 1.1rem; width: auto; }
+        .vA .pv-go { flex: none; justify-content: center; padding: 0; width: 2.4rem; }
+        .vA .pv-attn { gap: .5rem .6rem; margin-top: .25rem; }
+        .vA .pv-attn-chip { gap: .45rem; padding: .35rem .5rem .35rem .9rem; }
+        .vA .pv-attn-chip:not(:has(.x)) { padding-right: .9rem; }
+
+        /* The HN column takes its own width, and a column is never narrower than its row: the board scrolls instead. */
+        /* Row: 1.3 + 5.2 + .8 + 2.8 + 2.4 rem of cells, 4 gaps of .45rem, .6rem padding each side, 2px of border. */
+        .vB .pv-board { --col-min: 15.6rem; }
+        .vB .pv-line { gap: .45rem; grid-template-columns: 1.3rem 5.2rem minmax(.8rem, 1fr) 2.8rem 2.4rem; padding: .5rem .6rem; }
+        .vB .pv-line .pv-wait { text-align: right; }
+        /* Rows touch, so a flag or a selection is drawn inside the row, not around it. */
+        .vB .pv-flag { box-shadow: inset 5px 0 0 var(--danger); outline: none; }
+        .vB .pv-selected { box-shadow: inset 0 0 0 3px var(--accent) !important; }
+        .vB .pv-dots { gap: .3rem; justify-content: flex-end; }
+        .vB .pv-go { padding: .3rem 0; width: 2.4rem; }
+        .vB .pv-doctor { margin: 0; padding: .4rem .75rem; }
+        .vB .pv-attn { margin-top: .25rem; }
+        .vB .pv-attn summary { padding: .7rem 1rem; }
+        .vB .pv-attn ul { gap: 0 2rem; padding: 0 1rem .6rem; }
+        .vB .pv-attn li { gap: .6rem; padding: .45rem 0; }
+        .vB .pv-legend { gap: .35rem 1.1rem; margin: .6rem 0 0; }
+        .vB .pv-legend span { gap: .35rem; }
+
+        /* The position sits on its own row, so it no longer overlaps the HN and two tiles still fit side by side. */
+        /* A column's body is about 255px at 1920px: two tiles of 6.6rem and a gap fit; a 9-digit HN needs about 90px. */
+        .vC .pv-col-body { padding: .6rem; }
+        .vC .pv-tiles { gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(6.6rem, 1fr)); }
+        .vC .pv-tile { gap: .25rem; min-height: 0; padding: .55rem .6rem; }
+        .vC .pv-tile .pv-pos { justify-self: end; line-height: 1; position: static; }
+        .vC .pv-tile .pv-hn { justify-self: start; text-align: left; }
+        .vC .pv-corner { flex-wrap: wrap; gap: .3rem; min-height: 1.6rem; padding-right: 2.2rem; }
+        .vC .pv-corner i { line-height: 1.3; padding: .1rem .35rem; }
+        .vC .pv-tile .pv-go { bottom: .45rem; padding: .25rem .55rem; right: .45rem; }
+        .vC .pv-banner { gap: 1.25rem; margin-top: .25rem; padding: .8rem 1.25rem; }
+        .vC .pv-banner-list { gap: .5rem; margin-top: .5rem; padding: .7rem 1rem; }
+        .vC .pv-banner-list div { gap: .6rem; }
+        .vC .pv-tabs button { padding: .6rem .5rem; }
+
+        /* D borrows A's and C's classes; its panel is A's overlay, so C's docked panel rules are undone here. */
+        .vD .pv-panel { border-radius: var(--radius) 0 0 var(--radius); bottom: 0; max-height: none; position: fixed; right: 0; top: 0; width: 26rem; z-index: 40; }
+
+        /* ---------- D polish: calmer surfaces, one accent, status as thin bars instead of boxes ---------- */
+        .vD { --bg: #f2f4f7; --line: #e1e6ed; --radius-sm: 10px; --radius: 14px; }
+        .vD .topbar { background: var(--surface); box-shadow: 0 1px 2px rgb(13 23 34 / 4%); }
+        .vD .brand h1 { letter-spacing: -.005em; }
+        .vD .segmented { border-radius: 12px; padding: 4px; }
+        .vD .segmented button { border-radius: 9px; }
+
+        /* Figures read as one strip, split by hairlines. */
+        .vD .pv-figures { gap: 0; }
+        .vD .pv-figure { border-left: 1px solid var(--line); padding: 0 1rem; }
+        .vD .pv-figure:first-child { border-left: 0; padding-left: 0; }
+        .vD .pv-figure b { font-size: 1.1rem; font-weight: 700; }
+        .vD .pv-chip, .vD .live { border-color: var(--line); box-shadow: var(--shadow-sm); }
+
+        /* Attention: a white card with a red edge and a count chip, not a red slab. */
+        .vD .pv-banner { background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--danger); box-shadow: var(--shadow-sm); color: var(--text); padding: .7rem 1rem .7rem 1.1rem; }
+        .vD .pv-banner.calm { background: var(--surface); border-left-color: var(--ok); color: var(--ok); }
+        .vD .pv-banner .big { background: var(--danger-soft); border-radius: 10px; color: var(--danger); font-size: 1.5rem; min-width: 3rem; padding: .3rem .7rem; text-align: center; }
+        .vD .pv-banner .first { color: var(--text); font-weight: 500; }
+        .vD .pv-banner button { background: var(--surface); border: 1px solid var(--line-strong); color: var(--text); }
+        .vD .pv-banner button:hover { background: var(--surface-2); }
+        .vD .pv-banner-list { border: 1px solid var(--line); box-shadow: var(--shadow-sm); gap: 0; padding: .3rem 1rem; }
+        .vD .pv-banner-list > div { border-top: 1px solid var(--line); border-radius: 6px; padding: .55rem .4rem; }
+        .vD .pv-banner-list > div:first-child { border-top: 0; }
+        .vD .pv-banner-list > div:hover { background: var(--surface-2); }
+        .vD .pv-banner-list > div[data-sev='high'] > .i { color: var(--danger); }
+        .vD .pv-banner-list > div[data-sev='mid'] > .i { color: var(--warn); }
+
+        .vD .pv-team { border-color: var(--line); box-shadow: var(--shadow-sm); }
+
+        /* Columns are lanes: a tinted ground with no frame; the cards on them are the white surfaces. */
+        .vD .pv-board { gap: .75rem; }
+        .vD .pv-col { background: #e8ecf1; border: 0; border-radius: var(--radius); }
+        .vD .pv-col-head { border-bottom: 0; font-weight: 600; padding: .85rem 1rem .35rem; }
+        .vD .pv-col-head .count { background: var(--surface); color: var(--muted); }
+        .vD .pv-col.collapsed { background: transparent; border: 1.5px dashed var(--line-strong); }
+        .vD .pv-doctor { align-items: center; color: var(--muted); font-weight: 600; }
+        .vD .pv-doctor::after { background: var(--line-strong); content: ''; flex: 1; height: 1px; opacity: .6; }
+        .vD .pv-doctor.none { color: var(--warn); }
+
+        /* Cards: no frame, a soft shadow, and a 4px bar on the left for wait and trouble. */
+        .vD .pv-card { border: 0; box-shadow: 0 1px 2px rgb(13 23 34 / 7%), 0 2px 6px -2px rgb(13 23 34 / 6%); overflow: hidden; position: relative; transition: box-shadow .15s; }
+        .vD .pv-card:hover { box-shadow: 0 2px 4px rgb(13 23 34 / 8%), 0 8px 20px -8px rgb(13 23 34 / 22%); }
+        .vD [data-tier].pv-card { border-left: 0; }
+        .vD .pv-card::before { background: transparent; bottom: 0; content: ''; left: 0; position: absolute; top: 0; width: 4px; }
+        .vD [data-tier='warn'].pv-card::before { background: var(--warn); }
+        .vD [data-tier='long'].pv-card::before, .vD .pv-flag.pv-card::before { background: var(--danger); }
+        .vD .pv-flag { outline: none; }
+        .vD .pv-selected { box-shadow: 0 0 0 2px var(--accent), 0 8px 20px -8px rgb(11 79 179 / 35%) !important; }
+        .vD .pv-hn-link { font-weight: 600; text-decoration: none; }
+        .vD .pv-hn-link:hover { color: var(--accent); text-decoration: underline; }
+        .vD .pv-pos { color: var(--faint); font-weight: 500; }
+        .vD .badge { border-radius: 6px; font-weight: 600; }
+        /* The per-card action is tinted, not solid: seventeen solid blue squares were the loudest thing on the page. */
+        .vD .pv-card .pv-go { background: var(--accent-soft); border: 0; color: var(--accent); }
+        .vD .pv-card .pv-go:hover { background: var(--accent); color: var(--on-accent); }
+
+        /* Panel: a sheet with a soft edge shadow; head on a tinted band; sections split by hairlines. */
+        .vD .pv-panel { border: 0; border-radius: 0; box-shadow: -16px 0 48px -16px rgb(13 23 34 / 35%); }
+        .vD .pv-panel-head { background: var(--surface-2); }
+        .vD .pv-panel-head .pv-hn { font-size: 1.35rem; }
+        .vD .pv-panel-body > .pv-panel-body + .pv-panel-body { border-top: 1px solid var(--line); padding-top: 1.25rem !important; }
+        .vD .pv-field > span { color: var(--muted); font-weight: 600; }
+        .vD .pv-scrim { background: rgb(13 23 34 / 24%); }
+
+        /* ---------- D's panel: facts, stepper, chips, status lists, pinned action ---------- */
+        .vD .pv-panel.pd { display: flex; flex-direction: column; width: 28rem; }
+        .pd-head { background: var(--surface); border-bottom: 1px solid var(--line); display: grid; gap: 1rem; padding: 1.25rem 1.5rem 1.1rem; }
+        .pd-top { align-items: flex-start; display: flex; justify-content: space-between; }
+        .pd-title { display: grid; gap: .1rem; justify-items: start; }
+        .pd-eyebrow { color: var(--muted); font-size: .85rem; font-weight: 600; }
+        .vD .pd-title .pv-hn-link { font-size: 1.6rem; font-weight: 700; letter-spacing: .01em; line-height: 1.3; }
+        .pd-close { border-radius: 10px; justify-content: center; padding: 0; width: 2.4rem; }
+        .pd-facts { display: grid; gap: .5rem; grid-template-columns: 1fr 1fr; margin: 0; }
+        .pd-fact { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: .5rem .8rem; }
+        .pd-fact dt { color: var(--muted); font-size: .85rem; font-weight: 600; }
+        .pd-fact dd { font-size: 1rem; font-weight: 600; margin: 0; }
+        .pd-fact .pv-wait { color: var(--text); font-size: 1rem; }
+        .pd-fact[data-nhso='not_yet'] dd { color: var(--warn); }
+        .pd-fact[data-nhso='unavailable'] dd { color: var(--danger); }
+        .pd-fact[data-nhso='authenticated'] dd, .pd-fact[data-nhso='bypassed'] dd { color: var(--ok); }
+
+        .pd-body { flex: 1; overflow-y: auto; padding: .25rem 1.5rem 1.25rem; }
+        .pd-section { border-top: 1px solid var(--line); padding: 1.1rem 0; }
+        .pd-section:first-child { border-top: 0; }
+        .pd-h { align-items: center; display: flex; font-size: 1rem; font-weight: 700; gap: .55rem; margin-bottom: .7rem; }
+        .pd-h .i { color: var(--accent); }
+        .pd-hint { color: var(--muted); font-size: .88rem; margin: -.35rem 0 .6rem; }
+
+        /* The pathway as a vertical stepper: past stages ticked, the current one filled, the picked one outlined. */
+        .pd-steps { display: grid; gap: 2px; list-style: none; margin: 0; padding: 0; }
+        .pd-step { align-items: center; border-radius: 10px; cursor: pointer; display: flex; gap: .75rem; padding: .4rem .6rem; position: relative; }
+        .pd-step:hover { background: var(--surface-2); }
+        .pd-step:focus-visible { box-shadow: var(--ring); outline: 0; }
+        .pd-step[data-state='current'] { background: var(--accent-soft); cursor: default; }
+        .pd-step.target { background: var(--surface); box-shadow: inset 0 0 0 2px var(--accent); }
+        .pd-step:not(:last-child)::after { background: var(--line-strong); content: ''; height: calc(100% - 1.75rem + 2px); left: calc(.6rem + .875rem - 1px); position: absolute; top: calc(50% + .875rem); width: 2px; }
+        .pd-step[data-state='past']::after { background: var(--ok); }
+        .pd-mark { align-items: center; background: var(--surface); border: 2px solid var(--line-strong); border-radius: 50%; color: var(--muted); display: flex; flex: none; font-size: .85rem; font-weight: 700; height: 1.75rem; justify-content: center; position: relative; width: 1.75rem; z-index: 1; }
+        .pd-mark .i { height: .95rem; width: .95rem; stroke-width: 3; }
+        .pd-step[data-state='past'] .pd-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+        .pd-step[data-state='current'] .pd-mark { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .pd-step.target .pd-mark { border-color: var(--accent); color: var(--accent); }
+        .pd-step-name { flex: 1; font-weight: 500; }
+        .pd-step[data-state='past'] .pd-step-name { color: var(--muted); }
+        .pd-step[data-state='current'] .pd-step-name, .pd-step.target .pd-step-name { font-weight: 700; }
+        .pd-tag { background: var(--accent-soft); border-radius: 6px; color: var(--accent); flex: none; font-size: .85rem; font-weight: 600; padding: .1rem .55rem; }
+        .pd-step[data-state='current'] .pd-tag { background: var(--surface); }
+        .pd-tag.target { background: var(--accent); color: var(--on-accent); }
+        .pd-tag.ok { background: var(--ok-soft); color: var(--ok); }
+        .pd-tag.warn { background: var(--warn-soft); color: var(--warn); }
+
+        .pd-chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+        .pd-chip { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 999px; padding: .2rem 1rem; }
+        .pd-chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+        .pd-other { display: flex; gap: .5rem; margin-top: .65rem; }
+        .pd-other input { background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; color: var(--text); flex: 1; min-width: 0; padding: .45rem .75rem; }
+
+        .pd-list { border: 1px solid var(--line); border-radius: 12px; display: grid; overflow: hidden; }
+        .pd-item { align-items: center; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: .6rem; padding: .6rem .6rem .6rem .9rem; }
+        .pd-item:first-child { border-top: 0; }
+        .pd-item.playing { background: var(--accent-soft); }
+        .pd-item-name { flex: 1; font-weight: 500; min-width: 0; }
+        .pd-small { border-radius: 9px; min-height: 2.3rem; padding: .15rem .85rem; }
+        .pd-small .i { height: 1rem; width: 1rem; }
+        .pd-answers { color: var(--muted); flex-basis: 100%; margin: 0; padding-left: 1.3rem; }
+
+        .pd-foot { background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -10px 24px -14px rgb(13 23 34 / 22%); display: flex; gap: .6rem; padding: 1rem 1.5rem; }
+        .pd-go { border-radius: 12px; flex: 1; font-size: 1.05rem; justify-content: center; min-height: 3rem; }
+        .pd-done { border-radius: 12px; min-height: 3rem; padding: 0 1.1rem; }
+
+        /* ---------- D's icons and infographics ---------- */
+        /* Wait tiers: validated as a set (light, CVD-safe); text never wears them, only marks and icons do. */
+        .vD { --tier-ok: #0b6a3a; --tier-warn: #c77700; --tier-long: #b01e17; }
+        .pv-fig-ic, .pv-avail, .pv-waitbox { align-items: center; display: inline-flex; }
+
+        /* Header figures as stat tiles: an icon on a tinted tile, the value over its label. */
+        .vD .pv-figure { column-gap: .6rem; display: grid; grid-template-columns: auto auto; line-height: 1.15; padding: 0 1.1rem; }
+        .vD .pv-fig-ic { background: var(--accent-soft); border-radius: 10px; color: var(--accent); grid-row: span 2; height: 2.3rem; justify-content: center; width: 2.3rem; }
+        .vD .pv-fig-ic .i { height: 1.15rem; width: 1.15rem; }
+        .vD .pv-figure b { font-size: 1.25rem; grid-column: 2; grid-row: 1; }
+        .vD .pv-fig-label { color: var(--muted); font-size: .8rem; font-weight: 500; grid-column: 2; grid-row: 2; }
+
+        /* Team strip: who is free, as dots beside the counts. */
+        .vD .pv-teams-label { align-items: center; display: inline-flex; gap: .4rem; }
+        .vD .pv-teams-label .i { color: var(--muted); height: 1.1rem; width: 1.1rem; }
+        .pv-avail { display: none; }
+        .vD .pv-avail { display: inline-flex; gap: 3px; }
+        .vD .pv-avail i { border-radius: 50%; height: .6rem; width: .6rem; }
+        .vD .pv-avail i.free { background: var(--tier-ok); }
+        .vD .pv-avail i.busy { box-shadow: inset 0 0 0 2px var(--line-strong); }
+
+        /* Board legend, on the team strip's row, so the bars need no words of their own. */
+        .pv-tier-legend { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .88rem; gap: .35rem 1.1rem; margin-left: auto; }
+        .pv-tier-legend-title { font-weight: 600; }
+        .pv-tier-key { align-items: center; display: inline-flex; gap: .35rem; }
+        .pv-tier-key b { color: var(--text); font-variant-numeric: tabular-nums; }
+        .pv-tier-key .swatch { border-radius: 999px; height: 8px; width: 1.4rem; }
+        .pv-tier-key .i { height: 1rem; width: 1rem; }
+        .pv-tier-key.ok .swatch { background: var(--tier-ok); }
+        .pv-tier-key.warn .swatch { background: var(--tier-warn); }
+        .pv-tier-key.long .swatch { background: var(--tier-long); }
+        .pv-tier-key.ok .i { color: var(--tier-ok); }
+        .pv-tier-key.warn .i { color: var(--tier-warn); }
+        .pv-tier-key.long .i { color: var(--tier-long); }
+
+        /* Under each column's title: a thin segmented bar of its wait tiers, then two short facts. */
+        .pv-col-stats { display: grid; gap: .4rem; padding: .15rem 1rem .5rem; }
+        .pv-tierbar { background: var(--surface); border-radius: 999px; display: flex; gap: 2px; height: 8px; overflow: hidden; }
+        .pv-tierbar .seg { flex-basis: 0; min-width: 8px; }
+        .pv-tierbar .seg.ok { background: var(--tier-ok); }
+        .pv-tierbar .seg.warn { background: var(--tier-warn); }
+        .pv-tierbar .seg.long { background: var(--tier-long); }
+        .pv-col-line { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .82rem; gap: .2rem .8rem; }
+        .pv-col-fact { align-items: center; display: inline-flex; gap: .3rem; white-space: nowrap; }
+        .pv-col-fact .i { height: .9rem; width: .9rem; }
+        .pv-col-fact[data-tier='warn'] .i { color: var(--tier-warn); }
+        .pv-col-fact[data-tier='long'] .i, .pv-col-fact.over .i { color: var(--tier-long); }
+        .pv-col-fact.over { color: var(--text); font-weight: 600; }
+
+        /* Cards: the wait wears a clock; badges wear their meaning's icon. */
+        /* The clock costs about 18px of a card line measured at 240px: give it back from the gaps and the padding. */
+        .vD .pv-card { padding-left: .6rem; padding-right: .6rem; }
+        .vD .pv-card-line { gap: .3rem; }
+        .vD .pv-waitbox { gap: .2rem; }
+        .vD .pv-waitbox .i { color: var(--faint); height: .9rem; width: .9rem; }
+        .vD [data-tier='warn'] .pv-waitbox .i { color: var(--tier-warn); }
+        .vD [data-tier='long'] .pv-waitbox .i { color: var(--tier-long); }
+        .vD .badge { align-items: center; display: inline-flex; gap: .3rem; }
+        .vD .badge .i { flex: none; height: .85rem; width: .85rem; }
+        .vD .badge.next { background: var(--ok-soft); color: var(--ok); }
+        .vD .badge.at { background: var(--surface-3); color: var(--text); }
+
+        /* Panel facts wear icons; the wait is a meter across the top. */
+        .pd-fact dt { align-items: center; display: flex; gap: .35rem; }
+        .pd-fact dt .i { color: var(--faint); height: .95rem; width: .95rem; }
+        /* With the wait in the meter, the other facts read as one-line key and value rows: the head stays short. */
+        .vD .pd-facts { column-gap: 1.25rem; grid-template-columns: 1fr 1fr; row-gap: 0; }
+        .vD .pd-meter { grid-column: span 2; margin-bottom: .4rem; }
+        .vD .pd-fact { background: none; border: 0; border-radius: 0; border-top: 1px solid var(--line); display: grid; gap: .05rem; padding: .4rem .15rem; }
+        .vD .pd-fact:nth-child(2), .vD .pd-fact:nth-child(3) { border-top: 0; }
+        .vD .pd-fact:last-child:nth-child(even) { grid-column: span 2; }
+        .pd-meter { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; display: grid; gap: .35rem; padding: .6rem .8rem .65rem; }
+        .pd-meter-top { align-items: baseline; display: flex; justify-content: space-between; }
+        .pd-meter-label { align-items: center; color: var(--muted); display: inline-flex; font-size: .85rem; font-weight: 600; gap: .35rem; }
+        .pd-meter-label .i { color: var(--faint); height: .95rem; width: .95rem; }
+        .pd-meter-value .pv-wait { color: var(--text); font-size: 1.3rem; font-weight: 700; }
+        .pd-meter-of { color: var(--muted); font-size: .85rem; }
+        .pd-track { background: var(--ok-soft); border-radius: 999px; height: 10px; overflow: hidden; position: relative; }
+        .pd-fill { background: var(--tier-ok); border-radius: 999px; display: block; height: 100%; transition: width .4s; }
+        .pd-tick { background: var(--surface); height: 100%; left: calc(100% / 3); position: absolute; top: 0; width: 2px; }
+        .pd-meter[data-tier='warn'] .pd-track { background: var(--warn-soft); }
+        .pd-meter[data-tier='warn'] .pd-fill { background: var(--tier-warn); }
+        .pd-meter[data-tier='long'] .pd-track { background: var(--danger-soft); }
+        .pd-meter[data-tier='long'] .pd-fill { background: var(--tier-long); }
+        .pd-scale { color: var(--faint); display: flex; font-size: .75rem; justify-content: space-between; position: relative; }
+        .pd-scale .five { left: calc(100% / 3); position: absolute; transform: translateX(-50%); }
+        .pd-meter-cap { align-items: center; display: flex; font-size: .88rem; font-weight: 600; gap: .4rem; }
+        .pd-meter-cap .i { color: var(--tier-ok); height: 1rem; width: 1rem; }
+
+        /* ---------- D: what the API already sends but the screen did not show ---------- */
+        .vD .badge.unrec { background: var(--danger); color: var(--on-accent); }
+        .vD .badge.absent { background: var(--warn-soft); color: var(--warn); }
+        .vD .badge.qwait { background: var(--surface-3); color: var(--text); }
+        .vD .badge.qdone { background: var(--ok-soft); color: var(--ok); }
+        .vD .pv-absent { background: var(--surface-2); }
+        .vD .pv-absent .pv-hn-link { color: var(--muted); }
+
+        /* Staff against the queue, in the column head. */
+        .pv-col-fact.staff .i { color: var(--faint); }
+        .pv-col-fact.staff[data-mood='idle'] { color: var(--text); font-weight: 600; }
+        .pv-col-fact.staff[data-mood='idle'] .i { color: var(--tier-ok); }
+        .pv-col-fact.staff[data-mood='none'] { color: var(--text); font-weight: 600; }
+        .pv-col-fact.staff[data-mood='none'] .i { color: var(--tier-warn); }
+
+        /* Moves: a stuck one shows on the figure itself. */
+        .vD .pv-figure[title] { cursor: pointer; }
+        .pv-fig-warn { align-items: center; background: var(--warn-soft); border-radius: 6px; color: var(--warn); display: inline-flex; font-size: .78rem; font-weight: 700; gap: .2rem; grid-column: 3; grid-row: 1 / span 2; margin-left: .2rem; padding: .1rem .4rem; }
+        .pv-fig-warn .i { height: .8rem; width: .8rem; }
+        .vD .pv-figure[data-stuck] { grid-template-columns: auto auto auto; }
+        .vD .pv-figure[data-stuck] .pv-fig-ic { background: var(--warn-soft); color: var(--warn); }
+
+        /* Patients in their room that no queue holds. */
+        .pv-unq { align-items: center; background: var(--surface); border: 1px solid var(--line); border-left: 6px solid var(--warn); border-radius: var(--radius); box-shadow: var(--shadow-sm); display: flex; flex-wrap: wrap; gap: .6rem 1rem; margin-bottom: 1rem; padding: .7rem 1rem; }
+        .pv-unq-head { align-items: center; display: inline-flex; font-weight: 600; gap: .45rem; }
+        .pv-unq-head .i { color: var(--warn); height: 1.1rem; width: 1.1rem; }
+        .pv-unq-head .count { background: var(--warn-soft); color: var(--warn); }
+        .pv-unq-list { display: flex; flex-wrap: wrap; gap: .6rem; }
+        .pv-unq-card { align-items: center; background: var(--surface-2); border-radius: 10px; display: inline-flex; gap: .6rem; padding: .35rem .4rem .35rem .8rem; }
+        .pv-unq-hn { font-weight: 600; }
+        .vD .badge.appt-none { background: var(--surface-3); color: var(--text); }
+        .vD .badge.appt-all_seen { background: var(--ok-soft); color: var(--ok); }
+        .vD .badge.appt-unreadable { background: var(--warn-soft); color: var(--warn); }
+        .pv-unq-go { border-radius: 9px; min-height: 2.2rem; padding: .15rem .8rem; }
+        .pv-unq-go .i { height: 1rem; width: 1rem; }
+
+        /* Panel: what makes this patient's room unusable, before the facts. */
+        .pd-alerts { display: grid; gap: .4rem; }
+        .pd-alert { align-items: flex-start; border-radius: 10px; display: flex; font-size: .92rem; font-weight: 600; gap: .5rem; padding: .5rem .75rem; }
+        .pd-alert .i { flex: none; height: 1.1rem; margin-top: .15rem; width: 1.1rem; }
+        .pd-alert.high { background: var(--danger-soft); color: var(--danger); }
+        .pd-alert.mid { background: var(--warn-soft); color: var(--warn); }
+
+        /* ---------- D +backend: data the backend keeps but does not send to the screen yet ---------- */
+        /* Two series, validated as a pair (light); the lighter one fails 3:1, so every bar carries its value. */
+        .vD { --series-in: #2a78d6; --series-out: #e87ba4; }
+        .vD .pv-figure.done .pv-fig-ic { background: var(--ok-soft); color: var(--ok); }
+
+        .pv-boardbar { align-items: center; display: flex; gap: .75rem; margin-bottom: 1rem; }
+        .pv-boardbar-label { color: var(--muted); font-size: .88rem; font-weight: 600; }
+        .pv-clinics { border-radius: 12px; padding: 4px; }
+        .pv-clinics button { align-items: center; border-radius: 9px; display: inline-flex; gap: .45rem; }
+        .pv-clinics .count { background: var(--surface-3); }
+        .pv-stats-btn { border-radius: 10px; margin-left: auto; }
+        .pv-stats-btn[aria-expanded='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+        .vD .badge.clinic { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); }
+        .vD .badge.appt { background: var(--surface-3); color: var(--text); }
+        .vD .badge.late { background: var(--warn-soft); color: var(--warn); }
+        .vD .badge.total { background: var(--surface-3); color: var(--text); }
+        .pd-fact[data-late] dd { color: var(--warn); }
+
+        .pd-dur { align-items: center; color: var(--muted); display: inline-flex; flex: none; font-size: .82rem; gap: .4rem; }
+        .pd-dur-bar { border-radius: 999px; display: block; height: 6px; min-width: 4px; }
+        .pd-dur.ok .pd-dur-bar { background: var(--tier-ok); }
+        .pd-dur.warn .pd-dur-bar { background: var(--tier-warn); }
+        .pd-dur.long .pd-dur-bar { background: var(--tier-long); }
+
+        .pv-today { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-sm); display: grid; gap: 1.5rem; grid-template-columns: 17rem minmax(0, 1.3fr) minmax(0, 1fr); margin-bottom: 1rem; padding: 1.1rem 1.25rem; }
+        .pv-today-tiles { display: grid; gap: .6rem; }
+        .pv-today-tile { column-gap: .7rem; display: grid; grid-template-columns: auto 1fr; line-height: 1.2; }
+        .pv-today-tile .pv-fig-ic { align-items: center; background: var(--accent-soft); border-radius: 10px; color: var(--accent); display: inline-flex; grid-row: span 3; height: 2.4rem; justify-content: center; width: 2.4rem; }
+        .pv-today-tile b { font-size: 1.3rem; }
+        .pv-today-tile .label { color: var(--text); font-size: .88rem; font-weight: 600; }
+        .pv-today-tile .note { color: var(--muted); font-size: .8rem; }
+        .pv-chart h3 { font-size: .95rem; margin: 0 0 .6rem; }
+        .pv-chart-note { color: var(--muted); font-size: .8rem; margin: .4rem 0 0; }
+        .pv-hbars { display: grid; gap: .35rem; }
+        .pv-hbar { align-items: center; display: grid; font-size: .85rem; gap: .6rem; grid-template-columns: 10.5rem 1fr 2.2rem; }
+        .pv-hbar .name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .pv-hbar .val { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; }
+        .pv-hbar .track { display: block; height: 10px; position: relative; }
+        .pv-hbar .fill { border-radius: 0 4px 4px 0; display: block; height: 100%; }
+        .pv-hbar .fill.ok { background: var(--tier-ok); }
+        .pv-hbar .fill.warn { background: var(--tier-warn); }
+        .pv-hbar .fill.long { background: var(--tier-long); }
+        .pv-hbar .limit { border-left: 2px dashed var(--line-strong); bottom: -4px; position: absolute; top: -4px; }
+        .pv-chart-legend { color: var(--muted); display: flex; font-size: .85rem; gap: 1rem; margin-bottom: .4rem; }
+        .pv-chart-legend span { align-items: center; display: inline-flex; gap: .35rem; }
+        .pv-chart-legend .key { border-radius: 3px; height: .7rem; width: .7rem; }
+        .pv-chart-legend .key.in, .pv-cols .bar.in { background: var(--series-in); }
+        .pv-chart-legend .key.out, .pv-cols .bar.out { background: var(--series-out); }
+        .pv-cols { align-items: end; border-bottom: 1px solid var(--line-strong); display: grid; gap: 1rem; grid-template-columns: repeat(4, 1fr); height: 8.5rem; padding-top: 1.2rem; }
+        .pv-col-group { display: grid; height: 100%; grid-template-rows: 1fr auto; position: relative; }
+        .pv-col-group .bars { align-items: end; display: flex; gap: 2px; justify-content: center; }
+        .pv-cols .bar { border-radius: 4px 4px 0 0; display: block; position: relative; width: 1.4rem; }
+        .pv-cols .bar .v { color: var(--text); font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 600; left: 50%; position: absolute; top: -1.15rem; transform: translateX(-50%); }
+        .pv-col-group .hour { bottom: -1.4rem; color: var(--muted); font-size: .78rem; left: 0; position: absolute; right: 0; text-align: center; white-space: nowrap; }
+        .pv-today .pv-chart:last-child { padding-bottom: 1.4rem; }
+        .pd-meter[data-tier='warn'] .pd-meter-cap .i { color: var(--tier-warn); }
+        .pd-meter[data-tier='long'] .pd-meter-cap .i { color: var(--tier-long); }
+    </style>
+</head>
+<body>
+    <svg class="sprite" aria-hidden="true" focusable="false">
+        <symbol id="i-logo" viewBox="0 0 24 24"><rect width="24" height="24" rx="7" fill="currentColor" stroke="none"/><path d="M12 6.5v11M6.5 12h11" stroke="#fff" stroke-width="2.6"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+        <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="8" y="2.5" width="8" height="4" rx="1"/><path d="M16 4.5h2a2 2 0 0 1 2 2V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2M9 12h6M9 16h4"/></symbol>
+        <symbol id="i-stethoscope" viewBox="0 0 24 24"><path d="M5 3H4a1 1 0 0 0-1 1v5a5 5 0 0 0 10 0V4a1 1 0 0 0-1-1h-1M8 14v1a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></symbol>
+        <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7Z"/></symbol>
+        <symbol id="i-door" viewBox="0 0 24 24"><path d="M18 20V5a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v15M3 20h18M14.5 12v.01"/></symbol>
+        <symbol id="i-swap" viewBox="0 0 24 24"><path d="m8 3-4 4 4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+        <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0ZM12 9v4M12 17h.01"/></symbol>
+        <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5Z"/></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="5"/><path d="m11 12 9.5-9.5M17 5l3 3M14.5 8.5l2 2"/></symbol>
+        <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/><circle cx="9" cy="7" r="4"/></symbol>
+        <symbol id="i-recoff" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+        <symbol id="i-useroff" viewBox="0 0 24 24"><circle cx="10" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h6M17 15l5 5M22 15l-5 5"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M7 16v-4M12 16V8M17 16v-7"/></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></symbol>
+        <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 2.5h12M6 21.5h12M7 2.5c0 5 10 6 10 9.5S7 16.5 7 21.5M17 2.5c0 5-10 6-10 9.5s10 4.5 10 9.5"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    </svg>
+
+    <header class="topbar">
+        <div class="brand">
+            <svg class="brand-mark" aria-hidden="true" focusable="false"><use href="#i-logo"/></svg>
+            <div>
+                <h1>หน้าจอผู้ประสานงาน</h1>
+                <p class="tagline">คิว ห้อง และเจ้าหน้าที่ ในหน้าเดียว</p>
+            </div>
+            <div id="views" class="segmented pv-views" role="group" aria-label="มุมมอง">
+                <button type="button" data-view="queue" aria-pressed="true">คิว</button>
+                <button type="button" data-view="rooms" aria-pressed="false">ห้องและการย้าย</button>
+            </div>
+        </div>
+        <div class="pv-head-right">
+            <div id="figures" class="pv-figures"></div>
+            <span id="nhso-chip" class="pv-chip" role="button" tabindex="0"></span>
+            <span class="live" data-state="ok"><i class="live-dot"></i>อัปเดตสด</span>
+            <span class="user"><span class="avatar">ส</span><span>สุดา</span></span>
+            <button type="button" class="ghost icon-button" title="ออกจากระบบ"><svg class="i"><use href="#i-logout"/></svg></button>
+        </div>
+    </header>
+
+    <main class="pv-main">
+        <div id="attention"></div>
+        <div id="content"></div>
+    </main>
+
+    <div class="pv-switch" id="switch"></div>
+
+    <script>
+    'use strict';
+
+    // ---------- Fake data ----------
+    const STAGES = [
+        [ 'waiting', 'รอคิว', 'clock' ],
+        [ 'registration', 'ลงทะเบียน', 'clipboard' ],
+        [ 'intake', 'ให้ข้อมูลก่อนพบแพทย์', 'clipboard' ],
+        [ 'examination', 'พบแพทย์', 'stethoscope' ],
+        [ 'aftercare', 'หลังพบแพทย์', 'heart' ],
+        [ 'billing', 'ชำระเงิน', 'clipboard' ],
+        [ 'pharmacy', 'รับยา', 'clipboard' ]
+    ];
+    const STAGE_NAME = Object.fromEntries(STAGES.map(s => [ s[0], s[1] ]));
+    const WAIT_WARN = 5 * 60;
+    const WAIT_LONG = 15 * 60;
+    const NHSO = {
+        authenticated: 'สปสช. ยืนยันแล้ว',
+        bypassed: 'สปสช. bypass',
+        not_yet: 'สปสช. ยังไม่ยืนยัน',
+        unavailable: 'สปสช. ตรวจไม่ได้'
+    };
+    const VIDEOS = [ { id: 'v1', title: 'การเตรียมตัวก่อนพบแพทย์' }, { id: 'v2', title: 'การใช้ยาอย่างถูกวิธี' } ];
+    const QUESTIONNAIRES = [ { id: 'q1', title: 'อาการทั่วไปวันนี้' }, { id: 'q2', title: 'ความเสี่ยงการหกล้ม' } ];
+    const DOCTORS = [ 'D1024', 'D2087' ];
+
+    let seq = 0;
+
+    // The prototype's clock: it is 10:50 when the page opens.
+    const NOW = 10 * 60 + 50;
+    const CLINICS = { med: 'อายุรกรรม', gyn: 'นรีเวช' };
+
+    function encounter(stage, waited, extra = {}) {
+        seq++;
+
+        // What the backend already keeps for each encounter: its clinic, its history (each stage done, and for how long),
+        // and, for one started from an appointment, that appointment's time in the HIS.
+        const cur = STAGES.findIndex(st => st[0] === stage);
+        const history = {};
+
+        for (let i = 0; i < cur; i++) history[STAGES[i][0]] = ((seq * 7 + i * 13) % 19 + 3) * 60;
+
+        const appt = seq % 3 === 0 ? undefined : NOW - ((seq * 23) % 90) + 10;
+
+        return { id: `e${seq}`, hn: String(650010000 + seq * 37), stage, waited, nhso: 'authenticated',
+            questionnaires: [], clinic: seq % 3 === 1 ? 'gyn' : 'med', history, appt, ...extra };
+    }
+
+    function normalLoad() {
+        seq = 0;
+
+        return [
+            encounter('waiting', 1140, { nhso: 'not_yet' }),
+            encounter('waiting', 610, { suggested: true }),
+            encounter('waiting', 420),
+            encounter('waiting', 95, { nhso: 'not_yet', absent: true }),
+            encounter('waiting', 30),
+            encounter('registration', 260, { at: [ 'สถานี 1' ] }),
+            encounter('registration', 75),
+            encounter('intake', 980, { nhso: 'unavailable' }),
+            encounter('intake', 330, { at: [ 'สถานี 2' ], questionnaires: [ { id: 'q1', answers: [ 'ไม่มีไข้', 'ไม่ไอ' ] } ] }),
+            encounter('intake', 40, { questionnaires: [ { id: 'q2' } ] }),
+            encounter('examination', 700, { doctor: 'D1024', at: [ 'ห้องตรวจ 3' ], video: 'v1', unrecorded: true }),
+            encounter('examination', 410, { doctor: 'D1024' }),
+            encounter('examination', 1300, { doctor: 'D2087', playing: true, video: 'v1' }),
+            encounter('examination', 520),
+            encounter('examination', 150),
+            encounter('billing', 200, { absent: true }),
+            encounter('pharmacy', 380, { nhso: 'not_yet' })
+        ];
+    }
+
+    function heavyLoad() {
+        const out = normalLoad();
+        const stages = [ 'waiting', 'waiting', 'waiting', 'registration', 'intake', 'examination', 'examination', 'billing', 'pharmacy' ];
+
+        for (let i = 0; i < 30; i++) {
+            const stage = stages[i % stages.length];
+            const extra = {};
+
+            if (i % 7 === 0) extra.nhso = 'not_yet';
+            if (i % 11 === 0) extra.nhso = 'unavailable';
+            if (stage === 'examination' && i % 3) extra.doctor = DOCTORS[i % 2];
+            if (i % 5 === 0) extra.at = [ `สถานี ${1 + (i % 3)}` ];
+            if (i % 13 === 4) extra.absent = true;
+            if (i === 10) extra.unrecorded = true;
+            if (i % 6 === 2) extra.questionnaires = [ { id: 'q1' } ];
+            if (i % 6 === 3) extra.questionnaires = [ { id: 'q2', answers: [ 'ไม่เคยหกล้ม', 'เดินเองได้' ] } ];
+            out.push(encounter(stage, (i * 97) % 1500, extra));
+        }
+
+        return out;
+    }
+
+    const TEAMS = [
+        { id: 'สถานี 1', stageIds: [ 'registration' ], stages: 'ลงทะเบียน', free: [ 'นภา' ], busy: [ [ 'สมศรี', '650010222' ] ] },
+        { id: 'สถานี 2', stageIds: [ 'intake' ], stages: 'ให้ข้อมูลก่อนพบแพทย์', free: [], busy: [ [ 'วิไล', '650010333' ] ] },
+        { id: 'ห้องตรวจ 3', stageIds: [ 'examination', 'aftercare' ], stages: 'พบแพทย์, หลังพบแพทย์', free: [ 'พญ.กมล', 'ปรีชา' ], busy: [ [ 'นพ.อนันต์', '650010407' ] ] },
+        { id: 'การเงิน', stageIds: [ 'billing', 'pharmacy' ], stages: 'ชำระเงิน, รับยา', free: [ 'จิราพร' ], busy: [] }
+    ];
+
+    const state = {
+        variant: 'A',
+        base: 18,
+        view: 'queue',
+        load: 'normal',
+        bypass: false,
+        problem: false,
+        encounters: normalLoad(),
+        failedMoves: [
+            { id: 'm1', who: 'วิไล', origin: 'สถานี 2', destination: 'ห้อง 650010518', reason: 'ห้องปลายทางยังไม่เปิด', at: '10:42' }
+        ],
+        // Patients in their own room with no encounter, and what the HIS said of their appointments today (ADR 0019).
+        unqueued: [
+            { hn: '650012001', appointment: 'none', waited: 340 },
+            { hn: '650012002', appointment: 'unreadable', waited: 75 }
+        ],
+        // Moves under way, with how long ago each started.
+        moves: [
+            { id: 'mv1', who: 'ปรีชา', origin: 'ห้องตรวจ 3', destination: 'ห้อง 650010259', started: 25 },
+            { id: 'mv2', who: 'สมศรี', origin: 'สถานี 1', destination: 'ห้อง 650010222', started: 80 }
+        ],
+        backend: false,
+        clinic: '',
+        statsOpen: false,
+        elapsed: 0,
+        selected: null,
+        panelTab: 'act',
+        target: null,
+        targetFor: null,
+        attnOpen: false,
+        popover: null,
+        roomHint: null
+    };
+
+    // ---------- Helpers ----------
+    function el(tag, cls, text) {
+        const node = document.createElement(tag);
+
+        if (cls) node.className = cls;
+        if (text !== undefined) node.textContent = text;
+
+        return node;
+    }
+
+    function icon(name) {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+
+        svg.setAttribute('class', 'i');
+        svg.setAttribute('aria-hidden', 'true');
+        use.setAttribute('href', `#i-${name}`);
+        svg.appendChild(use);
+
+        return svg;
+    }
+
+    function btn(text, cls, iconName, onClick) {
+        const b = el('button', cls);
+
+        b.type = 'button';
+        if (iconName) b.appendChild(icon(iconName));
+        if (text) b.appendChild(el('span', undefined, text));
+        b.addEventListener('click', e => { e.stopPropagation(); onClick?.(e); });
+
+        return b;
+    }
+
+    const mmss = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    const tier = s => s >= WAIT_LONG ? 'long' : s >= WAIT_WARN ? 'warn' : '';
+    const nhsoOf = e => state.bypass ? 'bypassed' : e.nhso;
+    const stageIndex = id => STAGES.findIndex(s => s[0] === id);
+    const isLast = e => stageIndex(e.stage) === STAGES.length - 1;
+    const nextName = e => isLast(e) ? 'เสร็จสิ้น' : STAGES[stageIndex(e.stage) + 1][1];
+    const byStage = id => state.encounters.filter(e => e.stage === id).sort((a, b) => b.waited - a.waited);
+    const isD = () => state.variant === 'D';
+
+    // ---------- D's infographics: wait tiers per stage, and one patient's wait against the limit ----------
+    // Each tier is a status: it always ships with its icon and its label, never colour alone.
+    const TIERS = [ [ 'ok', 'ไม่ถึง 5 นาที', 'check' ], [ 'warn', '5–15 นาที', 'clock' ], [ 'long', 'เกิน 15 นาที', 'alert' ] ];
+    const tierCounts = list => {
+        const c = { ok: 0, warn: 0, long: 0 };
+
+        list.forEach(e => { c[tier(e.waited) || 'ok'] += 1; });
+
+        return c;
+    };
+
+    function tierBar(list) {
+        const bar = el('div', 'pv-tierbar');
+        const c = tierCounts(list);
+
+        bar.setAttribute('role', 'img');
+        bar.setAttribute('aria-label', TIERS.map(([ k, label ]) => `${label} ${c[k]} ราย`).join(', '));
+        TIERS.forEach(([ k, label ]) => {
+            if (!c[k]) return;
+            const seg = el('span', `seg ${k}`);
+
+            seg.style.flexGrow = String(c[k]);
+            seg.title = `${label}: ${c[k]} ราย (${Math.round(c[k] * 100 / list.length)}%)`;
+            bar.appendChild(seg);
+        });
+
+        return bar;
+    }
+
+    /** Under a column's title: its wait tiers as a thin bar, the longest wait, and how many are past the limit. */
+    function colStats(id) {
+        const list = byStage(id).filter(shown);
+        const box = el('div', 'pv-col-stats');
+        const line = el('div', 'pv-col-line');
+        const longest = el('span', 'pv-col-fact');
+        const long = list.filter(e => e.waited >= WAIT_LONG).length;
+
+        box.dataset.stage = id;
+        longest.dataset.tier = tier(list[0]?.waited ?? 0);
+        longest.append(icon('clock'), el('span', undefined, `นานสุด ${mmss(list[0]?.waited ?? 0)}`));
+        line.appendChild(longest);
+        if (long) {
+            const over = el('span', 'pv-col-fact over');
+
+            over.append(icon('alert'), el('span', undefined, `เกินเกณฑ์ ${long}`));
+            line.appendChild(over);
+        }
+        const team = TEAMS.find(t => t.stageIds.includes(id));
+
+        if (team) {
+            const free = team.free.length;
+            // Callable: nobody is with them yet, and they are in their room to be called.
+            const unserved = list.filter(e => !e.at?.length && !e.absent).length;
+            const staff = el('span', 'pv-col-fact staff');
+            const [ mood, text ] = free && unserved ? [ 'idle', `ว่าง ${free} คน เรียกได้` ]
+                : !free && unserved ? [ 'none', 'ไม่มีคนว่าง' ] : [ '', `ว่าง ${free} คน` ];
+
+            staff.dataset.mood = mood;
+            staff.title = `${team.id}: ว่าง ${team.free.join(', ') || '—'} · ไม่ว่าง ${
+                team.busy.map(b => b[0]).join(', ') || '—'}`;
+            staff.append(icon('users'), el('span', undefined, text));
+            line.appendChild(staff);
+        }
+        box.append(tierBar(list), line);
+
+        return box;
+    }
+
+    /** One legend for every column's bar, with the whole board's count per tier. */
+    function boardLegend() {
+        const legend = el('div', 'pv-tier-legend');
+        const c = tierCounts(state.encounters);
+
+        legend.appendChild(el('span', 'pv-tier-legend-title', 'เวลารอ'));
+        TIERS.forEach(([ k, label, iconName ]) => {
+            const item = el('span', `pv-tier-key ${k}`);
+
+            item.append(el('i', 'swatch'), icon(iconName), el('span', undefined, label), el('b', undefined, String(c[k])));
+            legend.appendChild(item);
+        });
+
+        return legend;
+    }
+
+    /** The panel's wait meter: filled to the 15-minute limit, a tick at 5 minutes, the fill colour is the severity. */
+    function waitMeter(e) {
+        const m = el('div', 'pd-meter');
+        const top = el('div', 'pd-meter-top');
+        const label = el('span', 'pd-meter-label');
+        const value = el('span', 'pd-meter-value');
+        const track = el('div', 'pd-track');
+        const scale = el('div', 'pd-scale');
+
+        m.dataset.enc = e.id;
+        m.dataset.tier = tier(e.waited);
+        label.append(icon('clock'), el('span', undefined, 'รอมาแล้ว'));
+        value.append(el('b', 'pv-wait', mmss(e.waited)), el('span', 'pd-meter-of', ' / 15:00 นาที'));
+        top.append(label, value);
+        track.append(el('span', 'pd-fill'), el('span', 'pd-tick'));
+        scale.append(el('span', undefined, '0'), el('span', 'five', '5'), el('span', undefined, '15'));
+        m.append(top, track, scale, el('div', 'pd-meter-cap'));
+        paintMeter(m, e);
+
+        return m;
+    }
+
+    function paintMeter(m, e) {
+        const t = tier(e.waited);
+        const over = Math.floor((e.waited - WAIT_LONG) / 60);
+        const [ iconName, text ] = t === 'long' ? [ 'alert', `เกินเกณฑ์ 15 นาทีมาแล้ว ${over} นาที` ]
+            : t === 'warn' ? [ 'clock', `เกิน 5 นาที อีก ${Math.ceil((WAIT_LONG - e.waited) / 60)} นาทีถึงเกณฑ์` ]
+                : [ 'check', 'ยังไม่ถึง 5 นาที' ];
+
+        m.querySelector('.pd-fill').style.width = `${Math.min(100, e.waited * 100 / WAIT_LONG)}%`;
+        m.querySelector('.pd-meter-cap').replaceChildren(icon(iconName), el('span', undefined, text));
+    }
+
+    const MOVE_STUCK = 60;
+    const withBackend = () => isD() && state.backend;
+    const shown = e => !withBackend() || !state.clinic || e.clinic === state.clinic;
+    const hhmm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
+    const totalOf = e => e.waited + Object.values(e.history).reduce((a, b) => a + b, 0);
+    const lateOf = e => e.appt === undefined ? 0 : Math.floor(NOW + state.elapsed / 60 - e.appt);
+    const hm = sec => sec >= 3600 ? `${Math.floor(sec / 3600)} ชม. ${Math.floor(sec % 3600 / 60)} นาที` : `${Math.floor(sec / 60)} นาที`;
+    const APPT_LATE = 30;
+    const LONG_TOTAL = 90 * 60;
+
+    /** Above the board: the clinic filter, and the button for today's figures. */
+    function boardBar() {
+        const bar = el('div', 'pv-boardbar');
+        const seg = el('div', 'segmented pv-clinics');
+        const count = c => state.encounters.filter(e => !c || e.clinic === c).length;
+
+        bar.appendChild(el('span', 'pv-boardbar-label', 'คลินิก'));
+        [ [ '', 'ทุกคลินิก' ], ...Object.entries(CLINICS) ].forEach(([ id, name ]) => {
+            const b = btn('', '', undefined, () => { state.clinic = id; render(); });
+
+            b.append(el('span', undefined, name), el('span', 'count', String(count(id))));
+            b.setAttribute('aria-pressed', String(state.clinic === id));
+            seg.appendChild(b);
+        });
+        bar.appendChild(seg);
+
+        // The header has no room for a fifth figure: today's completions ride on the button that opens today's figures.
+        const stats = btn(`สถิติวันนี้ · เสร็จ ${HOURS.reduce((a, h) => a + h[2], 0)}`, 'secondary pv-stats-btn', 'chart', () => { state.statsOpen = !state.statsOpen; render(); });
+
+        stats.setAttribute('aria-expanded', String(state.statsOpen));
+        bar.appendChild(stats);
+
+        return bar;
+    }
+
+    // Today's figures. The backend keeps every encounter of the day with its history, so all of it is a query away;
+    // the prototype makes up the hours before it opened.
+    const HOURS = [ [ '08:00', 12, 4 ], [ '09:00', 18, 14 ], [ '10:00', 15, 16 ], [ '11:00', 4, 3 ] ];
+
+    function todayStats() {
+        const box = el('section', 'pv-today');
+        const tiles = el('div', 'pv-today-tiles');
+        const tile = (iconName, label, value, note) => {
+            const t = el('div', 'pv-today-tile');
+            const ic = el('span', 'pv-fig-ic');
+
+            ic.appendChild(icon(iconName));
+            t.append(ic, el('b', undefined, value), el('span', 'label', label));
+            if (note) t.appendChild(el('span', 'note', note));
+            tiles.appendChild(t);
+        };
+        const done = HOURS.reduce((a, h) => a + h[2], 0);
+        const arrived = HOURS.reduce((a, h) => a + h[1], 0);
+
+        tile('check', 'เสร็จวันนี้', String(done), `จาก ${arrived} ราย ที่เข้ามา`);
+        tile('hourglass', 'เวลาเฉลี่ยทั้ง encounter', '1 ชม. 12 นาที', 'ของที่เสร็จแล้ววันนี้');
+        tile('clock', 'รอนานสุดวันนี้', '41 นาที', 'พบแพทย์ 09:42');
+
+        // Average wait per stage, against the 15-minute limit.
+        const avg = el('div', 'pv-chart');
+        const rows = el('div', 'pv-hbars');
+        const perStage = STAGES.map(([ id, name ]) => {
+            const waits = state.encounters.map(e => e.history[id]).filter(x => x !== undefined)
+                .concat(state.encounters.filter(e => e.stage === id).map(e => e.waited));
+
+            return [ name, waits.length ? waits.reduce((a, b) => a + b, 0) / waits.length : 0 ];
+        });
+        const max = Math.max(WAIT_LONG * 1.4, ...perStage.map(x => x[1]));
+
+        avg.append(el('h3', undefined, 'เวลารอเฉลี่ยต่อขั้น (นาที)'), rows);
+        perStage.forEach(([ name, sec ]) => {
+            const row = el('div', 'pv-hbar');
+            const track = el('span', 'track');
+            const fill = el('span', `fill ${tier(sec) || 'ok'}`);
+            const limit = el('span', 'limit');
+
+            fill.style.width = `${sec * 100 / max}%`;
+            limit.style.left = `${WAIT_LONG * 100 / max}%`;
+            track.append(fill, limit);
+            row.title = `${name}: เฉลี่ย ${(sec / 60).toFixed(1)} นาที`;
+            row.append(el('span', 'name', name), track, el('span', 'val', (sec / 60).toFixed(1)));
+            rows.appendChild(row);
+        });
+        avg.appendChild(el('p', 'pv-chart-note', 'เส้นประคือเกณฑ์ 15 นาที'));
+
+        // Arrivals and completions per hour.
+        const hourly = el('div', 'pv-chart');
+        const legend = el('div', 'pv-chart-legend');
+        const cols = el('div', 'pv-cols');
+        const top = Math.max(...HOURS.flatMap(h => [ h[1], h[2] ]));
+
+        [ [ 'in', 'เข้าใหม่' ], [ 'out', 'เสร็จ' ] ].forEach(([ k, label ]) => {
+            const item = el('span');
+
+            item.append(el('i', `key ${k}`), el('span', undefined, label));
+            legend.appendChild(item);
+        });
+        HOURS.forEach(([ hour, inN, outN ], i) => {
+            const group = el('div', 'pv-col-group');
+            const bars = el('div', 'bars');
+
+            [ [ 'in', inN, 'เข้าใหม่' ], [ 'out', outN, 'เสร็จ' ] ].forEach(([ k, n, label ]) => {
+                const bar = el('span', `bar ${k}`);
+
+                bar.style.height = `${n * 100 / top}%`;
+                bar.title = `${hour}: ${label} ${n} ราย`;
+                bar.appendChild(el('span', 'v', String(n)));
+                bars.appendChild(bar);
+            });
+            group.append(bars, el('span', 'hour', i === HOURS.length - 1 ? `${hour} (ถึงตอนนี้)` : hour));
+            cols.appendChild(group);
+        });
+        hourly.append(el('h3', undefined, 'เข้าใหม่และเสร็จ ต่อชั่วโมง'), legend, cols);
+
+        box.append(tiles, avg, hourly);
+
+        return box;
+    }
+    const APPOINTMENT = { none: [ 'clipboard', 'ไม่มีนัดวันนี้' ], all_seen: [ 'check', 'พบครบทุกนัดแล้ว' ],
+        unreadable: [ 'alert', 'อ่านนัดจาก HIS ไม่ได้' ] };
+
+    /** Patients in their own room that no queue holds: nobody calls them until a coordinator starts their encounter. */
+    function unqueuedStrip() {
+        if (!state.unqueued.length) return null;
+        const strip = el('section', 'pv-unq');
+        const head = el('div', 'pv-unq-head');
+        const list = el('div', 'pv-unq-list');
+
+        head.append(icon('door'), el('span', undefined, 'อยู่ในห้องแต่ยังไม่เข้าคิว'),
+            el('span', 'count', String(state.unqueued.length)));
+        state.unqueued.forEach(u => {
+            const card = el('div', 'pv-unq-card');
+            const wait = el('span', 'pv-waitbox');
+            const [ iconName, text ] = APPOINTMENT[u.appointment];
+            const badge = el('span', `badge appt-${u.appointment}`);
+
+            card.dataset.uq = u.hn;
+            card.dataset.tier = tier(u.waited);
+            wait.append(icon('clock'), el('span', 'pv-wait', mmss(u.waited)));
+            badge.append(icon(iconName), el('span', undefined, text));
+            card.append(el('b', 'pv-unq-hn', u.hn), wait, badge, btn('เข้าคิว', 'primary pv-unq-go', 'plus', () => {
+                state.unqueued = state.unqueued.filter(x => x !== u);
+                state.encounters.push(encounter('waiting', 0, { hn: u.hn }));
+                render();
+            }));
+            list.appendChild(card);
+        });
+        strip.append(head, list);
+
+        return strip;
+    }
+
+    // Which icon each badge and each attention item wears.
+    const BADGE_ICON = { appt: 'calendar', late: 'calendar', total: 'hourglass', unrec: 'recoff', absent: 'useroff', qwait: 'clipboard', qdone: 'clipboard', next: 'arrow', at: 'users', 'nhso-not_yet': 'key', 'nhso-unavailable': 'key', 'nhso-bypassed': 'key',
+        video: 'play' };
+
+    // ---------- Attention: one list, every variant shows it its own way ----------
+    function attention() {
+        const items = [];
+
+        if (state.problem) {
+            items.push({ key: 'problem', sev: 'high', icon: 'alert', text: 'เชื่อมต่อฐานข้อมูลไม่ได้ หน้าจออาจไม่อัปเดต', count: 1 });
+        }
+        const unrecorded = isD() ? state.encounters.filter(e => e.unrecorded) : [];
+
+        if (unrecorded.length) {
+            items.push({ key: 'unrec', sev: 'high', icon: 'recoff', count: unrecorded.length, enc: unrecorded[0].id,
+                text: `ไม่ได้บันทึกหลักฐาน ${unrecorded.length} ห้อง: HN ${unrecorded.map(e => e.hn).join(', ')}` });
+        }
+        state.failedMoves.forEach(m => items.push({ key: m.id, sev: 'high', icon: 'swap', count: 1, dismiss: true, room: true,
+            text: `ย้าย ${m.who} ไป ${m.destination} ไม่สำเร็จ: ${m.reason} (${m.at})` }));
+        if (isD() && state.unqueued.length) {
+            items.push({ key: 'unq', sev: 'high', icon: 'door', count: state.unqueued.length, unq: true,
+                text: `อยู่ในห้องแต่ยังไม่เข้าคิว ${state.unqueued.length} ราย: HN ${
+                    state.unqueued.map(u => u.hn).join(', ')}` });
+        }
+        if (state.variant === 'D') {
+            // Q25: one item per stage for the long waits, pointing at the longest one.
+            STAGES.forEach(([ id, name ]) => {
+                const long = byStage(id).filter(e => e.waited >= WAIT_LONG);
+
+                if (long.length) {
+                    items.push({ key: `long-${id}`, sev: 'high', icon: 'clock', count: 1, enc: long[0].id,
+                        text: `รอนานเกิน 15 นาที: ${name} ${long.length} ราย (นานสุด HN ${long[0].hn} ${
+                            Math.floor(long[0].waited / 60)} นาที)` });
+                }
+            });
+        } else {
+            state.encounters.filter(e => e.waited >= WAIT_LONG)
+                .forEach(e => items.push({ key: `long-${e.id}`, sev: 'high', count: 1, enc: e.id,
+                    text: `HN ${e.hn} รอ ${Math.floor(e.waited / 60)} นาที ที่ ${STAGE_NAME[e.stage]}` }));
+        }
+
+        const unavailable = state.encounters.filter(e => nhsoOf(e) === 'unavailable');
+        const notYet = state.encounters.filter(e => nhsoOf(e) === 'not_yet');
+        const noDoctor = state.encounters.filter(e => e.stage === 'examination' && !e.doctor);
+
+        if (unavailable.length) {
+            items.push({ key: 'nhso-u', sev: 'high', icon: 'key', count: unavailable.length, enc: unavailable[0].id,
+                text: `สปสช. ตรวจไม่ได้ ${unavailable.length} ราย: ${unavailable.map(e => e.hn).join(', ')}` });
+        }
+        const absent = isD() ? state.encounters.filter(e => e.absent) : [];
+
+        if (absent.length) {
+            items.push({ key: 'absent', sev: 'mid', icon: 'useroff', count: absent.length, enc: absent[0].id,
+                text: `คนไข้ไม่อยู่ในห้อง ${absent.length} ราย: HN ${absent.map(e => e.hn).join(', ')}` });
+        }
+        if (noDoctor.length) {
+            items.push({ key: 'nodoc', sev: 'mid', icon: 'stethoscope', count: noDoctor.length, enc: noDoctor[0].id,
+                text: `พบแพทย์: ${noDoctor.length} รายยังไม่มีแพทย์` });
+        }
+        if (notYet.length) {
+            items.push({ key: 'nhso-n', sev: 'mid', icon: 'key', count: notYet.length, enc: notYet[0].id,
+                text: `สปสช. ยังไม่ยืนยัน ${notYet.length} ราย` });
+        }
+
+        return items;
+    }
+
+    function flagged(e) {
+        return e.waited >= WAIT_LONG || nhsoOf(e) === 'unavailable' || (isD() && e.unrecorded) || (e.stage === 'examination' && !e.doctor);
+    }
+
+    function actOnItem(item) {
+        if (item.unq) {
+            state.view = 'queue';
+            render();
+            document.querySelector('.pv-unq')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+            return;
+        }
+        if (item.room) {
+            state.view = 'rooms';
+            state.roomHint = 'ห้อง 650010518';
+        } else if (item.enc) {
+            state.view = 'queue';
+            state.selected = item.enc;
+        }
+        render();
+    }
+
+    function dismiss(item) {
+        if (item.key === 'problem') state.problem = false;
+        state.failedMoves = state.failedMoves.filter(m => m.id !== item.key);
+        render();
+    }
+
+    // ---------- Actions (memory only) ----------
+    function forward(e, to) {
+        const target = to ?? (isLast(e) ? 'done' : STAGES[stageIndex(e.stage) + 1][0]);
+
+        state.targetFor = null;
+
+        if (target === 'done') {
+            state.encounters = state.encounters.filter(x => x !== e);
+            if (state.selected === e.id) state.selected = null;
+        } else {
+            e.stage = target;
+            e.waited = 0;
+            e.at = undefined;
+            e.suggested = false;
+        }
+        render();
+    }
+
+    function select(e) {
+        state.selected = state.selected === e.id ? null : e.id;
+        render();
+    }
+
+    function showRoom(e) {
+        state.view = 'rooms';
+        state.roomHint = `ห้อง ${e.hn}`;
+        render();
+    }
+
+    // ---------- Header ----------
+    function drawHeader() {
+        const figures = document.getElementById('figures');
+        const count = id => state.encounters.filter(e => e.stage === id).length;
+        const fig = (iconName, label, value) => {
+            const f = el('span', 'pv-figure');
+
+            const tile = el('span', 'pv-fig-ic');
+
+            tile.appendChild(icon(iconName));
+            f.append(tile, el('span', 'pv-fig-label', label), el('b', undefined, String(value)));
+
+            return f;
+        };
+
+        figures.replaceChildren(
+            fig('clock', 'รอคิว', count('waiting')),
+            fig('stethoscope', 'ระหว่างบริการ', state.encounters.length - count('waiting')),
+            fig('door', 'ห้องเปิด', 23),
+            fig('swap', 'กำลังย้าย', state.moves.length)
+        );
+
+        const stuck = state.moves.filter(m => m.started >= MOVE_STUCK);
+        const movesFig = figures.lastChild;
+
+        movesFig.title = state.moves.map(m => `${m.who}: ${m.origin} → ${m.destination} (${m.started} วินาที)`).join('\n');
+        movesFig.onclick = () => { state.view = 'rooms'; render(); };
+        if (isD() && stuck.length) {
+            const warn = el('span', 'pv-fig-warn');
+
+            movesFig.dataset.stuck = 'true';
+            warn.append(icon('alert'), el('span', undefined, `ค้าง ${stuck.length}`));
+            movesFig.appendChild(warn);
+        }
+
+        const chip = document.getElementById('nhso-chip');
+
+        chip.dataset.on = String(state.bypass);
+        chip.replaceChildren(icon('key'), el('span', undefined, state.bypass ? 'วันนี้ bypass สปสช.' : 'สปสช. ปกติ'));
+        if (state.popover === 'nhso') {
+            const pop = el('div', 'pv-pop');
+
+            pop.append(el('p', undefined, state.bypass
+                ? 'ประกาศ bypass วันนี้แล้ว (สุดา 08:12): สปสช. นับทุกการมารับบริการของวันนี้ว่ายืนยันแล้ว'
+                : 'ถ้า API ของ สปสช. ล่มทั้งวัน ให้ประกาศ bypass'));
+            pop.append(btn(state.bypass ? 'ยกเลิก bypass วันนี้' : 'ประกาศ bypass วันนี้', 'secondary', undefined, () => {
+                state.bypass = !state.bypass;
+                state.popover = null;
+                render();
+            }));
+            pop.addEventListener('click', e => e.stopPropagation());
+            chip.appendChild(pop);
+        }
+        chip.onclick = e => {
+            e.stopPropagation();
+            state.popover = state.popover === 'nhso' ? null : 'nhso';
+            render();
+        };
+
+        document.querySelectorAll('#views button').forEach(b => {
+            b.setAttribute('aria-pressed', String(b.dataset.view === state.view));
+            b.onclick = () => { state.view = b.dataset.view; render(); };
+        });
+
+        const n = attnTotal(attention());
+
+        document.title = n ? `(${n}) หน้าจอผู้ประสานงาน` : 'หน้าจอผู้ประสานงาน';
+    }
+
+    // ---------- Team strip ----------
+    function drawTeams() {
+        const strip = el('div', 'pv-teams');
+
+        const label = el('span', 'pv-teams-label');
+
+        label.append(icon('users'), el('span', undefined, 'ทีม'));
+        strip.appendChild(label);
+        TEAMS.forEach(t => {
+            const chip = el('span', 'pv-team');
+
+            const avail = el('span', 'pv-avail');
+
+            t.free.forEach(n => { const d = el('i', 'free'); d.title = `${n}: ว่าง`; avail.appendChild(d); });
+            t.busy.forEach(([ n, hn ]) => { const d = el('i', 'busy'); d.title = `${n}: กับ ${hn}`; avail.appendChild(d); });
+            chip.append(el('b', undefined, t.id), avail, el('span', 'free', `ว่าง ${t.free.length}`),
+                el('span', 'busy', `ไม่ว่าง ${t.busy.length}`));
+            chip.onclick = e => {
+                e.stopPropagation();
+                state.popover = state.popover === t.id ? null : t.id;
+                render();
+            };
+            if (state.popover === t.id) {
+                const pop = el('div', 'pv-pop');
+
+                pop.append(el('p', undefined, `ขั้น: ${t.stages}`),
+                    el('p', undefined, `ว่าง: ${t.free.join(', ') || '—'}`),
+                    el('p', undefined, `ไม่ว่าง: ${t.busy.map(([ n, hn ]) => `${n} (กับ ${hn})`).join(', ') || '—'}`));
+                chip.appendChild(pop);
+            }
+            strip.appendChild(chip);
+        });
+
+        return strip;
+    }
+
+    // ---------- Board: shared frame, each variant draws the tickets ----------
+    function drawBoard(drawTicket, ticketsInto) {
+        const board = el('div', 'pv-board');
+        const columns = [];
+
+        STAGES.forEach(([ id, name, iconName ]) => {
+            const entries = byStage(id).filter(shown);
+
+            if (!entries.length) {
+                const col = el('div', 'pv-col collapsed');
+
+                col.title = `${name}: ไม่มีผู้ป่วย`;
+                col.append(el('span', 'count', '0'), el('span', 'pv-vname', name));
+                board.appendChild(col);
+                columns.push('2.8rem');
+
+                return;
+            }
+
+            const col = el('div', 'pv-col');
+            const head = el('div', 'pv-col-head');
+            const body = el('div', 'pv-col-body');
+
+            head.append(icon(iconName), el('span', undefined, name), el('span', 'count', String(entries.length)));
+            col.append(head);
+            if (isD()) col.appendChild(colStats(id));
+            col.appendChild(body);
+            if (id === 'examination') {
+                const groups = [ ...DOCTORS.map(d => [ `แพทย์ ${d}`, entries.filter(e => e.doctor === d), '' ]),
+                    [ 'ยังไม่กำหนดแพทย์', entries.filter(e => !e.doctor), 'none' ] ];
+
+                groups.filter(g => g[1].length).forEach(([ title, list, cls ]) => {
+                    const h = el('div', `pv-doctor ${cls}`);
+
+                    h.append(el('span', undefined, title), el('span', undefined, `(${list.length})`));
+                    body.appendChild(h);
+                    ticketsInto(body, list.map((e, i) => drawTicket(e, i)));
+                });
+            } else {
+                ticketsInto(body, entries.map((e, i) => drawTicket(e, i)));
+            }
+            board.appendChild(col);
+            columns.push('minmax(var(--col-min, 14rem), 1fr)');
+        });
+        board.style.gridTemplateColumns = columns.join(' ');
+
+        return board;
+    }
+
+    function hnLink(e) {
+        const b = el('button', 'pv-hn-link pv-hn', e.hn);
+
+        b.type = 'button';
+        b.title = 'ไปที่ห้องของผู้ป่วย';
+        b.addEventListener('click', ev => { ev.stopPropagation(); showRoom(e); });
+
+        return b;
+    }
+
+    function primary(e, compact) {
+        const b = btn(compact ? '' : (isLast(e) ? 'เสร็จสิ้น' : 'ส่งต่อ'), 'primary pv-go', isLast(e) ? 'check' : 'arrow',
+            () => forward(e));
+
+        b.title = `ส่งต่อไป ${nextName(e)}`;
+
+        return b;
+    }
+
+    function mark(node, e) {
+        node.dataset.enc = e.id;
+        node.dataset.tier = tier(e.waited);
+        if (state.selected === e.id) node.classList.add('pv-selected');
+        node.addEventListener('click', () => select(e));
+
+        return node;
+    }
+
+    function badgesOf(e) {
+        const list = [];
+        const n = nhsoOf(e);
+
+        if (isD() && e.unrecorded) list.push([ 'unrec', 'ไม่ได้บันทึกหลักฐาน' ]);
+        if (isD() && e.absent) list.push([ 'absent', 'คนไข้ไม่อยู่ในห้อง' ]);
+        if (e.suggested) list.push([ 'next', 'ถัดไป' ]);
+        if (e.at?.length) list.push([ 'at', `อยู่ที่ ${e.at.join(', ')}` ]);
+        if (n !== 'authenticated') list.push([ `nhso-${n}`, NHSO[n] ]);
+        if (e.playing) list.push([ 'video', 'กำลังเล่นวิดีโอ' ]);
+        if (withBackend()) {
+            const late = lateOf(e);
+
+            // Only a lateness that still matters earns a badge: past the doctor, the appointment is history.
+            if (e.appt !== undefined && late >= APPT_LATE && stageIndex(e.stage) <= stageIndex('examination')) {
+                list.push([ 'late', `เลยนัด ${hhmm(e.appt)} มา ${late} นาที` ]);
+            }
+            if (totalOf(e) >= LONG_TOTAL) list.push([ 'total', `อยู่ในระบบ ${hm(totalOf(e))}` ]);
+        }
+        if (isD() && e.questionnaires.length) {
+            const pending = e.questionnaires.filter(q => !q.answers).length;
+
+            list.push(pending ? [ 'qwait', `รอคำตอบแบบสอบถาม ${pending}` ] : [ 'qdone', 'ตอบแบบสอบถามแล้ว' ]);
+        }
+
+        return list;
+    }
+
+    // ---------- Detail panel (contents shared) ----------
+    function panelSections(e) {
+        const sections = {};
+        const act = el('div', 'pv-panel-body');
+        const stagePick = el('select');
+
+        STAGES.filter(s => s[0] !== e.stage).forEach(([ id, name ]) => {
+            const o = el('option', undefined, name);
+
+            o.value = id;
+            stagePick.appendChild(o);
+        });
+        stagePick.value = isLast(e) ? STAGES[0][0] : STAGES[stageIndex(e.stage) + 1][0];
+
+        const stageField = el('label', 'pv-field');
+        const stageRow = el('div', 'pv-row');
+
+        stageRow.append(stagePick, btn('ส่งไปขั้นนี้', 'secondary', 'arrow', () => forward(e, stagePick.value)));
+        stageField.append(el('span', undefined, 'เปลี่ยนขั้น'), stageRow);
+        act.append(stageField);
+
+        const doneRow = el('div', 'pv-row');
+
+        doneRow.append(btn('เสร็จสิ้น encounter', 'secondary', 'check', () => forward(e, 'done')));
+        act.append(doneRow);
+
+        if (e.stage === 'examination') {
+            const f = el('label', 'pv-field');
+            const row = el('div', 'pv-row');
+            const input = el('input');
+
+            input.placeholder = 'รหัสแพทย์';
+            input.value = e.doctor ?? '';
+            input.setAttribute('list', 'pv-doctors');
+            row.append(input, btn('กำหนดแพทย์', 'secondary', undefined, () => {
+                e.doctor = input.value.trim() || undefined;
+                render();
+            }));
+            f.append(el('span', undefined, 'แพทย์'), row);
+            act.append(f);
+        }
+
+        const media = el('div', 'pv-panel-body');
+        const vf = el('label', 'pv-field');
+        const vrow = el('div', 'pv-row');
+        const vpick = el('select');
+
+        VIDEOS.forEach(v => {
+            const o = el('option', undefined, v.title);
+
+            o.value = v.id;
+            vpick.appendChild(o);
+        });
+        vpick.value = e.video ?? VIDEOS[0].id;
+        vrow.append(vpick, btn(e.playing ? 'หยุดวิดีโอ' : 'เล่นวิดีโอ', e.playing ? 'primary' : 'secondary',
+            e.playing ? 'x' : 'arrow', () => {
+                e.video = vpick.value;
+                e.playing = !e.playing;
+                render();
+            }));
+        vf.append(el('span', undefined, 'วิดีโอระหว่างรอ'), vrow);
+        media.append(vf);
+
+        const qs = el('div', 'pv-panel-body');
+        const qf = el('label', 'pv-field');
+        const qrow = el('div', 'pv-row');
+        const qpick = el('select');
+
+        QUESTIONNAIRES.forEach(q => {
+            const o = el('option', undefined, q.title);
+
+            o.value = q.id;
+            qpick.appendChild(o);
+        });
+        qrow.append(qpick, btn('ส่ง', 'secondary', undefined, () => {
+            e.questionnaires.push({ id: qpick.value });
+            render();
+        }));
+        qf.append(el('span', undefined, 'แบบสอบถามสุขภาพ'), qrow);
+        qs.append(qf);
+        e.questionnaires.forEach(q => {
+            const box = el('div', 'pv-q');
+            const title = QUESTIONNAIRES.find(x => x.id === q.id).title;
+
+            box.append(el('div', undefined, title),
+                el('div', 'state', q.answers ? 'ตอบแล้ว' : 'ส่งแล้ว ยังไม่ตอบ'));
+            if (q.answers) {
+                const ol = el('ol');
+
+                q.answers.forEach(a => ol.appendChild(el('li', undefined, a)));
+                box.appendChild(ol);
+            }
+            qs.appendChild(box);
+        });
+        if (!e.questionnaires.length) qs.appendChild(el('div', 'pv-q state', 'ยังไม่ได้ส่งแบบสอบถาม'));
+
+        sections.act = act;
+        sections.media = media;
+        sections.qs = qs;
+
+        return sections;
+    }
+
+    function panelHead(e) {
+        const head = el('div', 'pv-panel-head');
+        const left = el('div');
+        const badges = el('div', 'pv-badges');
+
+        badgesOf(e).forEach(([ cls, text ]) => badges.appendChild(el('span', `badge ${cls}`, text)));
+        left.append(hnLink(e), el('div', 'pv-wait', `${STAGE_NAME[e.stage]} · รอ ${mmss(e.waited)}`), badges);
+        head.append(left, btn('', 'ghost close', 'x', () => { state.selected = null; render(); }));
+
+        return head;
+    }
+
+    function stackedPanel(e) {
+        const panel = el('aside', 'pv-panel');
+        const s = panelSections(e);
+        const body = el('div', 'pv-panel-body');
+
+        body.append(s.act, s.media, s.qs);
+        [ s.act, s.media, s.qs ].forEach(x => { x.style.padding = '0'; });
+        panel.append(panelHead(e), body);
+        panel.addEventListener('click', ev => ev.stopPropagation());
+
+        return panel;
+    }
+
+    // ---------- Variant A: calm board ----------
+    const VariantA = {
+        name: 'บอร์ดการ์ด',
+        attention(root, items) {
+            if (!items.length) return;
+
+            const wrap = el('div', 'pv-attn');
+
+            items.forEach(item => {
+                const chip = el('span', 'pv-attn-chip');
+
+                chip.dataset.sev = item.sev;
+                chip.append(icon('alert'), el('span', undefined, item.text));
+                chip.onclick = () => actOnItem(item);
+                if (item.dismiss) {
+                    const x = btn('', 'x', 'x', () => dismiss(item));
+
+                    x.title = 'รับทราบ';
+                    chip.appendChild(x);
+                }
+                wrap.appendChild(chip);
+            });
+            root.appendChild(wrap);
+        },
+        ticket(e, i) {
+            const card = mark(el('div', `pv-card${isD() && e.absent ? ' pv-absent' : ''}`), e);
+            const line = el('div', 'pv-card-line');
+
+            const wait = el('span', 'pv-waitbox');
+
+            if (isD()) wait.appendChild(icon('clock'));
+            wait.appendChild(el('span', 'pv-wait', mmss(e.waited)));
+            line.append(el('span', 'pv-pos', String(i + 1)), hnLink(e), wait, primary(e, true));
+            card.appendChild(line);
+
+            const badges = badgesOf(e);
+
+            // With one clinic picked, every card is that clinic: the tag would say nothing.
+            if (withBackend() && !state.clinic) badges.unshift([ 'clinic', CLINICS[e.clinic] ]);
+            if (badges.length) {
+                const row = el('div', 'pv-badges');
+
+                badges.forEach(([ cls, text ]) => {
+                    const b = el('span', `badge ${cls}`);
+
+                    if (isD() && BADGE_ICON[cls]) b.appendChild(icon(BADGE_ICON[cls]));
+                    b.appendChild(el('span', undefined, text));
+                    row.appendChild(b);
+                });
+                card.appendChild(row);
+            }
+
+            return card;
+        },
+        layout(root, board, e) {
+            const work = el('div', 'pv-work');
+
+            work.appendChild(board);
+            root.appendChild(work);
+            if (e) {
+                const scrim = el('div', 'pv-scrim');
+
+                scrim.onclick = () => { state.selected = null; render(); };
+                root.append(scrim, stackedPanel(e));
+            }
+        }
+    };
+
+    // ---------- Variant B: dense ledger ----------
+    const VariantB = {
+        name: 'ตารางแน่น',
+        attention(root, items) {
+            if (!items.length) return;
+
+            const box = el('details', 'pv-attn');
+            const total = attnTotal(items);
+            const list = el('ul');
+
+            box.open = state.attnOpen;
+            box.addEventListener('toggle', () => { state.attnOpen = box.open; });
+            box.appendChild(el('summary', undefined, `ต้องจัดการ ${total} เรื่อง — ${items[0].text}`));
+            items.forEach(item => {
+                const li = el('li');
+
+                li.dataset.sev = item.sev;
+                li.append(el('span', 'sev'), el('span', undefined, item.text));
+                li.onclick = () => actOnItem(item);
+                if (item.dismiss) li.appendChild(btn('รับทราบ', 'ghost x', undefined, () => dismiss(item)));
+                list.appendChild(li);
+            });
+            box.appendChild(list);
+            root.appendChild(box);
+
+            const legend = el('div', 'pv-legend');
+
+            [ [ 'next', 'ถัดไป' ], [ 'at', 'มีเจ้าหน้าที่อยู่ด้วย' ], [ 'nhso-not_yet', 'สปสช. ยังไม่ยืนยัน' ],
+                [ 'nhso-unavailable', 'สปสช. ตรวจไม่ได้' ], [ 'video', 'วิดีโอเล่นอยู่' ] ].forEach(([ cls, text ]) => {
+                const s = el('span');
+
+                s.append(el('i', `pv-dot ${cls}`), document.createTextNode(text));
+                legend.appendChild(s);
+            });
+            root.appendChild(legend);
+        },
+        ticket(e, i) {
+            const row = mark(el('div', 'pv-line'), e);
+            const dots = el('span', 'pv-dots');
+
+            badgesOf(e).forEach(([ cls, text ]) => {
+                const d = el('i', `pv-dot ${cls}`);
+
+                d.title = text;
+                dots.appendChild(d);
+            });
+            row.append(el('span', 'pv-pos', String(i + 1)), hnLink(e), dots, el('span', 'pv-wait', mmss(e.waited)),
+                primary(e, true));
+
+            return row;
+        },
+        layout(root, board, e) {
+            const work = el('div', `pv-work${e ? ' has-panel' : ''}`);
+
+            work.appendChild(board);
+            if (e) work.appendChild(stackedPanel(e));
+            root.appendChild(work);
+        }
+    };
+
+    // ---------- Variant C: heat tiles ----------
+    const VariantC = {
+        name: 'ไทล์ตามเวลารอ',
+        attention(root, items) {
+            const total = attnTotal(items);
+            const banner = el('div', `pv-banner${total ? '' : ' calm'}`);
+
+            if (!total) {
+                banner.append(icon('check'), el('span', 'first', 'ไม่มีเรื่องที่ต้องจัดการ'));
+                root.appendChild(banner);
+
+                return;
+            }
+            banner.append(el('span', 'big', String(total)), el('span', 'first', `ต้องจัดการ · ${items[0].text}`));
+            banner.appendChild(btn(state.attnOpen ? 'ซ่อน' : `ดูทั้งหมด (${items.length})`, '', undefined, () => {
+                state.attnOpen = !state.attnOpen;
+                render();
+            }));
+            root.appendChild(banner);
+            if (state.attnOpen) {
+                const list = el('div', 'pv-banner-list');
+
+                items.forEach(item => {
+                    const row = el('div');
+
+                    row.dataset.sev = item.sev;
+                    row.append(icon(item.icon ?? 'alert'), el('span', undefined, item.text));
+                    row.onclick = () => actOnItem(item);
+                    if (item.dismiss) row.appendChild(btn('รับทราบ', 'ghost x', undefined, () => dismiss(item)));
+                    list.appendChild(row);
+                });
+                root.appendChild(list);
+            }
+        },
+        ticket(e, i) {
+            const tile = mark(el('div', 'pv-tile'), e);
+            const corner = el('span', 'pv-corner');
+            const short = { next: 'ถัด', at: 'อยู่', 'nhso-not_yet': 'สปสช?', 'nhso-unavailable': 'สปสช!', video: 'วิดีโอ',
+                'nhso-bypassed': '' };
+
+            badgesOf(e).forEach(([ cls, text ]) => {
+                if (!short[cls]) return;
+
+                const b = el('i', undefined, short[cls]);
+
+                b.title = text;
+                corner.appendChild(b);
+            });
+            tile.append(el('span', 'pv-pos', String(i + 1)), hnLink(e), el('span', 'pv-wait', mmss(e.waited)), corner,
+                primary(e, true));
+
+            return tile;
+        },
+        tickets(body, nodes) {
+            const grid = el('div', 'pv-tiles');
+
+            grid.append(...nodes);
+            body.appendChild(grid);
+        },
+        layout(root, board, e) {
+            const work = el('div', `pv-work${e ? ' has-panel' : ''}`);
+
+            work.appendChild(board);
+            if (e) {
+                const panel = el('aside', 'pv-panel');
+                const s = panelSections(e);
+                const tabs = el('div', 'pv-tabs');
+
+                [ [ 'act', 'ดำเนินการ' ], [ 'media', 'วิดีโอ' ], [ 'qs', `แบบสอบถาม (${e.questionnaires.length})` ] ]
+                    .forEach(([ key, label ]) => {
+                        const b = btn(label, '', undefined, () => { state.panelTab = key; render(); });
+
+                        b.setAttribute('aria-pressed', String(state.panelTab === key));
+                        tabs.appendChild(b);
+                    });
+                panel.append(panelHead(e), tabs, s[state.panelTab]);
+                panel.addEventListener('click', ev => ev.stopPropagation());
+                work.appendChild(panel);
+            }
+            root.appendChild(work);
+        }
+    };
+
+    // ---------- Variant D: the pick (Q24, Q25). A's tickets, C's banner with long waits per stage, A's overlay panel ----------
+    const VariantD = {
+        name: 'ที่เลือก (A + C)',
+        classes: 'vA vC vD',
+        attention: (root, items) => VariantC.attention(root, items),
+        ticket: (e, i) => VariantA.ticket(e, i),
+        layout(root, board, e) {
+            const work = el('div', 'pv-work');
+
+            root.querySelector('.pv-teams')?.appendChild(boardLegend());
+            const unq = unqueuedStrip();
+
+            if (withBackend()) {
+                root.appendChild(boardBar());
+                if (state.statsOpen) root.appendChild(todayStats());
+            }
+            if (unq) root.appendChild(unq);
+
+            work.appendChild(board);
+            root.appendChild(work);
+            if (e) {
+                const scrim = el('div', 'pv-scrim');
+
+                scrim.onclick = () => { state.selected = null; render(); };
+                root.append(scrim, panelD(e));
+            }
+        }
+    };
+
+    /**
+     * D's panel: facts on top, the pathway as a stepper to pick the stage to send to, doctors as chips, videos and
+     * questionnaires as lists with their status, and the action pinned at the bottom.
+     */
+    function panelD(e) {
+        const panel = el('aside', 'pv-panel pd');
+        const cur = stageIndex(e.stage);
+
+        panel.addEventListener('click', ev => ev.stopPropagation());
+        if (state.targetFor !== e.id) {
+            state.target = isLast(e) ? 'done' : STAGES[cur + 1][0];
+            state.targetFor = e.id;
+        }
+
+        // Head: who, and the facts a coordinator checks first.
+        const head = el('div', 'pd-head');
+        const top = el('div', 'pd-top');
+        const title = el('div', 'pd-title');
+
+        title.append(el('span', 'pd-eyebrow', 'ผู้ป่วย HN'), hnLink(e));
+        top.append(title, btn('', 'ghost pd-close', 'x', () => { state.selected = null; render(); }));
+
+        const facts = el('dl', 'pd-facts');
+        const fact = (iconName, label, value) => {
+            const box = el('div', 'pd-fact');
+            const dt = el('dt');
+
+            dt.append(icon(iconName), el('span', undefined, label));
+            box.append(dt, el('dd', undefined, value));
+            facts.appendChild(box);
+        };
+        const nhso = nhsoOf(e);
+
+        facts.appendChild(waitMeter(e));
+        fact(STAGES[cur][2], 'ขั้นปัจจุบัน', STAGE_NAME[e.stage]);
+        fact('stethoscope', 'แพทย์', e.doctor ?? (e.stage === 'examination' ? 'ยังไม่กำหนด' : '—'));
+        fact('key', 'สปสช.', NHSO[nhso].replace('สปสช. ', ''));
+        facts.lastChild.dataset.nhso = nhso;
+        if (withBackend()) {
+            fact('clipboard', 'คลินิก', CLINICS[e.clinic]);
+            fact('hourglass', 'อยู่ในระบบมาแล้ว', hm(totalOf(e)));
+            if (e.appt !== undefined) {
+                const late = lateOf(e);
+
+                fact('calendar', 'นัด', late > 0 ? `${hhmm(e.appt)} · เลยมา ${late} นาที` : `${hhmm(e.appt)} · อีก ${-late} นาที`);
+                if (late >= APPT_LATE) facts.lastChild.dataset.late = 'true';
+            }
+        }
+        if (e.at?.length) fact('users', 'เจ้าหน้าที่อยู่ด้วย', e.at.join(', '));
+        const alerts = el('div', 'pd-alerts');
+
+        if (e.unrecorded) {
+            const a = el('div', 'pd-alert high');
+
+            a.append(icon('recoff'), el('span', undefined, 'ห้องนี้ไม่ได้บันทึกหลักฐาน: recorder bot หลุดและไม่มีตัวอื่นรับต่อ'));
+            alerts.appendChild(a);
+        }
+        if (e.absent) {
+            const a = el('div', 'pd-alert mid');
+
+            a.append(icon('useroff'), el('span', undefined, 'คนไข้ไม่อยู่ในห้องตอนนี้: ส่งเจ้าหน้าที่ไปจะไม่พบใคร'));
+            alerts.appendChild(a);
+        }
+        head.append(top);
+        if (alerts.childElementCount) head.appendChild(alerts);
+        head.appendChild(facts);
+
+        // Body: one section per job.
+        const body = el('div', 'pd-body');
+        const section = (iconName, title, hint) => {
+            const s = el('section', 'pd-section');
+            const h = el('h3', 'pd-h');
+
+            h.append(icon(iconName), el('span', undefined, title));
+            s.appendChild(h);
+            if (hint) s.appendChild(el('p', 'pd-hint', hint));
+            body.appendChild(s);
+
+            return s;
+        };
+
+        const steps = el('ol', 'pd-steps');
+
+        STAGES.forEach(([ id, name ], i) => {
+            const li = el('li', 'pd-step');
+            const mark = el('span', 'pd-mark');
+
+            li.dataset.state = i < cur ? 'past' : i === cur ? 'current' : 'future';
+            if (i < cur) mark.appendChild(icon('check')); else mark.textContent = String(i + 1);
+            li.append(mark, el('span', 'pd-step-name', name));
+            if (withBackend() && i < cur) {
+                const dur = e.history[id];
+                const d = el('span', `pd-dur ${tier(dur) || 'ok'}`);
+
+                d.append(el('i', 'pd-dur-bar'), el('span', undefined, `${Math.round(dur / 60)} นาที`));
+                d.firstChild.style.width = `${Math.min(100, dur * 100 / WAIT_LONG) * .045}rem`;
+                d.title = `อยู่ในขั้น ${name} ${Math.round(dur / 60)} นาที`;
+                li.appendChild(d);
+            }
+            if (i === cur) {
+                li.appendChild(el('span', 'pd-tag', 'อยู่ที่นี่'));
+            } else {
+                li.tabIndex = 0;
+                li.setAttribute('role', 'button');
+                li.onclick = () => { state.target = id; render(); };
+                if (state.target === id) {
+                    li.classList.add('target');
+                    li.appendChild(el('span', 'pd-tag target', 'จะส่งไป'));
+                }
+            }
+            steps.appendChild(li);
+        });
+        section('swap', 'เปลี่ยนขั้น', 'กดเลือกขั้นที่จะส่งไป แล้วกดปุ่มด้านล่าง').appendChild(steps);
+
+        if (e.stage === 'examination') {
+            const s = section('stethoscope', 'แพทย์');
+            const chips = el('div', 'pd-chips');
+            const chip = (label, value) => {
+                const c = btn(label, 'pd-chip', undefined, () => { e.doctor = value; render(); });
+
+                c.setAttribute('aria-pressed', String((e.doctor ?? null) === value));
+                chips.appendChild(c);
+            };
+
+            DOCTORS.forEach(d => chip(d, d));
+            chip('ยังไม่กำหนด', null);
+
+            const other = el('div', 'pd-other');
+            const input = el('input');
+
+            input.name = 'doctor';
+            input.placeholder = 'รหัสแพทย์อื่น';
+            other.append(input, btn('กำหนด', 'secondary', undefined, () => {
+                e.doctor = input.value.trim() || undefined;
+                render();
+            }));
+            s.append(chips, other);
+        }
+
+        const videos = el('div', 'pd-list');
+
+        VIDEOS.forEach(v => {
+            const playing = e.playing && e.video === v.id;
+            const row = el('div', `pd-item${playing ? ' playing' : ''}`);
+
+            row.appendChild(el('span', 'pd-item-name', v.title));
+            if (playing) {
+                row.append(el('span', 'pd-tag', 'กำลังเล่น'),
+                    btn('หยุด', 'secondary pd-small', 'x', () => { e.playing = false; render(); }));
+            } else {
+                row.appendChild(btn('เล่น', 'secondary pd-small', 'play', () => {
+                    e.video = v.id;
+                    e.playing = true;
+                    render();
+                }));
+            }
+            videos.appendChild(row);
+        });
+        section('play', 'วิดีโอระหว่างรอ').appendChild(videos);
+
+        const forms = el('div', 'pd-list');
+
+        QUESTIONNAIRES.forEach(q => {
+            const sent = e.questionnaires.find(x => x.id === q.id);
+            const row = el('div', 'pd-item');
+
+            row.appendChild(el('span', 'pd-item-name', q.title));
+            if (!sent) {
+                row.appendChild(btn('ส่ง', 'secondary pd-small', 'arrow', () => {
+                    e.questionnaires.push({ id: q.id });
+                    render();
+                }));
+            } else if (!sent.answers) {
+                row.appendChild(el('span', 'pd-tag warn', 'รอคำตอบ'));
+            } else {
+                const answers = el('ul', 'pd-answers');
+
+                sent.answers.forEach(a => answers.appendChild(el('li', undefined, a)));
+                row.append(el('span', 'pd-tag ok', 'ตอบแล้ว'), answers);
+            }
+            forms.appendChild(row);
+        });
+        section('clipboard', 'แบบสอบถามสุขภาพ').appendChild(forms);
+
+        // Foot: the action for the stage picked above, always in reach.
+        const foot = el('div', 'pd-foot');
+        const toDone = state.target === 'done';
+
+        foot.appendChild(btn(toDone ? 'เสร็จสิ้น' : `ส่งไป ${STAGE_NAME[state.target]}`, 'primary pd-go',
+            toDone ? 'check' : 'arrow', () => forward(e, state.target)));
+        if (!toDone) {
+            foot.appendChild(btn('เสร็จสิ้น', 'secondary pd-done', 'check', () => forward(e, 'done')));
+        }
+
+        panel.append(head, body, foot);
+
+        return panel;
+    }
+
+    /** How many things need attention: in D each item is one thing to deal with; elsewhere each patient counts. */
+    function attnTotal(items) {
+        return state.variant === 'D' ? items.length : items.reduce((s, i) => s + i.count, 0);
+    }
+
+    const VARIANTS = { A: VariantA, B: VariantB, C: VariantC, D: VariantD };
+    const KEYS = Object.keys(VARIANTS);
+
+    // ---------- Render ----------
+    function render() {
+        const v = VARIANTS[state.variant];
+
+        document.body.className = v.classes ?? `v${state.variant}`;
+        drawHeader();
+
+        const attn = document.getElementById('attention');
+        const content = document.getElementById('content');
+
+        attn.replaceChildren();
+        content.replaceChildren();
+        if (state.view === 'queue') {
+            v.attention(attn, attention());
+            content.appendChild(drawTeams());
+
+            const board = drawBoard((e, i) => {
+                const node = v.ticket(e, i);
+
+                if (flagged(e)) node.classList.add('pv-flag');
+
+                return node;
+            }, v.tickets ?? ((body, nodes) => body.append(...nodes)));
+            const e = state.encounters.find(x => x.id === state.selected);
+
+            v.layout(content, board, e);
+
+            const list = el('datalist');
+
+            list.id = 'pv-doctors';
+            DOCTORS.forEach(d => { const o = el('option'); o.value = d; list.appendChild(o); });
+            content.appendChild(list);
+        } else {
+            v.attention(attn, attention());
+
+            const box = el('div', 'pv-rooms');
+
+            box.append(el('h2', undefined, 'มุมมอง "ห้องและการย้าย"'),
+                el('p', undefined, 'ไม่ได้ทำใน prototype: ย้ายรายการห้อง การค้นหา การย้าย และผลการย้ายล่าสุดมาไว้ที่นี่ตามเดิม'),
+                el('p', undefined, state.roomHint ? `จะเลื่อนไปที่ ${state.roomHint} และเน้นห้องนั้น` : ''));
+            content.appendChild(box);
+        }
+        drawSwitch();
+    }
+
+    // ---------- Prototype switcher (not part of the design) ----------
+    function setVariant(key) {
+        state.variant = key;
+        state.attnOpen = false;
+        const url = new URL(location.href);
+
+        url.searchParams.set('variant', key);
+        history.replaceState(null, '', url);
+        render();
+    }
+
+    function cycle(step) {
+        const i = KEYS.indexOf(state.variant);
+
+        setVariant(KEYS[(i + step + KEYS.length) % KEYS.length]);
+    }
+
+    function drawSwitch() {
+        const bar = document.getElementById('switch');
+        const toggle = (label, on, fn) => {
+            const b = el('button', undefined, label);
+
+            b.setAttribute('aria-pressed', String(on));
+            b.onclick = fn;
+
+            return b;
+        };
+        const total = attnTotal(attention());
+
+        bar.replaceChildren(
+            Object.assign(el('button', undefined, '◀'), { onclick: () => cycle(-1), title: 'variant ก่อนหน้า (←)' }),
+            el('span', 'label', `${state.variant} · ${VARIANTS[state.variant].name}`),
+            Object.assign(el('button', undefined, '▶'), { onclick: () => cycle(1), title: 'variant ถัดไป (→)' }),
+            el('span', 'sep'),
+            toggle(state.load === 'heavy' ? 'คนไข้เยอะ' : 'คนไข้ปกติ', state.load === 'heavy', () => {
+                state.load = state.load === 'heavy' ? 'normal' : 'heavy';
+                state.encounters = state.load === 'heavy' ? heavyLoad() : normalLoad();
+                state.selected = null;
+                render();
+            }),
+            ...[ 16, 18, 20 ].map(px => toggle(`${px}px`, state.base === px, () => {
+                state.base = px;
+                document.documentElement.style.fontSize = `${px}px`;
+                render();
+            })),
+            el('span', 'sep'),
+            toggle('bypass', state.bypass, () => { state.bypass = !state.bypass; render(); }),
+            toggle('problem', state.problem, () => { state.problem = !state.problem; render(); }),
+            toggle('+backend', state.backend, () => { state.backend = !state.backend; state.clinic = ''; render(); }),
+            toggle('การย้ายล้มเหลว', state.failedMoves.length > 0, () => {
+                state.failedMoves = state.failedMoves.length ? [] : [ { id: `m${Date.now()}`, who: 'วิไล',
+                    origin: 'สถานี 2', destination: 'ห้อง 650010518', reason: 'ห้องปลายทางยังไม่เปิด', at: '10:42' } ];
+                render();
+            }),
+            el('span', 'sep'),
+            el('span', 'state', `${state.encounters.length} encounters · ต้องจัดการ ${total} · เลือก ${
+                state.encounters.find(x => x.id === state.selected)?.hn ?? '—'}`)
+        );
+    }
+
+    document.addEventListener('keydown', ev => {
+        const t = ev.target;
+
+        if (t.closest?.('input, textarea, select, [contenteditable]')) return;
+        if (ev.key === 'ArrowLeft') cycle(-1);
+        if (ev.key === 'ArrowRight') cycle(1);
+        if (ev.key === 'Escape' && state.selected) { state.selected = null; render(); }
+    });
+    document.addEventListener('click', () => {
+        if (state.popover) { state.popover = null; render(); }
+    });
+
+    // Waiting times tick like the real screen's 2-second refresh: updated in place, so open controls keep their input.
+    setInterval(() => {
+        state.encounters.forEach(e => { e.waited += 2; });
+        state.unqueued.forEach(u => { u.waited += 2; });
+        state.elapsed += 2;
+        state.moves.forEach(m => { m.started += 2; });
+        document.querySelectorAll('[data-uq]').forEach(node => {
+            const u = state.unqueued.find(x => x.hn === node.dataset.uq);
+
+            if (!u) return;
+            node.dataset.tier = tier(u.waited);
+            node.querySelector('.pv-wait').textContent = mmss(u.waited);
+        });
+        document.querySelectorAll('[data-enc]').forEach(node => {
+            const e = state.encounters.find(x => x.id === node.dataset.enc);
+
+            if (!e) return;
+            node.dataset.tier = tier(e.waited);
+            node.querySelector('.pv-wait').textContent = mmss(e.waited);
+            if (node.classList.contains('pd-meter')) paintMeter(node, e);
+        });
+        document.querySelectorAll('.pv-col-stats').forEach(n => n.replaceWith(colStats(n.dataset.stage)));
+        document.querySelector('.pv-tier-legend')?.replaceWith(boardLegend());
+        drawHeader();
+        const attn = document.getElementById('attention');
+
+        if (state.view === 'queue' && !attn.contains(document.activeElement)) {
+            attn.replaceChildren();
+            VARIANTS[state.variant].attention(attn, attention());
+        }
+        drawSwitch();
+    }, 2000);
+
+    const fromUrl = new URLSearchParams(location.search).get('variant');
+
+    state.variant = KEYS.includes(fromUrl) ? fromUrl : 'A';
+    render();
+    </script>
+</body>
+</html>
