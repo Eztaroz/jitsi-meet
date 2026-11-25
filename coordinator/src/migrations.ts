@@ -100,6 +100,13 @@ export const MIGRATIONS: IMigration[] = [
                 KEY nhso_bypass_days_declared_at (declared_at)
             ) ${TABLE}`
         ]
+    },
+    {
+        id: 4,
+        name: 'the time of the appointment an encounter started from (ADR 0019)',
+        statements: [
+            'ALTER TABLE encounters ADD COLUMN appointment_time VARCHAR(5) NULL'
+        ]
     }
 ];
 

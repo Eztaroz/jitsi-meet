@@ -182,6 +182,7 @@ export type ISweepResult = {
 
 /** A row of the `encounters` table, as either database returns it. */
 export interface IEncounterRow {
+    appointment_time: string | null;
     center: string | null; clinic: string | null; doctor: string | null; history: string | null; hn: string;
     id: string; pathway: string | null; questionnaires: string | null; stage: IEncounter['stage'];
     stage_started_at: string | null; started_at: string;
@@ -217,6 +218,7 @@ export function encounterOfRow(r: IEncounterRow): IEncounter {
         stage: r.stage,
         stageStartedAt,
         startedAt,
+        ...r.appointment_time ? { appointmentTime: r.appointment_time } : {},
         ...r.center ? { center: r.center } : {},
         ...r.clinic ? { clinic: r.clinic } : {},
         ...r.doctor ? { doctor: r.doctor } : {},
@@ -387,7 +389,7 @@ export class Store implements IStore {
 
         for (const [ name, type ] of [ [ 'stage_started_at', 'TEXT' ], [ 'history', 'TEXT' ], [ 'unfinished', 'INTEGER' ], [ 'pathway', 'TEXT' ],
             [ 'visit_number', 'TEXT' ], [ 'center', 'TEXT' ], [ 'clinic', 'TEXT' ], [ 'doctor', 'TEXT' ],
-            [ 'questionnaires', 'TEXT' ], [ 'videos', 'TEXT' ] ]) {
+            [ 'questionnaires', 'TEXT' ], [ 'videos', 'TEXT' ], [ 'appointment_time', 'TEXT' ] ]) {
             if (!columns.includes(name)) {
                 this._db.exec(`ALTER TABLE encounters ADD COLUMN ${name} ${type}`);
             }
@@ -575,12 +577,12 @@ export class Store implements IStore {
 
             this._db.prepare(`INSERT OR REPLACE INTO encounters
                 (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic,
-                    doctor, questionnaires, videos)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+                    doctor, questionnaires, videos, appointment_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
                 .run(e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(),
                     JSON.stringify(e.history), e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null,
                     e.clinic ?? null, e.doctor ?? null, e.questionnaires?.length ? JSON.stringify(e.questionnaires) : null,
-                    e.videos && Object.keys(e.videos).length ? JSON.stringify(e.videos) : null);
+                    e.videos && Object.keys(e.videos).length ? JSON.stringify(e.videos) : null, e.appointmentTime ?? null);
             break;
         }
         case 'move':
