@@ -65,10 +65,11 @@ export function callCoordinator(route: string, init: RequestInit = {}, secret = 
  * Asks the coordinator service to start an encounter, and returns its answer whatever it is.
  *
  * @param {string} hn - The patient's HN.
+ * @param {Object} where - The clinic of the encounter, if it has one.
  * @returns {Promise<Object>} The HTTP status and the body.
  */
-export async function postEncounter(hn: string): Promise<{ body: IEncounter; status: number; }> {
-    const response = await callCoordinator('/encounters', { body: JSON.stringify({ hn }), method: 'POST' });
+export async function postEncounter(hn: string, where: { clinic?: string; } = {}): Promise<{ body: IEncounter; status: number; }> {
+    const response = await callCoordinator('/encounters', { body: JSON.stringify({ hn, ...where }), method: 'POST' });
 
     return { body: await response.json() as IEncounter, status: response.status };
 }

@@ -1689,6 +1689,25 @@ export class CoordinatorService {
     }
 
     /**
+     * The center's clinics, in the configuration's order, each with its name: its id when it has none.
+     *
+     * @returns {Object[]}
+     */
+    clinics(): { id: string; name: string; }[] {
+        return this._opts.layout.centers.flatMap(c => c.clinics ?? []).map(({ id, name }) => ({ id, name: name ?? id }));
+    }
+
+    /**
+     * The stages of a pathway, in order, from `waiting` to `done`.
+     *
+     * @param {string} pathway - The pathway's id.
+     * @returns {string[]} The stage ids; none when the pathway is not configured.
+     */
+    pathwayStages(pathway: string): string[] {
+        return (findPathway(this._opts.layout, pathway)?.stages ?? []).map(s => s.id);
+    }
+
+    /**
      * The stages of the configured pathways, each once, with their names: what the coordinator's screen draws.
      *
      * @returns {IStage[]}

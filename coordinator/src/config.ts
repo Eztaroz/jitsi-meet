@@ -546,6 +546,9 @@ export function loadLayout(file: string | undefined): ILayout {
             if (!text(clinic.id)) {
                 throw fail('every clinic needs an "id"');
             }
+            if (clinic.name !== undefined && !text(clinic.name)) {
+                throw fail(`clinic "${clinic.id}": "name" must be a text`);
+            }
             if (clinic.hisCodes !== undefined
                     && (!Array.isArray(clinic.hisCodes) || !clinic.hisCodes.every(code => text(code)))) {
                 throw fail(`clinic "${clinic.id}": "hisCodes" must be a list of HIS clinic codes`);
