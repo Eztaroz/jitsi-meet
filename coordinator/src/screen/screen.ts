@@ -415,7 +415,9 @@
         say();
         $('signin').hidden = false;
         $('board').hidden = true;
-        $('who').hidden = true;
+        $('head').hidden = true;
+        showNhsoControl(false);
+        showView('queue');
         $('signin-error').hidden = !message;
         $('signin-error').textContent = message || '';
     }
@@ -444,7 +446,7 @@
     }
 
     /**
-     * Draws the figures at the top.
+     * Draws the figures in the header; what a figure is made of is its hint.
      *
      * @param {Object} state - The state.
      * @returns {void}
@@ -456,14 +458,18 @@
         const active = STAGES.filter(stage => stage[0] !== 'waiting');
         const open = state.rooms.filter(r => r.open);
         const people = (role: string) => open.reduce((n, r) => n + r.occupants.filter(o => o.role === role).length, 0);
+        const figure = (id: string, value: number, hint: string) => {
+            $(id).textContent = String(value);
+            ($(id).parentElement as HTMLElement).title = hint;
+        };
 
-        $('stat-waiting').textContent = String(waiting.length);
-        $('stat-waiting-note').textContent = waiting.length ? `นานสุด ${waitedInWords(longest)}` : 'ไม่มีผู้ป่วยรอ';
-        $('stat-active').textContent = String(active.reduce((n, stage) => n + inStage(stage[0]), 0));
-        $('stat-active-note').textContent = active.map(stage => `${stage[1]} ${inStage(stage[0])}`).join(' · ');
-        $('stat-rooms').textContent = `${open.length}/${state.rooms.length}`;
-        $('stat-rooms-note').textContent = `ผู้ป่วย ${people('patient')} · เจ้าหน้าที่ ${people('staff')}`;
-        $('stat-moving').textContent = String(state.moves.filter(isUnderWay).length);
+        figure('stat-waiting', waiting.length,
+            waiting.length ? `นานสุด ${waitedInWords(longest)}` : 'ไม่มีผู้ป่วยรอ');
+        figure('stat-active', active.reduce((n, stage) => n + inStage(stage[0]), 0),
+            active.map(stage => `${stage[1]} ${inStage(stage[0])}`).join(' · '));
+        figure('stat-rooms', open.length, `เปิด ${open.length} จาก ${state.rooms.length} ห้อง · ผู้ป่วย ${
+            people('patient')} · เจ้าหน้าที่ ${people('staff')}`);
+        figure('stat-moving', state.moves.filter(isUnderWay).length, 'รอผู้ถูกย้ายไปถึงปลายทาง');
     }
 
     /**
@@ -802,6 +808,20 @@
     }
 
     /**
+     * Shows one of the page's two views: the queue, or the rooms and their moves.
+     *
+     * @param {string} view - Which: queue or rooms.
+     * @returns {void}
+     */
+    function showView(view: string): void {
+        document.querySelectorAll<HTMLElement>('#views button').forEach(b => {
+            b.setAttribute('aria-pressed', String(b.dataset.view === view));
+        });
+        $('view-queue').hidden = view !== 'queue';
+        $('view-rooms').hidden = view !== 'rooms';
+    }
+
+    /**
      * Brings a patient's room into view and picks it out for a moment.
      *
      * @param {string} hn - The patient's HN, which names the room.
@@ -820,6 +840,7 @@
         if (card.hidden) {
             setFilter('', '');
         }
+        showView('rooms');
         spotlight = { room: card.dataset.room ?? '',
             until: Date.now() + SPOTLIGHT_MS };
         card.classList.add('spotlight');
@@ -1285,18 +1306,31 @@
     let bypass: IBypassDay | null = null;
 
     /**
-     * Draws the NHSO bar: today's bypass day and who declared it, with the button that declares or cancels it.
+     * Draws the NHSO chip and its control: today's bypass day and who declared it, with the button that declares or
+     * cancels it.
      *
      * @param {Object|null} day - Today's bypass day, if there is one.
      * @returns {void}
      */
     function drawNhso(day: IBypassDay | null): void {
         bypass = day;
-        $('nhso-bar').dataset.bypass = String(Boolean(day));
+        $('nhso-chip').dataset.bypass = String(Boolean(day));
+        $('nhso-state').textContent = day ? 'วันนี้ bypass สปสช.' : 'สปสช. ปกติ';
         $('nhso-text').textContent = day
             ? `วันนี้ bypass สปสช. (API ล่ม) ประกาศโดย ${day.declaredBy} เวลา ${clockTime(day.declaredAt)} ถึงเที่ยงคืน`
             : 'ยืนยันตัวตน สปสช.: ถ้า API ของ สปสช. ล่มทั้งวัน ให้ประกาศ bypass วันนี้';
         $('nhso-toggle').textContent = day ? 'ยกเลิก bypass' : 'ประกาศ bypass วันนี้';
+    }
+
+    /**
+     * Opens or closes the control behind the NHSO chip.
+     *
+     * @param {boolean} open - Whether it is to be seen.
+     * @returns {void}
+     */
+    function showNhsoControl(open: boolean): void {
+        $('nhso-pop').hidden = !open;
+        $('nhso-chip').setAttribute('aria-expanded', String(open));
     }
 
     /**
@@ -1309,6 +1343,20 @@
         return new Date(at).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
     }
 
+    $('nhso-chip').addEventListener('click', () => showNhsoControl(Boolean($('nhso-pop').hidden)));
+
+    // A click elsewhere, or Escape, closes the control.
+    document.addEventListener('click', event => {
+        if (!(event.target as Element).closest('.nhso')) {
+            showNhsoControl(false);
+        }
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !$('nhso-pop').hidden) {
+            showNhsoControl(false);
+            $('nhso-chip').focus();
+        }
+    });
     $('nhso-toggle').addEventListener('click', () => {
         const cancel = Boolean(bypass);
         const sure = cancel
@@ -1318,6 +1366,7 @@
         if (!window.confirm(sure)) {
             return;
         }
+        showNhsoControl(false);
         $<HTMLButtonElement>('nhso-toggle').disabled = true;
         act(cancel ? '/nhso/bypass/cancel' : '/nhso/bypass', {}).then(result => {
             $<HTMLButtonElement>('nhso-toggle').disabled = false;
@@ -1354,7 +1403,7 @@
 
                     $('signin').hidden = true;
                     $('board').hidden = false;
-                    $('who').hidden = false;
+                    $('head').hidden = false;
                     $('who-name').textContent = who;
                     $('who-avatar').textContent = initials(who);
                     $('problem').hidden = true;
@@ -1401,6 +1450,9 @@
         showSignIn();
     });
     $('notice-close').addEventListener('click', () => say());
+    document.querySelectorAll<HTMLElement>('#views button').forEach(b => {
+        b.addEventListener('click', () => showView(b.dataset.view ?? 'queue'));
+    });
     $('room-filter').addEventListener('input', () => setFilter($<HTMLInputElement>('room-filter').value, filter.kind));
     document.querySelectorAll<HTMLElement>('#kind-filter button').forEach(b => {
         b.addEventListener('click', () => setFilter($<HTMLInputElement>('room-filter').value, b.dataset.kind ?? ''));

@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
-    <title>ศูนย์ควบคุมการย้ายห้อง</title>
+    <meta name="color-scheme" content="light">
+    <title>หน้าจอผู้ประสานงาน</title>
     <link rel="stylesheet" href="screen/screen.css">
 </head>
 <body>
@@ -36,19 +36,57 @@
         <div class="brand">
             <svg class="brand-mark" aria-hidden="true" focusable="false"><use href="#i-logo"/></svg>
             <div>
-                <h1>ศูนย์ควบคุมการย้ายห้อง</h1>
-                <p class="tagline">คิว ห้อง และการย้ายผู้เข้าร่วม ในหน้าเดียว</p>
+                <h1>หน้าจอผู้ประสานงาน</h1>
+                <p class="tagline">คิว ห้อง และเจ้าหน้าที่ ในหน้าเดียว</p>
             </div>
         </div>
-        <div id="who" hidden>
-            <span id="live" class="live" title="หน้าจอนี้อัปเดตเองทุก 2 วินาที"><i class="live-dot"></i><span id="live-text">กำลังเชื่อมต่อ</span></span>
-            <span class="user">
-                <span id="who-avatar" class="avatar" aria-hidden="true"></span>
-                <span id="who-name"></span>
-            </span>
-            <button id="sign-out" type="button" class="ghost icon-button" title="ออกจากระบบ">
-                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-logout"/></svg><span class="label">ออกจากระบบ</span>
-            </button>
+        <div id="head" hidden>
+            <div id="views" class="segmented" role="group" aria-label="มุมมอง">
+                <button type="button" data-view="queue" aria-pressed="true">คิว</button>
+                <button type="button" data-view="rooms" aria-pressed="false">ห้องและการย้าย</button>
+            </div>
+            <div class="stats" role="group" aria-label="สรุป">
+                <div class="stat" data-tone="warn">
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>
+                    <strong id="stat-waiting">0</strong>
+                    <span class="stat-label">รอคิว</span>
+                </div>
+                <div class="stat" data-tone="accent">
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-stethoscope"/></svg>
+                    <strong id="stat-active">0</strong>
+                    <span class="stat-label">ระหว่างบริการ</span>
+                </div>
+                <div class="stat" data-tone="ok">
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-door"/></svg>
+                    <strong id="stat-rooms">0</strong>
+                    <span class="stat-label">ห้องเปิด</span>
+                </div>
+                <div class="stat" data-tone="lounge">
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-swap"/></svg>
+                    <strong id="stat-moving">0</strong>
+                    <span class="stat-label">กำลังย้าย</span>
+                </div>
+            </div>
+            <div class="nhso">
+                <button id="nhso-chip" type="button" data-bypass="false" aria-expanded="false" aria-controls="nhso-pop">
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>
+                    <span id="nhso-state">สปสช.</span>
+                </button>
+                <div id="nhso-pop" role="group" aria-label="การยืนยันตัวตน สปสช." hidden>
+                    <p id="nhso-text">ยืนยันตัวตน สปสช.</p>
+                    <button id="nhso-toggle" type="button" class="secondary">ประกาศ bypass วันนี้</button>
+                </div>
+            </div>
+            <div id="who">
+                <span id="live" class="live" title="หน้าจอนี้อัปเดตเองทุก 2 วินาที"><i class="live-dot"></i><span id="live-text">กำลังเชื่อมต่อ</span></span>
+                <span class="user">
+                    <span id="who-avatar" class="avatar" aria-hidden="true"></span>
+                    <span id="who-name"></span>
+                </span>
+                <button id="sign-out" type="button" class="ghost" title="ออกจากระบบ" aria-label="ออกจากระบบ">
+                    <svg class="i" aria-hidden="true" focusable="false"><use href="#i-logout"/></svg>
+                </button>
+            </div>
         </div>
     </header>
 
@@ -67,76 +105,43 @@
     <main id="board" hidden>
         <p id="problem" role="alert" hidden></p>
 
-        <section id="nhso-bar" class="nhso-bar" aria-label="การยืนยันตัวตน สปสช.">
-            <svg class="i" aria-hidden="true" focusable="false"><use href="#i-key"/></svg>
-            <span id="nhso-text">ยืนยันตัวตน สปสช.</span>
-            <button id="nhso-toggle" type="button" class="secondary">ประกาศ bypass วันนี้</button>
-        </section>
+        <div id="view-queue" class="view">
+            <section id="teams-section">
+                <div class="section-head">
+                    <h2>ทีมของแต่ละสถานี</h2>
+                    <p class="section-hint">เจ้าหน้าที่ว่างอยู่ในห้องพักของสถานี ส่วนเจ้าหน้าที่ที่ไม่ว่างอยู่ในห้องของผู้ป่วย</p>
+                </div>
+                <div id="team-list" class="board"></div>
+            </section>
 
-        <section class="stats" aria-label="สรุป">
-            <div class="stat" data-tone="warn">
-                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg>
-                <span class="stat-label">รอคิว</span>
-                <strong id="stat-waiting">0</strong>
-                <span id="stat-waiting-note" class="stat-note"></span>
-            </div>
-            <div class="stat" data-tone="accent">
-                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-stethoscope"/></svg>
-                <span class="stat-label">อยู่ระหว่างบริการ</span>
-                <strong id="stat-active">0</strong>
-                <span id="stat-active-note" class="stat-note"></span>
-            </div>
-            <div class="stat" data-tone="ok">
-                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-door"/></svg>
-                <span class="stat-label">ห้องที่เปิดอยู่</span>
-                <strong id="stat-rooms">0</strong>
-                <span id="stat-rooms-note" class="stat-note"></span>
-            </div>
-            <div class="stat" data-tone="lounge">
-                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-swap"/></svg>
-                <span class="stat-label">กำลังย้าย</span>
-                <strong id="stat-moving">0</strong>
-                <span class="stat-note">รอผู้ถูกย้ายไปถึงปลายทาง</span>
-            </div>
-        </section>
+            <section id="queues">
+                <div class="section-head">
+                    <h2>คิวผู้ป่วย</h2>
+                    <p class="section-hint">ปุ่ม “ส่งต่อ” จะส่งไปขั้นถัดไป เลือกขั้นอื่นได้จากรายการ</p>
+                </div>
+                <div id="queue-list"></div>
+            </section>
+        </div>
 
-        <div class="layout">
-            <div class="primary-column">
-                <section id="teams-section">
-                    <div class="section-head">
-                        <h2>ทีมของแต่ละสถานี</h2>
-                        <p class="section-hint">เจ้าหน้าที่ว่างอยู่ในห้องพักของสถานี ส่วนเจ้าหน้าที่ที่ไม่ว่างอยู่ในห้องของผู้ป่วย</p>
-                    </div>
-                    <div id="team-list" class="board"></div>
-                </section>
-
-                <section id="queues">
-                    <div class="section-head">
-                        <h2>คิวผู้ป่วย</h2>
-                        <p class="section-hint">ปุ่ม “ส่งต่อ” จะส่งไปขั้นถัดไป เลือกขั้นอื่นได้จากรายการ</p>
-                    </div>
-                    <div id="queue-list"></div>
-                </section>
-
-                <section id="rooms-section">
-                    <div class="section-head">
-                        <h2>ห้อง</h2>
-                        <div class="toolbar">
-                            <label class="search">
-                                <svg class="i" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
-                                <input id="room-filter" type="search" placeholder="ค้นหา HN ห้อง หรือชื่อ" autocomplete="off" aria-label="ค้นหาห้อง">
-                            </label>
-                            <div id="kind-filter" class="segmented" role="group" aria-label="ประเภทห้อง">
-                                <button type="button" data-kind="" aria-pressed="true">ทั้งหมด</button>
-                                <button type="button" data-kind="patient" aria-pressed="false">ห้องผู้ป่วย</button>
-                                <button type="button" data-kind="lounge" aria-pressed="false">ห้องพัก</button>
-                            </div>
+        <div id="view-rooms" class="view" hidden>
+            <section id="rooms-section">
+                <div class="section-head">
+                    <h2>ห้อง</h2>
+                    <div class="toolbar">
+                        <label class="search">
+                            <svg class="i" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+                            <input id="room-filter" type="search" placeholder="ค้นหา HN ห้อง หรือชื่อ" autocomplete="off" aria-label="ค้นหาห้อง">
+                        </label>
+                        <div id="kind-filter" class="segmented" role="group" aria-label="ประเภทห้อง">
+                            <button type="button" data-kind="" aria-pressed="true">ทั้งหมด</button>
+                            <button type="button" data-kind="patient" aria-pressed="false">ห้องผู้ป่วย</button>
+                            <button type="button" data-kind="lounge" aria-pressed="false">ห้องพัก</button>
                         </div>
                     </div>
-                    <div id="rooms"></div>
-                    <p id="rooms-none" class="empty" hidden>ไม่พบห้องที่ตรงกับการค้นหา</p>
-                </section>
-            </div>
+                </div>
+                <div id="rooms"></div>
+                <p id="rooms-none" class="empty" hidden>ไม่พบห้องที่ตรงกับการค้นหา</p>
+            </section>
 
             <aside id="activity" class="panel" aria-label="กิจกรรมล่าสุด">
                 <h2><svg class="i" aria-hidden="true" focusable="false"><use href="#i-activity"/></svg>ผลการย้ายล่าสุด</h2>

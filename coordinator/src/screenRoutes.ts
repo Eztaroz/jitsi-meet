@@ -16,7 +16,11 @@ const SCREEN_FILES: Record<string, { body: Buffer; type: string; }> = {};
 
 for (const [ route, file, type ] of [
     [ '/screen', 'index.html', 'text/html; charset=utf-8' ],
-    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ]
+    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ],
+
+    // The typeface, subset to Thai and Latin; its licence is fonts/OFL.txt.
+    ...[ 'Regular', 'Medium', 'SemiBold', 'Bold' ].map(weight =>
+        [ `/screen/fonts/Niramit-${weight}.woff2`, `fonts/Niramit-${weight}.woff2`, 'font/woff2' ])
 ]) {
     SCREEN_FILES[route] = { body: readFileSync(new URL(`./screen/${file}`, import.meta.url)), type };
 }

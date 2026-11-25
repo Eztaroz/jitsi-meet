@@ -78,4 +78,31 @@ describe('the coordinator screen files', () => {
         assert.ok(calls.length > 0);
         assert.deepEqual(calls.filter(url => url.startsWith('/')), []);
     });
+
+    const WEIGHTS = [ 'Regular', 'Medium', 'SemiBold', 'Bold' ];
+
+    WEIGHTS.forEach(weight => {
+        it(`serves the Niramit ${weight} font by name`, async () => {
+            const response = await fetch(`${base}/screen/fonts/Niramit-${weight}.woff2`);
+
+            assert.equal(response.status, 200);
+            assert.equal(response.headers.get('content-type'), 'font/woff2');
+            assert.equal(Buffer.from(await response.arrayBuffer()).subarray(0, 4).toString('latin1'), 'wOF2');
+        });
+    });
+
+    it('serves nothing else under the fonts path', async () => {
+        for (const path of [ '', '/', '/OFL.txt', '/Niramit-Regular.ttf', '/Niramit-Light.woff2', '/..%2Fscreen.ts',
+            '/%2e%2e/screen.ts' ]) {
+            assert.equal((await fetch(`${base}/screen/fonts${path}`)).status, 404, `/screen/fonts${path}`);
+        }
+    });
+
+    it('styles the screen with its own fonts only, by relative URLs', async () => {
+        const css = await (await fetch(`${base}/screen/screen.css`)).text();
+        const urls = [ ...css.matchAll(/url\(\s*['"]?([^'")]+)/g) ].map(match => match[1]);
+
+        assert.deepEqual(urls.sort(), WEIGHTS.map(weight => `fonts/Niramit-${weight}.woff2`).sort());
+        assert.doesNotMatch(css, /@import|https?:/);
+    });
 });

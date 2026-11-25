@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 
+import type { Participant } from './Participant';
 import { config } from './TestsConfig';
 import { expectations } from './expectations';
 import { identityUnavailableReason } from './recorderBot';
@@ -308,6 +309,17 @@ export async function restartCoordinator(): Promise<void> {
  */
 export function screenUrl(): string {
     return `${config.coordinator.apiUrl}/screen`;
+}
+
+/**
+ * Shows one of the screen's two views to a coordinator who has signed in: what the other holds cannot be seen or used.
+ *
+ * @param {Participant} screen - The browser the screen is open in.
+ * @param {string} view - Which view.
+ * @returns {Promise<void>}
+ */
+export async function showScreenView(screen: Participant, view: 'queue' | 'rooms'): Promise<void> {
+    await (await screen.driver.$(`#views button[data-view="${view}"]`)).click();
 }
 
 /** An audit entry as the API reports it. */

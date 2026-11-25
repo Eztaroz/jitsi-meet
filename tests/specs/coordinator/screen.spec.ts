@@ -3,7 +3,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
 import { config } from '../../helpers/TestsConfig';
-import { callCoordinator, coordinatorUnavailableReason, postEncounter, screenUrl, waitForRoom } from '../../helpers/coordinator';
+import {
+    callCoordinator,
+    coordinatorUnavailableReason,
+    postEncounter,
+    screenUrl,
+    showScreenView,
+    waitForRoom
+} from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
 import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
@@ -68,7 +75,7 @@ describe('Coordinator: the screen', () => {
     it('shows only the sign-in form before anyone has signed in', async () => {
         await (await screen.driver.$('#signin-token')).waitForDisplayed({ timeout: 10_000 });
         expect(await (await screen.driver.$('#board')).isDisplayed()).toBe(false);
-        expect(await screen.driver.getTitle()).toContain('ศูนย์ควบคุม');
+        expect(await screen.driver.getTitle()).toContain('หน้าจอผู้ประสานงาน');
     });
 
     it('refuses a token without the coordinator role marker, in Thai', async () => {
@@ -102,12 +109,34 @@ describe('Coordinator: the screen', () => {
         expect(await (await screen.driver.$('.queue-entry.suggested')).isExisting()).toBe(true);
     });
 
+    it('declares and cancels an NHSO bypass day from the chip in the header', async () => {
+        const chip = await screen.driver.$('#nhso-chip');
+        const toggle = await screen.driver.$('#nhso-toggle');
+        const bypassed = async () => await chip.getAttribute('data-bypass') === 'true';
+
+        // The screen asks for confirmation before either.
+        await screen.driver.execute(() => {
+            window.confirm = () => true;
+        });
+        expect(await toggle.isDisplayed()).toBe(false);
+
+        // A day left declared by an earlier run is cancelled first, then declared and cancelled again.
+        for (const declare of await bypassed() ? [ false, true, false ] : [ true, false ]) {
+            await chip.click();
+            await toggle.waitForDisplayed({ timeout: 5_000 });
+            await toggle.click();
+            await screen.driver.waitUntil(async () => await bypassed() === declare,
+                { timeout: 10_000, timeoutMsg: `the chip does not show the bypass day ${declare ? 'declared' : 'cancelled'}` });
+        }
+    });
+
     it('shows the open rooms, labelled, and refreshes by itself when someone joins', async () => {
         const patient = (id: string, name: string, hn: string, browser: string) => joinMuc({
             name: browser,
             token: generateToken({ displayName: name, userClaims: { ...expectations.recorderBot.patientClaims, id } })
         }, { roomName: patientLinkRoom(hn) });
 
+        await showScreenView(screen, 'rooms');
         await patient(`patient-${uuidv4()}`, 'Patient A', hnWith, 'p2');
         await waitForRoom(r => r !== undefined, hnWith, 'the patient\'s room');
 

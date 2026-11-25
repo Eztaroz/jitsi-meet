@@ -7,6 +7,7 @@ import {
     getAudit,
     getQueues,
     screenUrl,
+    showScreenView,
     waitForRoom,
     withServiceLog
 } from '../../helpers/coordinator';
@@ -105,6 +106,7 @@ describe('Coordinator: acting from the screen', () => {
     it('starts an encounter for a patient\'s room that has none', async () => {
         const room = hn.toLowerCase();
 
+        await showScreenView(a, 'rooms');
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes('ยังไม่มี encounter'));
         await a.driver.execute((name: string) => {
             const card = Array.from(document.querySelectorAll('.room')).find(e => (e as HTMLElement).dataset.room === name);
@@ -134,6 +136,7 @@ describe('Coordinator: acting from the screen', () => {
             (controls.querySelector(sel) as HTMLElement).click();
         }, id, selector, value);
 
+        await showScreenView(a, 'queue');
         await a.driver.waitUntil(async () => await a.driver.$$('.queue-entry').length > 0);
         await act('.stage-go', 'intake');
         await a.driver.waitUntil(async () => (await getQueues()).intake.some(e => e.encounterId === id), { timeoutMsg: 'not in intake' });
@@ -149,6 +152,7 @@ describe('Coordinator: acting from the screen', () => {
     it('offers a patient no move, and offers staff the patients\' rooms and the lounges', async () => {
         const room = hn.toLowerCase();
 
+        await showScreenView(a, 'rooms');
         await a.driver.waitUntil(async () => (await roomText(a, LOUNGE)).includes(nurse.name),
             { timeoutMsg: 'the nurse is not shown in the lounge' });
         await a.driver.waitUntil(async () => (await roomText(a, room)).includes(patient.name));
@@ -191,6 +195,7 @@ describe('Coordinator: acting from the screen', () => {
             (line.querySelector('.move-go') as HTMLElement).click();
         }, LOUNGE, nurse.name, hn.toLowerCase());
 
+        await showScreenView(b, 'rooms');
         await withServiceLog(() => Promise.all([ a, b ].map(screen => screen.driver.waitUntil(
             async () => (await roomText(screen, LOUNGE)).includes('กำลังย้าย'),
             { interval: 200, timeout: 8_000, timeoutMsg: 'the move is not shown on a screen' }))));
