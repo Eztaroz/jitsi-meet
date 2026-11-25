@@ -61,7 +61,7 @@ describe('a patient who joins their room with an appointment today gets an encou
                     pathways: [ { id: 'short', stages: [
                         { id: 'waiting', name: 'Waiting' }, { id: 'examination', name: 'Examination' }, { id: 'done', name: 'Done' }
                     ] } ],
-                    stations: [ { id: 'examination', lounge: 'lounge-exam', stage: 'examination' } ]
+                    stations: [ { id: 'examination', lounge: 'lounge-exam', stages: [ 'examination' ] } ]
                 } ]
             },
             prosody: { rooms: async () => ({ rooms }), sendMove: async () => undefined } as unknown as Prosody,
