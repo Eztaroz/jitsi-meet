@@ -98,7 +98,10 @@ describe('Coordinator: staff control a patient\'s waiting video', () => {
         const video = await options[options.length - 1].getAttribute('value');
 
         await (await staff.driver.$('#staff-video-picker')).selectByAttribute('value', video);
-        await staff.driver.waitUntil(async () => (await (await staff.driver.$('#staff-video-picker')).getValue()) === video);
+        // The picker shows the choice once the service confirms it, by the panel's next read of where the staff member
+        // is: a refresh sent before the choice can still land after it, and the next one comes 3 seconds later.
+        await staff.driver.waitUntil(async () => (await (await staff.driver.$('#staff-video-picker')).getValue()) === video,
+            { timeout: 15_000, timeoutMsg: 'the picker does not show the chosen video' });
 
         const entry = (await getAudit()).find(e => e.kind === 'video' && e.action === 'choose'
             && e.issuer === staffIdentity.id && e.outcome === 'ok');
