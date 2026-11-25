@@ -54,7 +54,7 @@ function make({ dir = mkdtempSync(join(tmpdir(), 'nhso-')), fill, nhso }: {
 
     const service = new CoordinatorService({
         auditKey: 'audit-key',
-        layout: { centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stage: 'intake' } ] } ] },
+        layout: { centers: [ { id: 'c1', stations: [ { id: 'intake', lounge: 'lounge-intake', stages: [ 'intake' ] } ] } ] },
         nhso,
         prosody: { rooms: async () => ({ rooms: [] }) } as unknown as Prosody,
         recorderBot: { recordRoom: async () => 'c-1' } as unknown as RecorderBot,
