@@ -508,6 +508,7 @@ button.sheet-hn { font-size: 1.6rem; font-weight: 700; line-height: 1.3; }
 .facts dt { align-items: center; color: var(--muted); display: flex; font-size: .88rem; font-weight: 600; gap: .35rem; }
 .facts dt .i { color: var(--faint); height: .95rem; width: .95rem; }
 .facts dd { font-weight: 600; line-height: 1.4; margin: 0; overflow-wrap: anywhere; }
+.facts [data-tone='late'] dd,
 .facts [data-tone='not_yet'] dd { color: var(--warn); }
 .facts [data-tone='unavailable'] dd { color: var(--danger); }
 .facts [data-tone='authenticated'] dd { color: var(--ok); }
@@ -699,6 +700,7 @@ button.step-pick:hover { background: var(--surface-2); }
 .badge.at { background: var(--surface-3); color: var(--text); }
 .badge.video { background: var(--accent-soft); color: var(--accent); }
 .badge.next { background: var(--ok-soft); color: var(--ok); }
+.badge.late { background: var(--warn-soft); color: var(--warn); }
 .badge.qwait { color: var(--text); }
 .badge.qdone { background: var(--ok-soft); color: var(--ok); }
 .badge.rec { background: var(--danger-soft); color: var(--danger); }

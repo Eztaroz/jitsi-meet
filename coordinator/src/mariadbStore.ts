@@ -63,11 +63,11 @@ function statementOf(change: StoreChange, now: string): IStatement {
             params: [ e.id, e.hn, e.stage, e.startedAt.toISOString(), e.stageStartedAt.toISOString(), JSON.stringify(e.history),
                 e.unfinished ? 1 : 0, e.pathway, e.visitNumber ?? null, e.center ?? null, e.clinic ?? null, e.doctor ?? null,
                 e.questionnaires?.length ? JSON.stringify(e.questionnaires) : null,
-                e.videos && Object.keys(e.videos).length ? JSON.stringify(e.videos) : null ],
+                e.videos && Object.keys(e.videos).length ? JSON.stringify(e.videos) : null, e.appointmentTime ?? null ],
             sql: `REPLACE INTO encounters
                 (id, hn, stage, started_at, stage_started_at, history, unfinished, pathway, visit_number, center, clinic,
-                    doctor, questionnaires, videos)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                    doctor, questionnaires, videos, appointment_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         };
     }
     case 'move':

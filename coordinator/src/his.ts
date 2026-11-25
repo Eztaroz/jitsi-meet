@@ -26,7 +26,7 @@ export interface IAppointment {
     /** The HIS doctor code (`C_DOCT`). */
     doctorCode: number;
 
-    /** The time of day, as the HIS keeps it (`HH:MM`), if it has one. */
+    /** The time of day (`HH:MM`), if the HIS keeps one that can be read as a time. */
     time?: string;
 }
 
@@ -52,6 +52,19 @@ export const APPOINTMENTS_SQL = 'SELECT DATE_FORMAT(DATE_AP, \'%Y-%m-%d\') AS da
     + 'ORDER BY TIME_AP IS NULL OR TIME_AP = \'\', TIME_AP, CODE_AP, C_DOCT';
 
 /**
+ * Reads the time of day of an appointment. The HIS keeps it as text, so only what starts with hours and minutes is one:
+ * of a range such as `08:00-12:00`, its start.
+ *
+ * @param {unknown} value - `TIME_AP`.
+ * @returns {string|undefined} As `HH:MM`.
+ */
+function timeOfDay(value: unknown): string | undefined {
+    const found = typeof value === 'string' ? /^\s*([01]?\d|2[0-3])[:.]([0-5]\d)(?!\d)/.exec(value) : null;
+
+    return found ? `${found[1].padStart(2, '0')}:${found[2]}` : undefined;
+}
+
+/**
  * Turns the rows of `APPOINTMENTS_SQL` into appointments.
  *
  * @param {Object[]} rows - The rows.
@@ -59,7 +72,7 @@ export const APPOINTMENTS_SQL = 'SELECT DATE_FORMAT(DATE_AP, \'%Y-%m-%d\') AS da
  */
 export function appointmentsFrom(rows: Record<string, unknown>[]): IAppointment[] {
     return rows.map(row => {
-        const time = typeof row.time_ap === 'string' ? row.time_ap.trim() : '';
+        const time = timeOfDay(row.time_ap);
 
         return {
             clinicCode: String(row.code_ap ?? '').trim(),

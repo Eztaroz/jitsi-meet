@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { CoordinatorService } from '../src/coordinatorService.ts';
+import type { IAppointment, IAppointmentSource } from '../src/his.ts';
 import { signToken } from '../src/jwt.ts';
 import type { Prosody } from '../src/prosody.ts';
 import type { RecorderBot } from '../src/recorderBot.ts';
@@ -37,6 +38,7 @@ const LAYOUT: ILayout = {
 
 /** A queue entry as the screen reads it. */
 interface IScreenEntry {
+    appointmentTime?: string;
     clinic?: string;
     doctor?: string;
     encounterId: string;
@@ -94,14 +96,25 @@ describe('the state of the coordinator screen', () => {
      * Starts a service over a layout, and the screen's routes over it.
      *
      * @param {Object} layout - The layout.
+     * @param {Object} [his] - The HIS and the rooms its patients wait in.
+     * @param {Object} [his.appointments] - Gives the appointments.
+     * @param {string[]} [his.patients] - The HNs of the patients waiting in their own room.
+     * @param {string} [his.dir] - The store's directory, to start again on what an earlier service kept.
      * @returns {Promise<void>}
      */
-    async function open(layout: ILayout): Promise<void> {
-        store = new Store(mkdtempSync(join(tmpdir(), 'screen-state-')));
+    async function open(layout: ILayout, { appointments, dir = mkdtempSync(join(tmpdir(), 'screen-state-')),
+        patients = [] }: { appointments?: IAppointmentSource; dir?: string; patients?: string[]; } = {}): Promise<void> {
+        const rooms = patients.map(hn => ({
+            name: hn,
+            occupants: [ { endpointId: `e-${hn}`, hidden: false, identity: { user: { hospital_role: 'patient', id: `p-${hn}` } } } ]
+        }));
+
+        store = new Store(dir);
         service = new CoordinatorService({
+            appointments,
             auditKey: 'audit-key',
             layout,
-            prosody: { rooms: async () => ({ rooms: [] }), sendMove: async () => undefined } as unknown as Prosody,
+            prosody: { rooms: async () => ({ rooms }), sendMove: async () => undefined } as unknown as Prosody,
             recorderBot: { recordRoom: async () => 'c-1' } as unknown as RecorderBot,
             retentionMs: 90 * 24 * 3600_000,
             retentionSweepMs: 3600_000,
@@ -157,11 +170,18 @@ describe('the state of the coordinator screen', () => {
         };
     }
 
-    afterEach(() => {
+    /**
+     * Stops the service and the server.
+     *
+     * @returns {void}
+     */
+    function close(): void {
         server.close();
         service.stop();
         store.close();
-    });
+    }
+
+    afterEach(close);
 
     describe('of a center with clinics', () => {
         beforeEach(() => open(LAYOUT));
@@ -252,6 +272,43 @@ describe('the state of the coordinator screen', () => {
 
         it('lists no clinic', async () => {
             assert.deepEqual((await state()).clinics, []);
+        });
+    });
+
+    describe('of patients with appointments in the HIS', () => {
+        const booked: Record<string, IAppointment[]> = {
+            1111111: [ { clinicCode: 'MED', date: '2026-11-26', doctorCode: 1, time: '09:30' } ],
+            2222222: [ { clinicCode: 'MED', date: '2026-11-26', doctorCode: 2 } ]
+        };
+        const his: IAppointmentSource = { appointments: async hn => booked[hn] ?? [] };
+        const idOf = (hn: string) => service.state.encounters.find(e => e.hn === hn)?.id ?? '';
+        let dir: string;
+
+        beforeEach(async () => {
+            dir = mkdtempSync(join(tmpdir(), 'screen-state-'));
+            await open(LAYOUT, { appointments: his, dir, patients: [ '1111111', '2222222' ] });
+            await service.checkAppointments();
+        });
+
+        it('gives the entry of an encounter that started from an appointment its time of day', async () => {
+            assert.equal(entryOf(await state(), idOf('1111111')).appointmentTime, '09:30');
+        });
+
+        it('gives none for an appointment with no time, nor for an encounter started without one', async () => {
+            const manual = await start('3333333');
+            const now = await state();
+
+            assert.equal('appointmentTime' in entryOf(now, idOf('2222222')), false);
+            assert.equal('appointmentTime' in entryOf(now, manual), false);
+        });
+
+        it('keeps the time across a restart, without asking the HIS again', async () => {
+            const id = idOf('1111111');
+
+            close();
+            await open(LAYOUT, { dir });
+
+            assert.equal(entryOf(await state(), id).appointmentTime, '09:30');
         });
     });
 });

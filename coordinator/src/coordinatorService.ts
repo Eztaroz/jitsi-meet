@@ -412,12 +412,15 @@ export class CoordinatorService {
      *
      * @param {string} hn - The patient's HN.
      * @param {Object} [where] - What the hospital's system knows of the attendance.
+     * @param {string} [where.appointmentTime] - The appointment's time of day, when the HIS's appointment starts it.
      * @param {string} [where.center] - The center; refused when it is not configured.
      * @param {string} [where.clinic] - The clinic; refused when its center does not have it.
      * @param {string} [where.visitNumber] - The hospital system's number for the visit.
      * @returns {Promise<IStep>}
      */
-    startEncounter(hn: string, where: { center?: string; clinic?: string; visitNumber?: string; } = {}): Promise<IStep> {
+    startEncounter(hn: string, where: {
+        appointmentTime?: string; center?: string; clinic?: string; visitNumber?: string;
+    } = {}): Promise<IStep> {
         return this._serial(async () => {
             this._opts.store.checkWritable();
 
@@ -428,6 +431,7 @@ export class CoordinatorService {
             }
 
             const result = step(this._state, {
+                appointmentTime: where.appointmentTime,
                 at: new Date(),
                 center: resolved.center,
                 clinic: resolved.clinic,
@@ -734,7 +738,9 @@ export class CoordinatorService {
         }
 
         try {
-            const { refused } = await this.startEncounter(hn, { ...this._clinicOf(next), visitNumber: appointmentKey(next) });
+            // The time is kept with the encounter, so that nothing asks the HIS again to tell how late the patient is.
+            const { refused } = await this.startEncounter(hn,
+                { ...this._clinicOf(next), appointmentTime: next.time, visitNumber: appointmentKey(next) });
 
             if (refused) {
                 log.warn('could not start the encounter of an appointment', { reason: refused });
