@@ -14,6 +14,11 @@
                     "lounge": "lounge-examination"
                 },
                 {
+                    "id": "pharmacy",
+                    "stage": "pharmacy",
+                    "lounge": "lounge-pharmacy"
+                },
+                {
                     "id": "aftercare",
                     "stage": "aftercare",
                     "lounge": "lounge-aftercare"
@@ -29,28 +34,20 @@
                             "defaultVideo": "intro"
                         },
                         {
-                            "id": "registration",
-                            "name": "ลงทะเบียน"
-                        },
-                        {
                             "id": "intake",
-                            "name": "ให้ข้อมูลก่อนพบแพทย์"
+                            "name": "พบพยาบาลก่อนพบแพทย์"
                         },
                         {
                             "id": "examination",
                             "name": "พบแพทย์"
                         },
                         {
-                            "id": "aftercare",
-                            "name": "หลังพบแพทย์"
-                        },
-                        {
-                            "id": "billing",
-                            "name": "ชำระเงิน"
-                        },
-                        {
                             "id": "pharmacy",
-                            "name": "รับยา"
+                            "name": "เภสัชกรอธิบายยา"
+                        },
+                        {
+                            "id": "aftercare",
+                            "name": "พบพยาบาลหลังพบแพทย์ (แจ้งค่าใช้จ่าย)"
                         },
                         {
                             "id": "done",
