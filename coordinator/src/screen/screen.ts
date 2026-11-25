@@ -214,6 +214,16 @@
         videos?: { encounterId: string; }[];
     }
 
+    /** How the day is going, as the service counts it. */
+    interface ITodayFigures {
+        averageSeconds?: number;
+        done: number;
+        hours: { done: number; hour: number; started: number; }[];
+        longest?: { seconds: number; since: string; stage: string; };
+        stages: { averageSeconds?: number; id: string; }[];
+        started: number;
+    }
+
     interface ITeamMember {
         endpointId: string;
         name: string;
@@ -566,6 +576,7 @@
         $('head').hidden = true;
         showNhsoControl(false);
         showView('queue');
+        showToday(false);
         $('signin-error').hidden = !message;
         $('signin-error').textContent = message || '';
     }
@@ -779,7 +790,8 @@
     function drawClinicFilter(state: IState): void {
         const entries = Object.values(state.queues).flat();
 
-        $('board-bar').hidden = !state.clinics.length;
+        $('clinic-filter').hidden = !state.clinics.length;
+        $('clinic-filter').previousElementSibling?.toggleAttribute('hidden', !state.clinics.length);
         arrange($('clinic-filter'), [ { id: '', name: 'ทุกคลินิก' }, ...state.clinics ].map(({ id, name }) => {
             const choice = kept(clinicNodes, id, () => {
                 const node = button('', '');
@@ -809,7 +821,173 @@
         sessionStorage.setItem(CLINIC_KEY, id);
         if (latest) {
             drawBoard(latest);
+            loadToday();
         }
+    }
+
+    /**
+     * Opens or closes today's figures.
+     *
+     * @param {boolean} open - Whether they are shown.
+     * @returns {void}
+     */
+    function showToday(open: boolean): void {
+        $('today').hidden = !open;
+        $('today-toggle').setAttribute('aria-expanded', String(open));
+    }
+
+    /**
+     * Reads today's figures of the clinic followed and draws them. Figures that cannot be read leave the last ones: the
+     * state's refresh tells of a service that cannot be reached.
+     *
+     * @returns {void}
+     */
+    function loadToday(): void {
+        const token = sessionStorage.getItem(TOKEN_KEY);
+        const clinic = CLINIC_SHOWN;
+
+        fetch(`screen/api/today?clinic=${encodeURIComponent(clinic)}`, { headers: { Authorization: `Bearer ${token}` } })
+            .then(response => response.ok ? response.json() : undefined)
+            .then((figures?: ITodayFigures) => {
+                // Another clinic may have been picked, or the coordinator signed out, while these were on their way.
+                if (figures && clinic === CLINIC_SHOWN && sessionStorage.getItem(TOKEN_KEY) === token) {
+                    $('today').dataset.clinic = clinic;
+                    drawToday(figures);
+                }
+            })
+            .catch(() => undefined);
+    }
+
+    /**
+     * Describes how long something took, in hours and minutes.
+     *
+     * @param {number} seconds - How long.
+     * @returns {string}
+     */
+    function duration(seconds: number): string {
+        const minutes = Math.floor(seconds / 60);
+
+        return minutes < 60 ? `${minutes} นาที` : `${Math.floor(minutes / 60)} ชม. ${minutes % 60} นาที`;
+    }
+
+    /**
+     * Fills one of today's tiles.
+     *
+     * @param {string} id - The tile.
+     * @param {string} value - Its figure.
+     * @param {string} note - What the figure is of.
+     * @returns {void}
+     */
+    function drawTile(id: string, value: string, note: string): void {
+        setText($(id).querySelector('strong') as Element, value);
+        setText($(id).querySelector('.today-note') as Element, note);
+    }
+
+    /**
+     * Draws today's figures, and today's completions on the button that opens them.
+     *
+     * @param {Object} figures - The figures.
+     * @returns {void}
+     */
+    function drawToday(figures: ITodayFigures): void {
+        const { averageSeconds, done, longest, started } = figures;
+
+        setText($('today-toggle-text'), `สถิติวันนี้ · เสร็จ ${done}`);
+        drawTile('today-done', String(done), `จาก ${started} ราย ที่เข้ามา`);
+        drawTile('today-average', averageSeconds === undefined ? '–' : duration(averageSeconds),
+            averageSeconds === undefined ? 'ยังไม่มีรายที่เสร็จ' : 'ของที่เสร็จแล้ววันนี้');
+        drawTile('today-longest', longest ? duration(longest.seconds) : '–', longest
+            ? `${STAGE_NAMES[longest.stage] ?? longest.stage} ตั้งแต่ ${clockTime(longest.since)}`
+            : 'ยังไม่มีการรอ');
+        drawStageAverages(figures.stages);
+        drawHours(figures.hours);
+    }
+
+    /**
+     * Draws the average wait of each stage as a bar against the 15-minute limit.
+     *
+     * @param {Object[]} stages - The stages, in order.
+     * @returns {void}
+     */
+    function drawStageAverages(stages: ITodayFigures['stages']): void {
+        const titles = stages.map(s => STAGE_NAMES[s.id] ?? s.id);
+
+        if (!changed($('today-stages'), [ stages, titles ])) {
+            return;
+        }
+
+        // The scale leaves room past the limit, so that its line shows even when every stage is short.
+        const max = Math.max(WAIT_LONG_SECONDS * 1.4, ...stages.map(s => s.averageSeconds ?? 0));
+
+        $('today-stages').replaceChildren(...stages.map(({ averageSeconds }, i) => {
+            const seconds = averageSeconds ?? 0;
+            const minutes = averageSeconds === undefined ? '–' : (averageSeconds / 60).toFixed(1);
+            const over = seconds >= WAIT_LONG_SECONDS;
+            const row = el('div', undefined, 'hbar');
+            const track = el('span', undefined, 'hbar-track');
+            const fill = el('span', undefined, 'hbar-fill');
+            const limit = el('span', undefined, 'hbar-limit');
+            const value = el('span', undefined, 'hbar-value');
+
+            row.dataset.stage = stages[i]?.id ?? '';
+            row.dataset.tier = over ? 'long' : seconds >= WAIT_WARN_SECONDS ? 'warn' : '';
+            row.title = averageSeconds === undefined
+                ? `${titles[i]}: วันนี้ยังไม่มีรายที่ผ่านขั้นนี้`
+                : `${titles[i]}: เฉลี่ย ${minutes} นาที${over ? ' (เกินเกณฑ์ 15 นาที)' : ''}`;
+            fill.style.width = `${seconds * 100 / max}%`;
+            limit.style.left = `${WAIT_LONG_SECONDS * 100 / max}%`;
+            track.append(fill, limit);
+            if (over) {
+                value.appendChild(icon('alert'));
+            }
+            value.appendChild(el('span', minutes));
+            row.append(el('span', titles[i], 'hbar-name'), track, value);
+
+            return row;
+        }));
+    }
+
+    /**
+     * Draws the encounters started and done in each hour, side by side.
+     *
+     * @param {Object[]} hours - The hours, the one it is now last.
+     * @returns {void}
+     */
+    function drawHours(hours: ITodayFigures['hours']): void {
+        if (!changed($('today-hours'), hours)) {
+            return;
+        }
+
+        const top = Math.max(1, ...hours.flatMap(h => [ h.started, h.done ]));
+
+        $('today-hourly').dataset.wide = String(hours.length > 12);
+        $('today-hours-none').hidden = hours.length > 0;
+        $('today-hours').replaceChildren(...hours.map(({ done, hour, started }, i) => {
+            const time = `${String(hour).padStart(2, '0')}:00`;
+            const group = el('div', undefined, 'col-group');
+            const bars = el('div', undefined, 'col-bars');
+            const label = el('span', undefined, 'col-hour');
+            const series: [string, number, string][] = [ [ 'in', started, 'เข้าใหม่' ], [ 'out', done, 'เสร็จ' ] ];
+
+            series.forEach(([ key, count, name ]) => {
+                const bar = el('span', undefined, `col-bar ${key}`);
+
+                bar.style.height = `${count * 100 / top}%`;
+                bar.title = `${time}: ${name} ${count} ราย`;
+                bar.appendChild(el('span', String(count), 'col-value'));
+                bars.appendChild(bar);
+            });
+            label.appendChild(el('span', time));
+            if (i === hours.length - 1) {
+                label.appendChild(el('span', 'ตอนนี้'));
+            }
+            group.append(bars, label);
+
+            return group;
+        }));
+
+        // The latest hours are the ones to see.
+        $('today-hours').scrollLeft = $('today-hours').scrollWidth;
     }
 
     /**
@@ -1824,6 +2002,7 @@
                     drawTeams(state.teams);
                     latest = state;
                     drawBoard(state);
+                    loadToday();
 
                     // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
                     // lose its place.
@@ -1860,6 +2039,7 @@
         showSignIn();
     });
     $('notice-close').addEventListener('click', () => say());
+    $('today-toggle').addEventListener('click', () => showToday(Boolean($('today').hidden)));
     document.querySelectorAll<HTMLElement>('#views button').forEach(b => {
         b.addEventListener('click', () => showView(b.dataset.view ?? 'queue'));
     });
