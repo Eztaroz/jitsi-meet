@@ -2137,11 +2137,12 @@
                 key: 'doctor',
                 label: 'แพทย์',
                 value: doctor ?? (stage === 'examination' ? 'ยังไม่กำหนด' : '—') },
-            { icon: 'key',
-                key: 'nhso',
-                label: 'สปสช.',
-                tone: nhso,
-                value: nhso ? NHSO_LABELS[nhso][0].replace('สปสช. ', '') : '—' },
+
+            // No status means there is nothing to say of it, as when there is no NHSO API to ask.
+            ...nhso
+                ? [ { icon: 'key', key: 'nhso', label: 'สปสช.', tone: nhso,
+                    value: NHSO_LABELS[nhso][0].replace('สปสช. ', '') } ]
+                : [],
             { icon: 'users', key: 'at', label: 'เจ้าหน้าที่อยู่ด้วย', value: entry.at?.join(', ') || 'ไม่มี' }
         ];
 
