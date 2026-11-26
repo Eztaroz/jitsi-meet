@@ -544,6 +544,11 @@ button.card-go.primary:hover:not(:disabled) { background: var(--accent); color: 
 .card-badges:empty { display: none; }
 .card-badges .badge { border-radius: 6px; max-width: 100%; overflow-wrap: anywhere; padding: 0 .45rem; white-space: normal; }
 .card-badges .badge .i { height: .85rem; width: .85rem; }
+/* A room's troubles. A patient who is not in their room has a greyed card, to be passed over. */
+.card-badges .badge.unrecorded { background: var(--danger); color: var(--on-accent); }
+.card-badges .badge.not-in-room { background: var(--warn-soft); color: var(--warn); }
+.ticket[data-not-in-room='true'] { background: var(--surface-2); }
+.ticket[data-not-in-room='true'] .hn-link { color: var(--muted); }
 
 /* The whole card opens the panel. This button is the keyboard's way to it: the pointer clicks through to the card. */
 button.card-open {
@@ -578,6 +583,11 @@ button.card-open {
 .sheet-eyebrow { color: var(--muted); font-size: .88rem; font-weight: 600; }
 button.sheet-hn { font-size: 1.6rem; font-weight: 700; line-height: 1.3; }
 .sheet-close { flex: none; padding: 0; width: 2.4rem; }
+.sheet-alerts { display: grid; gap: .4rem; }
+.sheet-alert { align-items: flex-start; border-radius: var(--radius-sm); display: flex; font-size: .92rem; font-weight: 600; gap: .5rem; padding: .5rem .75rem; }
+.sheet-alert .i { flex: none; height: 1.1rem; margin-top: .15rem; width: 1.1rem; }
+.sheet-alert[data-kind='unrecorded'] { background: var(--danger-soft); color: var(--danger); }
+.sheet-alert[data-kind='not-in-room'] { background: var(--warn-soft); color: var(--warn); }
 
 /* The wait against the limit, in the tier's colour; the words carry the same news. */
 .meter {

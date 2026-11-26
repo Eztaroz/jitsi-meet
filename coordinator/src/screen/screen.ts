@@ -134,6 +134,10 @@
         done: 'ย้ายสำเร็จ',
         failed: 'ย้ายไม่สำเร็จ',
         refused: 'ไม่อนุญาตให้ย้าย' };
+    // What the card, the panel and the attention list say of a room's troubles.
+    const UNRECORDED = 'ไม่ได้บันทึกหลักฐาน';
+    const UNRECORDED_HINT = 'ผู้บันทึกของห้องนี้หยุดทำงาน และไม่มีผู้บันทึกอื่นว่าง';
+    const NOT_IN_ROOM = 'คนไข้ไม่อยู่ในห้อง';
     const OUTCOME_ICONS: Record<string, string> = { cancelled: 'x',
         done: 'check',
         failed: 'alert',
@@ -832,6 +836,20 @@
      */
     function isPatientIn(room?: IRoom): boolean {
         return Boolean(room?.open && room.occupants.some(o => o.role === 'patient'));
+    }
+
+    /**
+     * What is wrong with an encounter's own room, as last read: its consultation is not being recorded, or its patient
+     * is not in it. A patient's room that is closed is not among the rooms.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @returns {Object}
+     */
+    function roomTroubles(entry: IQueueEntry): { notInRoom: boolean; unrecorded: boolean; } {
+        const room = latest?.rooms.find(r => r.kind === 'patient' && r.encounterId === entry.encounterId);
+
+        return { notInRoom: !isPatientIn(room),
+            unrecorded: Boolean(room?.unrecorded) };
     }
 
     /**
@@ -1650,8 +1668,13 @@
 
         ticket.dataset.tier = tier === 'ok' ? '' : tier;
 
+        const { notInRoom, unrecorded } = roomTroubles(entry);
+
         // A card in trouble wears the same red bar as one that has waited too long.
-        ticket.dataset.trouble = String(noDoctor || nhso === 'unavailable');
+        ticket.dataset.trouble = String(unrecorded || noDoctor || nhso === 'unavailable');
+
+        // A patient who is not in their room is to be passed over: their card is greyed.
+        ticket.dataset.notInRoom = String(notInRoom);
         face.classList.toggle('suggested', Boolean(entry.suggested));
 
         // Staff of a station are with the patient: they are at that station, whatever their stage's queue says.
@@ -1689,6 +1712,15 @@
         // With one clinic picked, every card is that clinic's: the tag would say nothing.
         if (entry.clinic && !CLINIC_SHOWN) {
             badges.push({ hint: 'คลินิก', icon: 'clipboard', kind: 'clinic', text: CLINIC_NAMES[entry.clinic] ?? entry.clinic });
+        }
+
+        const { notInRoom, unrecorded } = roomTroubles(entry);
+
+        if (unrecorded) {
+            badges.push({ hint: UNRECORDED_HINT, icon: 'recoff', kind: 'unrecorded', text: UNRECORDED });
+        }
+        if (notInRoom) {
+            badges.push({ icon: 'useroff', kind: 'not-in-room', text: NOT_IN_ROOM });
         }
         if (entry.suggested) {
             badges.push({ icon: 'arrow', kind: 'next', text: 'ถัดไป' });
@@ -1865,7 +1897,7 @@
         close.addEventListener('click', () => closeDetail());
         title.append(el('span', 'ผู้ป่วย HN', 'sheet-eyebrow'), hn);
         top.append(title, close);
-        head.append(top, createMeter(), el('dl', undefined, 'facts'));
+        head.append(top, el('div', undefined, 'sheet-alerts'), createMeter(), el('dl', undefined, 'facts'));
 
         body.appendChild(createStepper(sheet, entry, STAGES[index][0]));
         if (STAGES[index][0] === 'examination') {
@@ -1901,12 +1933,49 @@
     function updateSheet(sheet: HTMLElement, entry: IQueueEntry, index: number): void {
         const { doctor } = entry;
 
+        drawRoomAlerts(sheet.querySelector('.sheet-alerts') as HTMLElement, entry);
         updateMeter(sheet.querySelector('.meter') as HTMLElement, entry.waitedSeconds);
         drawFacts(sheet.querySelector('.facts') as HTMLElement, entry, index, doctor);
         updateStepper(sheet);
         updateDoctorSection(sheet, entry, doctor);
         updateVideoSection(sheet, entry);
         updateQuestionnaireSection(sheet, entry);
+    }
+
+    /**
+     * Puts what is wrong with the patient's room at the top of the panel.
+     *
+     * @param {HTMLElement} box - Where the alerts go.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @returns {void}
+     */
+    function drawRoomAlerts(box: HTMLElement, entry: IQueueEntry): void {
+        const { notInRoom, unrecorded } = roomTroubles(entry);
+        const alerts: { icon: string; kind: string; text: string; }[] = [];
+
+        if (unrecorded) {
+            alerts.push({ icon: 'recoff', kind: 'unrecorded', text: `ห้องนี้${UNRECORDED}: ${UNRECORDED_HINT}` });
+        }
+        if (notInRoom) {
+            alerts.push({ icon: 'useroff',
+                kind: 'not-in-room',
+                text: `${NOT_IN_ROOM}ตอนนี้: ส่งเจ้าหน้าที่ไปจะไม่พบใคร` });
+        }
+        box.hidden = !alerts.length;
+
+        // Left alone while it says the same, so that a screen reader does not say it again at every refresh.
+        if (!changed(box, alerts)) {
+            return;
+        }
+        box.textContent = '';
+        alerts.forEach(a => {
+            const alert = el('div', undefined, 'sheet-alert');
+
+            alert.dataset.kind = a.kind;
+            alert.setAttribute('role', 'alert');
+            alert.append(icon(a.icon), el('span', a.text));
+            box.appendChild(alert);
+        });
     }
 
     /**
@@ -2989,6 +3058,18 @@
     }
 
     /**
+     * The patients whose rooms are not being recorded.
+     *
+     * @returns {Object[]}
+     */
+    function unrecordedAttention(): IAttention[] {
+        const entries = allEntries().filter(e => roomTroubles(e).unrecorded);
+
+        return patientsAttention('unrecorded', 'high', 'recoff', entries,
+            `${UNRECORDED} ${entries.length} ห้อง: HN ${hnList(entries)}`);
+    }
+
+    /**
      * The moves that failed or were refused and that this tab has not dismissed, the latest first.
      *
      * @returns {Object[]}
@@ -3092,6 +3173,18 @@
     }
 
     /**
+     * The patients who are not in their own room.
+     *
+     * @returns {Object[]}
+     */
+    function notInRoomAttention(): IAttention[] {
+        const entries = allEntries().filter(e => roomTroubles(e).notInRoom);
+
+        return patientsAttention('not-in-room', 'mid', 'useroff', entries,
+            `${NOT_IN_ROOM} ${entries.length} ราย: HN ${hnList(entries)}`);
+    }
+
+    /**
      * The patients in examination who have no doctor.
      *
      * @returns {Object[]}
@@ -3118,10 +3211,12 @@
     /** The kinds of trouble, the most urgent first. */
     const ATTENTION_KINDS: (() => IAttention[])[] = [
         databaseAttention,
+        unrecordedAttention,
         moveAttention,
         unqueuedAttention,
         longWaitAttention,
         nhsoUnavailableAttention,
+        notInRoomAttention,
         noDoctorAttention,
         nhsoNotYetAttention
     ];
