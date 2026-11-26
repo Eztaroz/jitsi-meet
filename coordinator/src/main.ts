@@ -105,10 +105,9 @@ service.startRetention();
 if (registry) {
     service.startTakeover();
 }
-if (config.his) {
-    // Only the active instance reads the HIS: a standby has no service (ADR 0019).
-    service.startAppointments();
-}
+// Notes how long patients have waited in no queue, and, with the HIS, starts the encounters of their appointments.
+// Only the active instance does: a standby has no service, so it never reads the HIS (ADR 0019).
+service.startAppointments();
 const issuer = config.screen && {
     acceptedAudiences: config.screen.acceptedAudiences,
     acceptedIssuers: config.screen.acceptedIssuers,

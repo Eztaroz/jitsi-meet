@@ -58,6 +58,18 @@ function screenEntry<T extends { encounterId: string; }>(service: CoordinatorSer
 }
 
 /**
+ * Adds to a room how long its patient has waited in it in no queue, when one does. The hospital system's rooms do not
+ * carry it.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @param {Object} room - A room, from the service's `rooms()`.
+ * @returns {Object}
+ */
+function screenRoom<T extends { name: string; }>(service: CoordinatorService, room: T) {
+    return { ...room, unqueuedSeconds: service.unqueuedSeconds(room.name) };
+}
+
+/**
  * Creates the handler of the requests under `/screen`.
  *
  * @param {Object} options - Options.
@@ -162,7 +174,7 @@ export function createScreenRoutes({ act, screen, service }: {
                             .map(e => [ e.id, (e.questionnaires ?? []).map(describeSent) ]))
                     },
                     queues: eachOnScreen(queues),
-                    rooms,
+                    rooms: rooms.map(room => screenRoom(service, room)),
                     videoCatalogue: service.videoCatalogue().map(({ id, title }) => ({ id, title })),
                     videos: service.playingVideos(),
                     stages: service.stages().map(({ id, name }) => ({ id, name })),

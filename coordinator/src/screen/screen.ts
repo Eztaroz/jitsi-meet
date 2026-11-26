@@ -71,6 +71,13 @@
         unreadable: [ 'อ่านนัดจาก HIS ไม่ได้', 'จะลองอ่านใหม่ในหนึ่งนาที หรือกด "เริ่ม encounter" เอง' ]
     };
 
+    /** What the strip of patients in no queue says the HIS said of their appointments today: icon and words. */
+    const UNQUEUED_APPOINTMENTS: Record<'all_seen' | 'none' | 'unreadable', [string, string]> = {
+        all_seen: [ 'check', 'พบครบทุกนัดแล้ว' ],
+        none: [ 'calendar', 'ไม่มีนัดวันนี้' ],
+        unreadable: [ 'alert', 'อ่านนัดจาก HIS ไม่ได้' ]
+    };
+
     /** Each NHSO authentication status, as the queue shows it (ADR 0020): label and hint. */
     const NHSO_LABELS: Record<NhsoStatus, [string, string]> = {
         authenticated: [ 'สปสช. ยืนยันแล้ว', 'ผู้ป่วยยืนยันตัวตนในแอป สปสช. แล้ว' ],
@@ -152,6 +159,9 @@
         occupants: IOccupant[];
         open: boolean;
         stages?: string[];
+
+        /** For a patient in their room with no encounter, how long the service has seen them so. */
+        unqueuedSeconds?: number;
 
         /** The room's consultation is not being recorded: its recorder bot was lost and no other had room. */
         unrecorded?: boolean;
@@ -242,7 +252,7 @@
     }
 
     interface IResult {
-        body: { reason?: string; state?: string; };
+        body: { error?: string; reason?: string; state?: string; };
         status: number;
     }
 
@@ -321,6 +331,7 @@
     const groupNodes = new Map<string, HTMLElement>();
     const ticketNodes = new Map<string, HTMLElement>();
     const clinicNodes = new Map<string, HTMLButtonElement>();
+    const unqueuedNodes = new Map<string, HTMLElement>();
     const attentionNodes = new Map<string, HTMLLIElement>();
 
     /** Whether the attention list shows its rows. */
@@ -682,6 +693,7 @@
         $('board').hidden = true;
         $('head').hidden = true;
         showNhsoControl(false);
+        closeClinicChoices();
         showView('queue');
         showToday(false);
         $('signin-error').hidden = !message;
@@ -1030,6 +1042,197 @@
         pop.appendChild(el('div', `ขั้น: ${stage}`, 'team-stage'));
         team.free.forEach(m => pop.appendChild(member(m)));
         team.busy.forEach(m => pop.appendChild(member(m, m.hn)));
+    }
+
+    /**
+     * The rooms of the patients who are in their own room with no encounter, so in no queue, the longest wait first.
+     *
+     * @param {Object[]} rooms - The rooms now.
+     * @returns {Object[]}
+     */
+    function unqueuedRooms(rooms: IRoom[]): IRoom[] {
+        return rooms.filter(r => r.kind === 'patient' && !r.encounterId && isPatientIn(r))
+            .sort((a, b) => (b.unqueuedSeconds ?? 0) - (a.unqueuedSeconds ?? 0) || a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Draws the strip of the patients in no queue, whom nobody calls. It is the center's: they have no clinic yet, so
+     * the clinic filter leaves it alone.
+     *
+     * @param {Object[]} rooms - The rooms now.
+     * @returns {void}
+     */
+    function drawUnqueued(rooms: IRoom[]): void {
+        const waiting = unqueuedRooms(rooms);
+        const strip = $('unqueued');
+        const focused = document.activeElement as HTMLElement | null;
+
+        strip.hidden = !waiting.length;
+        setText(strip.querySelector('.count') as Element, String(waiting.length));
+        arrange(strip.querySelector('.uq-list') as Element, waiting.map(room => {
+            const card = kept(unqueuedNodes, room.name, () => createUnqueued(room.name));
+
+            updateUnqueued(card, room);
+
+            return card;
+        }));
+        unqueuedNodes.forEach((card, key) => card.isConnected || unqueuedNodes.delete(key));
+        if (focused?.isConnected && document.activeElement !== focused) {
+            focused.focus({ preventScroll: true });
+        }
+    }
+
+    /**
+     * Makes the card of a patient in no queue: their HN, their wait, what the HIS said, and the button that queues
+     * them, which asks the clinic first when the center has more than one.
+     *
+     * @param {string} hn - The patient's HN, which names their room.
+     * @returns {HTMLElement}
+     */
+    function createUnqueued(hn: string): HTMLElement {
+        const card = el('div', undefined, 'uq-card');
+        const wait = el('span', undefined, 'uq-wait');
+        const action = el('div', undefined, 'uq-action');
+        const go = button('เข้าคิว', 'uq-go primary', 'arrow');
+        const choice = el('div', undefined, 'uq-clinics');
+
+        card.dataset.hn = hn;
+        wait.append(icon('clock'), el('span', undefined, 'wait'));
+        choice.hidden = true;
+        choice.setAttribute('role', 'group');
+        choice.setAttribute('aria-label', `เลือกคลินิกของ HN ${hn}`);
+        go.addEventListener('click', () => {
+            const clinics = latest?.clinics ?? [];
+
+            if (clinics.length < 2) {
+                queuePatient(hn, clinics[0], go);
+
+                return;
+            }
+
+            const open = Boolean(choice.hidden);
+
+            closeClinicChoices();
+            choice.hidden = !open;
+            go.setAttribute('aria-expanded', String(open));
+            if (open) {
+                choice.querySelector('button')?.focus();
+            }
+        });
+        action.append(go, choice);
+        card.append(el('b', hn, 'uq-hn'), wait, el('span', undefined, 'badge uq-appointment'), action);
+
+        return card;
+    }
+
+    /**
+     * Brings the card of a patient in no queue up to date.
+     *
+     * @param {HTMLElement} card - The card.
+     * @param {Object} room - The patient's room.
+     * @returns {void}
+     */
+    function updateUnqueued(card: HTMLElement, room: IRoom): void {
+        const seconds = room.unqueuedSeconds ?? 0;
+        const badge = card.querySelector('.uq-appointment') as HTMLElement;
+        const choice = card.querySelector('.uq-clinics') as HTMLElement;
+        const go = card.querySelector('.uq-go') as HTMLButtonElement;
+        const clinics = latest?.clinics ?? [];
+
+        card.dataset.tier = tierOf(seconds);
+        setText(card.querySelector('.wait') as Element, waited(seconds));
+
+        // Without the HIS, or before it was asked, there is nothing to say of their appointments.
+        badge.hidden = !room.appointment;
+        if (changed(badge, room.appointment ?? '') && room.appointment) {
+            const [ iconName, text ] = UNQUEUED_APPOINTMENTS[room.appointment];
+
+            badge.dataset.appointment = room.appointment;
+            badge.textContent = '';
+            badge.append(icon(iconName), el('span', text));
+        }
+        if (!changed(choice, clinics)) {
+            return;
+        }
+
+        choice.textContent = '';
+        choice.appendChild(el('p', 'เข้าคิวคลินิกไหน'));
+        clinics.forEach(clinic => {
+            const pick = button(clinic.name, 'secondary');
+
+            pick.dataset.clinic = clinic.id;
+            pick.addEventListener('click', () => {
+                closeClinicChoices();
+                queuePatient(room.name, clinic, go);
+            });
+            choice.appendChild(pick);
+        });
+    }
+
+    /**
+     * Starts the encounter of a patient in no queue, which puts them in waiting. Refused, they stay in the strip and
+     * the coordinator is told why.
+     *
+     * @param {string} hn - The patient's HN.
+     * @param {Object|undefined} clinic - The clinic, if the center has any.
+     * @param {HTMLButtonElement} trigger - The button that asked.
+     * @returns {void}
+     */
+    function queuePatient(hn: string, clinic: IClinic | undefined, trigger: HTMLButtonElement): void {
+        say();
+        hold(trigger, act('/encounters', { clinic: clinic?.id,
+            hn }), result => {
+            if (!failed(result)) {
+                say(`HN ${hn} เข้าคิวแล้ว${clinic ? ` (${clinic.name})` : ''}`, 'ok');
+
+                return;
+            }
+
+            const error = result.body.error ?? '';
+            let why = '';
+
+            if (error.includes('recorder bot')) {
+                why = ': ระบบบันทึกรับห้องนี้ไม่ได้ (อาจเต็ม)';
+            } else if (error.includes('clinic')) {
+                why = ': ระบบไม่รู้จักคลินิกนี้';
+            }
+            say(`เข้าคิว HN ${hn} ไม่สำเร็จ${why}`, 'error');
+        });
+    }
+
+    /**
+     * Closes every open choice of clinic.
+     *
+     * @returns {HTMLElement|undefined} The button of the one that was open, if any was.
+     */
+    function closeClinicChoices(): HTMLElement | undefined {
+        let was: HTMLElement | undefined;
+
+        unqueuedNodes.forEach(card => {
+            const choice = card.querySelector('.uq-clinics') as HTMLElement;
+            const go = card.querySelector('.uq-go') as HTMLElement;
+
+            if (!choice.hidden) {
+                was = go;
+                choice.hidden = true;
+                go.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        return was;
+    }
+
+    /**
+     * Takes the coordinator to the strip of the patients in no queue.
+     *
+     * @returns {void}
+     */
+    function revealUnqueued(): void {
+        $('unqueued').scrollIntoView({
+            behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+            block: 'nearest'
+        });
+        $('unqueued').querySelector<HTMLElement>('.uq-go')?.focus({ preventScroll: true });
     }
 
     /**
@@ -2812,6 +3015,24 @@
     }
 
     /**
+     * The patients who are in their own room with no encounter, so that nobody calls them.
+     *
+     * @returns {Object[]}
+     */
+    function unqueuedAttention(): IAttention[] {
+        const rooms = unqueuedRooms(latest?.rooms ?? []);
+
+        return rooms.length
+            ? [ { icon: 'door',
+                key: 'unqueued',
+                kind: 'unqueued',
+                open: revealUnqueued,
+                severity: 'high',
+                text: `อยู่ในห้องแต่ยังไม่เข้าคิว ${rooms.length} ราย: HN ${rooms.map(r => r.name).join(', ')}` } ]
+            : [];
+    }
+
+    /**
      * The long waits, one item for each stage that has any, which leads to the longest.
      *
      * @returns {Object[]}
@@ -2898,6 +3119,7 @@
     const ATTENTION_KINDS: (() => IAttention[])[] = [
         databaseAttention,
         moveAttention,
+        unqueuedAttention,
         longWaitAttention,
         nhsoUnavailableAttention,
         noDoctorAttention,
@@ -3010,12 +3232,15 @@
         });
     }
 
-    // A click elsewhere, or Escape, closes the NHSO control and a team's names. With neither open, Escape closes the
-    // encounter's panel.
+    // A click elsewhere, or Escape, closes the NHSO control, a team's names and a choice of clinic. With none open,
+    // Escape closes the encounter's panel.
     document.addEventListener('click', event => {
         closeTeams(event.target as Node);
         if (!(event.target as Element).closest('.nhso')) {
             showNhsoControl(false);
+        }
+        if (!(event.target as Element).closest('.uq-action')) {
+            closeClinicChoices();
         }
     });
     document.addEventListener('keydown', event => {
@@ -3023,8 +3248,10 @@
             return;
         }
 
-        const popover = !$('nhso-pop').hidden || Array.from(teamNodes.values()).some(team => team.open);
+        const choosing = closeClinicChoices();
+        const popover = choosing || !$('nhso-pop').hidden || Array.from(teamNodes.values()).some(team => team.open);
 
+        choosing?.focus();
         if (!popover) {
             closeDetail();
         }
@@ -3120,6 +3347,7 @@
                     latest = state;
                     latestAt = now;
                     drawBoard(state);
+                    drawUnqueued(state.rooms);
                     loadToday();
                     drawDetail();
 

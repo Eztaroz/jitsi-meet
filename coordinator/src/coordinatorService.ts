@@ -107,6 +107,16 @@ type AppointmentOutcome = 'all_seen' | 'none' | 'unreadable';
 const STAFF_READ_ROOMS_MS = 1000;
 
 /**
+ * Whether a patient waits in their own room without an encounter, so that they are in no queue.
+ *
+ * @param {IRoom} room - A room, with its encounter if it has one.
+ * @returns {boolean}
+ */
+function waitsUnqueued(room: IRoom): boolean {
+    return room.kind === 'patient' && room.open && !room.encounterId && room.occupants.some(o => o.role === 'patient');
+}
+
+/**
  * Where the patients whose own room is known were seen in those rooms.
  *
  * @param {IState} state - The state.
@@ -280,6 +290,12 @@ export class CoordinatorService {
     private _checkingAppointments = false;
 
     /**
+     * When this process first saw each patient who waits in their own room without an encounter, by room. Nothing
+     * records when a patient joined, and this is not kept: after a restart their wait counts from zero again.
+     */
+    private readonly _unqueuedSince = new Map<string, number>();
+
+    /**
      * When this process last handed each consultation to a recorder bot, by consultation id, so that a heartbeat sent
      * before the recorder bot took it does not mark it ended. Kept for two heartbeat periods only.
      */
@@ -356,7 +372,7 @@ export class CoordinatorService {
 
         const unrecorded = new Set(this._opts.store.consultationsByRecording(false).map(c => c.encounterId));
 
-        return rooms.map(room => {
+        const described = rooms.map(room => {
             const encounter = room.kind === 'patient'
                 ? this._state.encounters.find(e => e.stage !== 'done'
                     && backendSafeRoomName(e.hn) === backendSafeRoomName(room.name))
@@ -379,6 +395,44 @@ export class CoordinatorService {
                 ? { ...room, encounterId: encounter.id, occupants, unrecorded: true }
                 : { ...room, encounterId: encounter.id, occupants };
         });
+
+        this._noteUnqueued(described);
+
+        return described;
+    }
+
+    /**
+     * How long a patient has waited in their own room without an encounter, counted from when this process first saw
+     * them so, as of the last `rooms()`.
+     *
+     * @param {string} room - Their room.
+     * @returns {number|undefined} In seconds; undefined when no patient waits so in the room.
+     */
+    unqueuedSeconds(room: string): number | undefined {
+        const since = this._unqueuedSince.get(backendSafeRoomName(room));
+
+        return since === undefined ? undefined : Math.floor((Date.now() - since) / 1000);
+    }
+
+    /**
+     * Remembers since when each patient has been seen waiting without an encounter, and forgets those who no longer do.
+     *
+     * @param {IRoom[]} rooms - The rooms now.
+     * @returns {void}
+     */
+    private _noteUnqueued(rooms: IRoom[]): void {
+        const keys = new Set(rooms.filter(waitsUnqueued).map(r => backendSafeRoomName(r.name)));
+
+        for (const key of this._unqueuedSince.keys()) {
+            if (!keys.has(key)) {
+                this._unqueuedSince.delete(key);
+            }
+        }
+        for (const key of keys) {
+            if (!this._unqueuedSince.has(key)) {
+                this._unqueuedSince.set(key, Date.now());
+            }
+        }
     }
 
     /**
@@ -652,8 +706,9 @@ export class CoordinatorService {
     }
 
     /**
-     * Looks now and then for patients waiting in their own room without an encounter, and starts the encounter of
-     * their appointment today (ADR 0019).
+     * Looks now and then for patients waiting in their own room without an encounter, so that how long they have waited
+     * is counted from about when they came, and, with the HIS, starts the encounter of their appointment today (ADR
+     * 0019).
      *
      * @param {number} [everyMs] - How often.
      * @returns {void}
@@ -670,21 +725,26 @@ export class CoordinatorService {
      * Starts the encounter of each patient who waits in their own room without one and has an appointment today that
      * has not had its encounter yet, the earliest first, with the appointment as its visit number and the clinic whose
      * `hisCodes` have the appointment's clinic code (ADR 0019). The HIS is asked about a waiting patient again only
-     * after `APPOINTMENT_RECHECK_MS`; what it said shows on the patient's room (`appointment`).
+     * after `APPOINTMENT_RECHECK_MS`; what it said shows on the patient's room (`appointment`). Without the HIS, it
+     * only looks at the rooms, which notes who waits.
      *
      * @returns {Promise<void>}
      */
     async checkAppointments(): Promise<void> {
         const source = this._opts.appointments;
 
-        if (!source || this._checkingAppointments) {
+        if (this._checkingAppointments) {
             return;
         }
         this._checkingAppointments = true;
         try {
             const rooms = await this.rooms();
-            const waiting = rooms.filter(r => r.kind === 'patient' && r.open && !r.encounterId
-                && r.occupants.some(o => o.role === 'patient'));
+
+            if (!source) {
+                return;
+            }
+
+            const waiting = rooms.filter(waitsUnqueued);
             const keys = new Set(waiting.map(r => backendSafeRoomName(r.name)));
 
             for (const key of this._appointmentChecks.keys()) {

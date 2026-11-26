@@ -5,7 +5,7 @@ import { type Server, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import { CoordinatorService } from '../src/coordinatorService.ts';
 import type { IAppointment, IAppointmentSource } from '../src/his.ts';
@@ -54,7 +54,14 @@ interface IScreenState {
     clinics: { id: string; name: string; }[];
     examination: { doctors: Record<string, IScreenEntry[]>; unassigned: IScreenEntry[]; };
     queues: Record<string, IScreenEntry[]>;
+    rooms: { encounterId?: string; name: string; unqueuedSeconds?: number; }[];
 }
+
+/** A room as Prosody reports it, with a patient in it. */
+const patientIn = (hn: string) => ({
+    name: hn,
+    occupants: [ { endpointId: `e-${hn}`, hidden: false, identity: { user: { hospital_role: 'patient', id: `p-${hn}` } } } ]
+});
 
 describe('the state of the coordinator screen', () => {
     let server: Server;
@@ -62,6 +69,9 @@ describe('the state of the coordinator screen', () => {
     let state: () => Promise<IScreenState>;
     let read: () => Promise<Response>;
     let store: Store;
+
+    /** The rooms Prosody has open now. */
+    let prosodyRooms: { name: string; occupants: unknown[]; }[];
 
     /**
      * Starts an encounter.
@@ -106,17 +116,14 @@ describe('the state of the coordinator screen', () => {
      */
     async function open(layout: ILayout, { appointments, dir = mkdtempSync(join(tmpdir(), 'screen-state-')),
         patients = [] }: { appointments?: IAppointmentSource; dir?: string; patients?: string[]; } = {}): Promise<void> {
-        const rooms = patients.map(hn => ({
-            name: hn,
-            occupants: [ { endpointId: `e-${hn}`, hidden: false, identity: { user: { hospital_role: 'patient', id: `p-${hn}` } } } ]
-        }));
+        prosodyRooms = patients.map(patientIn);
 
         store = new Store(dir);
         service = new CoordinatorService({
             appointments,
             auditKey: 'audit-key',
             layout,
-            prosody: { rooms: async () => ({ rooms }), sendMove: async () => undefined } as unknown as Prosody,
+            prosody: { rooms: async () => ({ rooms: prosodyRooms }), sendMove: async () => undefined } as unknown as Prosody,
             recorderBot: { recordRoom: async () => 'c-1' } as unknown as RecorderBot,
             retentionMs: 90 * 24 * 3600_000,
             retentionSweepMs: 3600_000,
@@ -326,6 +333,64 @@ describe('the state of the coordinator screen', () => {
             await open(LAYOUT, { dir });
 
             assert.equal(entryOf(await state(), id).appointmentTime, '09:30');
+        });
+    });
+
+    describe('of a patient in their own room with no encounter', () => {
+        const waitedIn = async (name: string) => (await state()).rooms.find(r => r.name === name)?.unqueuedSeconds;
+
+        beforeEach(async () => {
+            mock.timers.enable({ apis: [ 'Date' ], now: Date.now() });
+            await open(LAYOUT, { patients: [ '4444444' ] });
+        });
+
+        afterEach(() => mock.timers.reset());
+
+        it('says how long they have waited, from when the service first saw them so', async () => {
+            assert.equal(await waitedIn('4444444'), 0);
+
+            mock.timers.tick(90_000);
+
+            assert.equal(await waitedIn('4444444'), 90);
+        });
+
+        it('counts from a look of its own at the rooms, with no screen open and no HIS', async () => {
+            await service.checkAppointments();
+            mock.timers.tick(30_000);
+
+            assert.equal(await waitedIn('4444444'), 30);
+        });
+
+        it('says nothing of a room with an encounter, with no patient in it, or of a lounge', async () => {
+            await start('4444444');
+            prosodyRooms.push({ name: '5555555', occupants: [] }, patientIn('lounge-exam'));
+
+            const { rooms } = await state();
+
+            assert.deepEqual(rooms.map(r => [ r.name, 'unqueuedSeconds' in r ]).sort(),
+                [ [ '4444444', false ], [ '5555555', false ], [ 'lounge-exam', false ] ]);
+        });
+
+        it('starts from zero once the patient has had an encounter, has left, or the service has restarted', async () => {
+            await waitedIn('4444444');
+            mock.timers.tick(60_000);
+
+            const id = await start('4444444');
+
+            await waitedIn('4444444');
+            await service.changeStage(id, 'done', 'coord-1');
+            assert.equal(await waitedIn('4444444'), 0);
+
+            mock.timers.tick(60_000);
+            prosodyRooms = [];
+            await state();
+            prosodyRooms = [ patientIn('4444444') ];
+            assert.equal(await waitedIn('4444444'), 0);
+
+            mock.timers.tick(60_000);
+            close();
+            await open(LAYOUT, { patients: [ '4444444' ] });
+            assert.equal(await waitedIn('4444444'), 0);
         });
     });
 });

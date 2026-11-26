@@ -281,6 +281,7 @@ h2 { align-items: center; display: flex; font-size: 1.15rem; font-weight: 700; g
     overflow-wrap: anywhere;
     padding: .55rem .4rem;
     text-align: left;
+    white-space: normal;
 }
 button.att-open { background: transparent; border: 0; border-radius: 6px; font-weight: 500; }
 button.att-open:hover { background: var(--surface-2); }
@@ -352,6 +353,59 @@ button.att-open:hover { background: var(--surface-2); }
 #board-bar { align-items: center; display: flex; flex-wrap: wrap; gap: .5rem .75rem; }
 #today-toggle { margin-left: auto; }
 #today-toggle[aria-expanded='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/*
+ * The patients in their own room with no encounter: a strip above the board, with a card for each. The choice of
+ * clinic opens below a card's button.
+ */
+#unqueued {
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 6px solid var(--warn);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .6rem 1rem;
+    padding: .7rem 1rem;
+    scroll-margin: 6rem 0 1rem;
+}
+.uq-head { align-items: center; display: inline-flex; font-size: 1rem; gap: .45rem; margin: 0; }
+.uq-head .i { color: var(--warn); }
+.uq-head .count { background: var(--warn-soft); color: var(--warn); }
+.uq-list { display: flex; flex-wrap: wrap; gap: .6rem; }
+.uq-card {
+    align-items: center;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    display: inline-flex;
+    gap: .75rem;
+    padding: .35rem .4rem .35rem .8rem;
+}
+.uq-wait { align-items: center; display: inline-flex; font-variant-numeric: tabular-nums; gap: .25rem; }
+.uq-card[data-tier='warn'] .uq-wait .i { color: var(--tier-warn); }
+.uq-card[data-tier='long'] .uq-wait .i { color: var(--tier-long); }
+.badge.uq-appointment { color: var(--text); gap: .3rem; }
+.badge.uq-appointment[data-appointment='all_seen'] { background: var(--ok-soft); color: var(--ok); }
+.badge.uq-appointment[data-appointment='unreadable'] { background: var(--warn-soft); color: var(--warn); }
+.uq-action { position: relative; }
+button.uq-go { min-height: 2.2rem; padding: .15rem .8rem; }
+.uq-clinics {
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    display: grid;
+    gap: .4rem;
+    min-width: 14rem;
+    padding: .75rem;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 30;
+}
+.uq-clinics p { font-weight: 600; margin: 0; }
 
 /*
  * Today's figures: three tiles, the average wait of each stage, and the starts and completions of each hour. The two
