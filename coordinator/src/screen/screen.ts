@@ -288,8 +288,11 @@
         examination: IExamination;
         moves: IMove[];
 
-        /** Today's NHSO bypass day, if one was declared, and each open encounter's authentication (ADR 0020). */
-        nhso?: { bypass: IBypassDay | null; statuses: Record<string, NhsoStatus>; };
+        /**
+         * Today's NHSO bypass day, if one was declared, whether there is an NHSO API to ask, and each open encounter's
+         * authentication (ADR 0020). Without that API only the statuses of a bypass day are given.
+         */
+        nhso?: { bypass: IBypassDay | null; checked: boolean; statuses: Record<string, NhsoStatus>; };
         questionnaires?: IQuestionnaires;
         queues: Record<string, IQueueEntry[]>;
         rooms: IRoom[];
@@ -2993,12 +2996,13 @@
      * cancels it.
      *
      * @param {Object|null} day - Today's bypass day, if there is one.
+     * @param {boolean} checked - Whether there is an NHSO API to ask: the chip cannot say all is well without one.
      * @returns {void}
      */
-    function drawNhso(day: IBypassDay | null): void {
+    function drawNhso(day: IBypassDay | null, checked: boolean): void {
         bypass = day;
         $('nhso-chip').dataset.bypass = String(Boolean(day));
-        $('nhso-state').textContent = day ? 'วันนี้ bypass สปสช.' : 'สปสช. ปกติ';
+        $('nhso-state').textContent = day ? 'วันนี้ bypass สปสช.' : checked ? 'สปสช. ปกติ' : 'สปสช.';
         $('nhso-text').textContent = day
             ? `วันนี้ bypass สปสช. (API ล่ม) ประกาศโดย ${day.declaredBy} เวลา ${clockTime(day.declaredAt)} ถึงเที่ยงคืน`
             : 'ยืนยันตัวตน สปสช.: ถ้า API ของ สปสช. ล่มทั้งวัน ให้ประกาศ bypass วันนี้';
@@ -3505,7 +3509,7 @@
                     drawStats(state);
                     PLAYING_VIDEOS = new Map((state.videos ?? []).map(v => [ v.encounterId, v.video ]));
                     NHSO_STATUSES = state.nhso?.statuses ?? {};
-                    drawNhso(state.nhso?.bypass ?? null);
+                    drawNhso(state.nhso?.bypass ?? null, state.nhso?.checked ?? false);
                     VIDEO_CATALOGUE = state.videoCatalogue ?? [];
 
                     drawTeams(state.teams);

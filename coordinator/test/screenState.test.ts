@@ -11,6 +11,7 @@ import { CoordinatorService } from '../src/coordinatorService.ts';
 import type { IAppointment, IAppointmentSource } from '../src/his.ts';
 import { signToken } from '../src/jwt.ts';
 import { DatabaseError } from '../src/mariadbClient.ts';
+import type { INhsoChecker } from '../src/nhso.ts';
 import type { Prosody } from '../src/prosody.ts';
 import type { RecorderBot } from '../src/recorderBot.ts';
 import { type ILayout, parseRoleMarker } from '../src/rooms.ts';
@@ -53,6 +54,7 @@ interface IScreenEntry {
 interface IScreenState {
     clinics: { id: string; name: string; }[];
     examination: { doctors: Record<string, IScreenEntry[]>; unassigned: IScreenEntry[]; };
+    nhso: { checked: boolean; statuses: Record<string, string>; };
     queues: Record<string, IScreenEntry[]>;
     rooms: { encounterId?: string; name: string; unqueuedSeconds?: number; }[];
 }
@@ -114,8 +116,10 @@ describe('the state of the coordinator screen', () => {
      * @param {string} [his.dir] - The store's directory, to start again on what an earlier service kept.
      * @returns {Promise<void>}
      */
-    async function open(layout: ILayout, { appointments, dir = mkdtempSync(join(tmpdir(), 'screen-state-')),
-        patients = [] }: { appointments?: IAppointmentSource; dir?: string; patients?: string[]; } = {}): Promise<void> {
+    async function open(layout: ILayout, { appointments, dir = mkdtempSync(join(tmpdir(), 'screen-state-')), nhso,
+        patients = [] }: {
+        appointments?: IAppointmentSource; dir?: string; nhso?: INhsoChecker; patients?: string[];
+    } = {}): Promise<void> {
         prosodyRooms = patients.map(patientIn);
 
         store = new Store(dir);
@@ -123,6 +127,7 @@ describe('the state of the coordinator screen', () => {
             appointments,
             auditKey: 'audit-key',
             layout,
+            nhso,
             prosody: { rooms: async () => ({ rooms: prosodyRooms }), sendMove: async () => undefined } as unknown as Prosody,
             recorderBot: { recordRoom: async () => 'c-1' } as unknown as RecorderBot,
             retentionMs: 90 * 24 * 3600_000,
@@ -392,5 +397,28 @@ describe('the state of the coordinator screen', () => {
             await open(LAYOUT, { patients: [ '4444444' ] });
             assert.equal(await waitedIn('4444444'), 0);
         });
+    });
+
+    it('shows no NHSO authentication while there is no NHSO API to ask, only a declared bypass day', async () => {
+        await open(LAYOUT);
+
+        const id = await start('1111111');
+
+        assert.deepEqual((await state()).nhso, { bypass: null, checked: false, statuses: {} });
+        // The hospital's API still says that the status cannot be checked.
+        assert.deepEqual(service.nhsoStatuses(), { [id]: 'unavailable' });
+
+        await service.declareBypass('coordinator-1');
+        assert.deepEqual((await state()).nhso.statuses, { [id]: 'bypassed' });
+    });
+
+    it('shows each NHSO authentication where there is an NHSO API', async () => {
+        await open(LAYOUT, { nhso: { authenticated: async () => false } });
+
+        const id = await start('2222222');
+        const { nhso } = await state();
+
+        assert.equal(nhso.checked, true);
+        assert.equal(Object.keys(nhso.statuses).join(), id);
     });
 });

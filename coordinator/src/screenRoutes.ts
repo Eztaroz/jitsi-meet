@@ -34,6 +34,22 @@ SCREEN_FILES['/screen/screen.js'] = {
 };
 
 /**
+ * Returns what the screen shows of NHSO authentication (ADR 0020). With no NHSO API to ask, "cannot be checked" would be
+ * on every patient and say nothing, so the screen gets only the statuses of a declared bypass day. The hospital system's
+ * API still reports every status.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @returns {Object}
+ */
+function screenNhso(service: CoordinatorService) {
+    const checked = service.checksNhso();
+    const statuses = Object.entries(service.nhsoStatuses())
+        .filter(([ , status ]) => checked || status === 'bypassed');
+
+    return { bypass: service.bypassToday() ?? null, checked, statuses: Object.fromEntries(statuses) };
+}
+
+/**
  * Adds to a queue entry what the screen shows of its encounter. The hospital system's queues do not carry it.
  *
  * @param {CoordinatorService} service - The coordinator service.
@@ -152,10 +168,7 @@ export function createScreenRoutes({ act, screen, service }: {
                         doctors: eachOnScreen(examination.doctors),
                         unassigned: onScreen(examination.unassigned)
                     },
-                    nhso: {
-                        bypass: service.bypassToday() ?? null,
-                        statuses: service.nhsoStatuses()
-                    },
+                    nhso: screenNhso(service),
                     moves: service.state.moves
                         .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down')
                         .map(m => ({

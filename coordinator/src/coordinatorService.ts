@@ -1627,6 +1627,15 @@ export class CoordinatorService {
     }
 
     /**
+     * Says whether there is an NHSO API to ask. Without one, no status is known except a declared bypass day.
+     *
+     * @returns {boolean}
+     */
+    checksNhso(): boolean {
+        return Boolean(this._opts.nhso);
+    }
+
+    /**
      * The NHSO authentication of each open encounter, for the coordinator's screen (ADR 0020): `authenticated` once the
      * API said so, else `bypassed` on a bypass day, else `unavailable` while the API cannot be asked (or there is none,
      * or it was not asked yet), else `not_yet`. It never holds an encounter up.
