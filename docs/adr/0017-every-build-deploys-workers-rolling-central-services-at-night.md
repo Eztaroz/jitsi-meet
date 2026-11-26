@@ -25,7 +25,7 @@ Every change merged to the main branch on the hospital's GitLab is built into im
   - the web server and the front web server: the page and its configuration are served, not the maintenance page;
   - Prosody, Jicofo and the videobridges: their own health checks pass, and the coordinator service can still list the open rooms.
 - The pipeline sets a worker draining through the coordinator service's API, with a secret of its own: not a worker's secret, and not the hospital system's.
-- The telemedicine service has its own Portainer, with an agent on each of its VMs (central, recorder bots, video players, videobridges, database). Each VM has one stack, and each stack one webhook, which the pipeline calls.
+- The telemedicine service has its own Portainer, with an agent on each of its VMs (central, recorder bots, video players, videobridges, database). Each VM has one stack, and each stack one webhook, which the pipeline calls. Production's Portainer is Community Edition, which has no stack webhooks: the pipeline redeploys its stacks through Portainer's API instead (ADR 0021).
 - A front web server, in the central stack, ends TLS and forwards to the web server. While the web server restarts, it shows the maintenance page. A change to the front web server itself is deployed in the night window too.
 - The web client's build needs several gigabytes of memory, so it runs on a runner of its own, not on a host that runs production.
 - The repository holds no secrets: they are in the pipeline's variables and in each stack's environment.

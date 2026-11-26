@@ -115,6 +115,43 @@ run "$ci/redeploy-central.sh" TEST
 check "an unhealthy redeploy fails" "$code" 1
 check "the webhook was still called once" "$(hooks)" 1
 
+echo "== redeploying one stack through Portainer's API (ADR 0021)"
+start_stack
+export TEST_PORTAINER_TOKEN=test-token TEST_STACK_ID=1
+TEST_WEBHOOK= TEST_PORTAINER_URL=$TEST_URL run "$ci/redeploy-central.sh" TEST
+check "a healthy redeploy through the API passes" "$code" 0
+check "it updated the stack once" "$(hooks)" 1
+contains "it says the stack was redeployed" "$out" "Stack 1 redeployed"
+
+start_stack
+TEST_PORTAINER_URL=$TEST_URL run "$ci/redeploy-central.sh" TEST
+check "with a webhook set too, the API is used" "$code" 0
+check "and the stack updated once" "$(hooks)" 1
+
+start_stack
+NIGHT_WINDOW_UTC_HOUR=3 TEST_PORTAINER_URL=$TEST_URL run "$ci/redeploy-central.sh" TEST
+check "through the API, outside the window nothing is redeployed" "$code" 1
+check "the stack was not updated" "$(hooks)" 0
+
+TEST_PORTAINER_URL=$TEST_URL TEST_PORTAINER_TOKEN=wrong run "$ci/redeploy-central.sh" TEST
+check "a wrong Portainer token fails" "$code" 1
+contains "and says Portainer refused" "$out" "HTTP 401"
+
+TEST_PORTAINER_URL=$TEST_URL TEST_STACK_ID= run "$ci/redeploy-central.sh" TEST
+check "a missing stack id fails" "$code" 1
+contains "says what is missing" "$out" "TEST_STACK_ID is empty"
+
+start_stack STACK_IMAGE_TAG=5053bfb0
+TEST_PORTAINER_URL=$TEST_URL TEST_IMAGE_TAG=production run "$ci/redeploy-central.sh" TEST
+check "a stack pinned to a commit is refused" "$code" 1
+check "and not updated" "$(hooks)" 0
+contains "it says the stack is pinned" "$out" "is pinned"
+
+start_stack BROKEN=jvb
+TEST_PORTAINER_URL=$TEST_URL run "$ci/redeploy-central.sh" TEST
+check "an unhealthy redeploy through the API fails" "$code" 1
+unset TEST_PORTAINER_TOKEN TEST_STACK_ID
+
 echo "== moving the production tag"
 export FAKE_REGISTRY="$work/registry" CRANE="$here/fake-crane.sh" IMAGE_PREFIX=registry.test/tele PREVIOUS_FILE="$work/previous.env"
 export CI_COMMIT_SHA=abcdef0123456789 PRODUCTION_WEBHOOK=http://unused
@@ -151,6 +188,11 @@ reset_registry
 PRODUCTION_WEBHOOK= run "$ci/promote-central.sh"
 check "without a production webhook promote is skipped" "$code" 0
 check "and moves nothing" "$(production coordinator)" "sha256:old-coordinator"
+
+reset_registry
+PRODUCTION_WEBHOOK= PRODUCTION_PORTAINER_URL=http://unused run "$ci/promote-central.sh"
+check "with production's Portainer API and no webhook, promote moves the tags" "$code" 0
+check "coordinator production moved to the build" "$(production coordinator)" "sha256:new-coordinator"
 
 echo "== rolling back"
 reset_registry
