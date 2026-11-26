@@ -139,8 +139,12 @@ The stage after the doctor, in which a nurse goes through the appointments the d
 _Avoid_: Post-consultation, discharge
 
 **Billing**:
-The stage in which finance staff settle what the patient pays, including their benefits.
-_Avoid_: Payment, cashier
+The stage in which finance staff settle what the patient pays, including their benefits, while the patient is still in the call. A clinic whose patients pay after the call has no billing stage; they make a payment.
+_Avoid_: Cashier
+
+**Payment**:
+What a patient pays for an encounter after leaving the call, and finance staff confirm before the medicines are sent. It is not a stage: the call is over.
+_Avoid_: Billing, checkout, cashier
 
 **Pharmacy**:
 The last stage before done, in which a pharmacist goes through the patient's medicines with them.
