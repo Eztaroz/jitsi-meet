@@ -107,6 +107,16 @@ type AppointmentOutcome = 'all_seen' | 'none' | 'unreadable';
 const STAFF_READ_ROOMS_MS = 1000;
 
 /**
+ * Whether a patient waits in their own room without an encounter, so that they are in no queue.
+ *
+ * @param {IRoom} room - A room, with its encounter if it has one.
+ * @returns {boolean}
+ */
+function waitsUnqueued(room: IRoom): boolean {
+    return room.kind === 'patient' && room.open && !room.encounterId && room.occupants.some(o => o.role === 'patient');
+}
+
+/**
  * Where the patients whose own room is known were seen in those rooms.
  *
  * @param {IState} state - The state.
@@ -276,8 +286,14 @@ export class CoordinatorService {
      * forgotten once nobody waits in it without an encounter, so a patient who comes back is looked up again.
      */
     private readonly _appointmentChecks = new Map<string, { at: number; outcome?: AppointmentOutcome; }>();
-    private _appointmentWatch?: NodeJS.Timeout;
-    private _checkingAppointments = false;
+    private _waitingWatch?: NodeJS.Timeout;
+    private _checkingWaiting = false;
+
+    /**
+     * When this process first saw each patient who waits in their own room without an encounter, by room. Nothing
+     * records when a patient joined, and this is not kept: after a restart their wait counts from zero again.
+     */
+    private readonly _unqueuedSince = new Map<string, number>();
 
     /**
      * When this process last handed each consultation to a recorder bot, by consultation id, so that a heartbeat sent
@@ -356,7 +372,7 @@ export class CoordinatorService {
 
         const unrecorded = new Set(this._opts.store.consultationsByRecording(false).map(c => c.encounterId));
 
-        return rooms.map(room => {
+        const described = rooms.map(room => {
             const encounter = room.kind === 'patient'
                 ? this._state.encounters.find(e => e.stage !== 'done'
                     && backendSafeRoomName(e.hn) === backendSafeRoomName(room.name))
@@ -379,6 +395,44 @@ export class CoordinatorService {
                 ? { ...room, encounterId: encounter.id, occupants, unrecorded: true }
                 : { ...room, encounterId: encounter.id, occupants };
         });
+
+        this._noteUnqueued(described);
+
+        return described;
+    }
+
+    /**
+     * How long a patient has waited in their own room without an encounter, counted from when this process first saw
+     * them so, as of the last `rooms()`.
+     *
+     * @param {string} room - Their room.
+     * @returns {number|undefined} In seconds; undefined when no patient waits so in the room.
+     */
+    unqueuedSeconds(room: string): number | undefined {
+        const since = this._unqueuedSince.get(backendSafeRoomName(room));
+
+        return since === undefined ? undefined : Math.floor((Date.now() - since) / 1000);
+    }
+
+    /**
+     * Remembers since when each patient has been seen waiting without an encounter, and forgets those who no longer do.
+     *
+     * @param {IRoom[]} rooms - The rooms now.
+     * @returns {void}
+     */
+    private _noteUnqueued(rooms: IRoom[]): void {
+        const keys = new Set(rooms.filter(waitsUnqueued).map(r => backendSafeRoomName(r.name)));
+
+        for (const key of this._unqueuedSince.keys()) {
+            if (!keys.has(key)) {
+                this._unqueuedSince.delete(key);
+            }
+        }
+        for (const key of keys) {
+            if (!this._unqueuedSince.has(key)) {
+                this._unqueuedSince.set(key, Date.now());
+            }
+        }
     }
 
     /**
@@ -412,12 +466,15 @@ export class CoordinatorService {
      *
      * @param {string} hn - The patient's HN.
      * @param {Object} [where] - What the hospital's system knows of the attendance.
+     * @param {string} [where.appointmentTime] - The appointment's time of day, when the HIS's appointment starts it.
      * @param {string} [where.center] - The center; refused when it is not configured.
      * @param {string} [where.clinic] - The clinic; refused when its center does not have it.
      * @param {string} [where.visitNumber] - The hospital system's number for the visit.
      * @returns {Promise<IStep>}
      */
-    startEncounter(hn: string, where: { center?: string; clinic?: string; visitNumber?: string; } = {}): Promise<IStep> {
+    startEncounter(hn: string, where: {
+        appointmentTime?: string; center?: string; clinic?: string; visitNumber?: string;
+    } = {}): Promise<IStep> {
         return this._serial(async () => {
             this._opts.store.checkWritable();
 
@@ -428,6 +485,7 @@ export class CoordinatorService {
             }
 
             const result = step(this._state, {
+                appointmentTime: where.appointmentTime,
                 at: new Date(),
                 center: resolved.center,
                 clinic: resolved.clinic,
@@ -648,39 +706,45 @@ export class CoordinatorService {
     }
 
     /**
-     * Looks now and then for patients waiting in their own room without an encounter, and starts the encounter of
-     * their appointment today (ADR 0019).
+     * Looks now and then for patients waiting in their own room without an encounter, so that how long they have waited
+     * is counted from about when they came, and, with the HIS, starts the encounter of their appointment today (ADR
+     * 0019).
      *
      * @param {number} [everyMs] - How often.
      * @returns {void}
      */
-    startAppointments(everyMs = 5_000): void {
-        this._appointmentWatch = setInterval(() => {
-            this.checkAppointments().catch(error =>
+    startWaitingWatch(everyMs = 5_000): void {
+        this._waitingWatch = setInterval(() => {
+            this.checkWaitingPatients().catch(error =>
                 log.warn('could not look for patients waiting without an encounter', { error: (error as Error).name }));
         }, everyMs);
-        this._appointmentWatch.unref();
+        this._waitingWatch.unref();
     }
 
     /**
      * Starts the encounter of each patient who waits in their own room without one and has an appointment today that
      * has not had its encounter yet, the earliest first, with the appointment as its visit number and the clinic whose
      * `hisCodes` have the appointment's clinic code (ADR 0019). The HIS is asked about a waiting patient again only
-     * after `APPOINTMENT_RECHECK_MS`; what it said shows on the patient's room (`appointment`).
+     * after `APPOINTMENT_RECHECK_MS`; what it said shows on the patient's room (`appointment`). Without the HIS, it
+     * only looks at the rooms, which notes who waits.
      *
      * @returns {Promise<void>}
      */
-    async checkAppointments(): Promise<void> {
+    async checkWaitingPatients(): Promise<void> {
         const source = this._opts.appointments;
 
-        if (!source || this._checkingAppointments) {
+        if (this._checkingWaiting) {
             return;
         }
-        this._checkingAppointments = true;
+        this._checkingWaiting = true;
         try {
             const rooms = await this.rooms();
-            const waiting = rooms.filter(r => r.kind === 'patient' && r.open && !r.encounterId
-                && r.occupants.some(o => o.role === 'patient'));
+
+            if (!source) {
+                return;
+            }
+
+            const waiting = rooms.filter(waitsUnqueued);
             const keys = new Set(waiting.map(r => backendSafeRoomName(r.name)));
 
             for (const key of this._appointmentChecks.keys()) {
@@ -700,7 +764,7 @@ export class CoordinatorService {
                 }
             }
         } finally {
-            this._checkingAppointments = false;
+            this._checkingWaiting = false;
         }
     }
 
@@ -734,7 +798,9 @@ export class CoordinatorService {
         }
 
         try {
-            const { refused } = await this.startEncounter(hn, { ...this._clinicOf(next), visitNumber: appointmentKey(next) });
+            // The time is kept with the encounter, so that nothing asks the HIS again to tell how late the patient is.
+            const { refused } = await this.startEncounter(hn,
+                { ...this._clinicOf(next), appointmentTime: next.time, visitNumber: appointmentKey(next) });
 
             if (refused) {
                 log.warn('could not start the encounter of an appointment', { reason: refused });
@@ -1561,6 +1627,15 @@ export class CoordinatorService {
     }
 
     /**
+     * Says whether there is an NHSO API to ask. Without one, no status is known except a declared bypass day.
+     *
+     * @returns {boolean}
+     */
+    checksNhso(): boolean {
+        return Boolean(this._opts.nhso);
+    }
+
+    /**
      * The NHSO authentication of each open encounter, for the coordinator's screen (ADR 0020): `authenticated` once the
      * API said so, else `bypassed` on a bypass day, else `unavailable` while the API cannot be asked (or there is none,
      * or it was not asked yet), else `not_yet`. It never holds an encounter up.
@@ -1686,6 +1761,25 @@ export class CoordinatorService {
             doctors: Object.fromEntries(Object.entries(split.doctors).map(([ doctor, entries ]) => [ doctor, named(entries) ])),
             unassigned: named(split.unassigned)
         };
+    }
+
+    /**
+     * The center's clinics, in the configuration's order, each with its name: its id when it has none.
+     *
+     * @returns {Object[]}
+     */
+    clinics(): { id: string; name: string; }[] {
+        return this._opts.layout.centers.flatMap(c => c.clinics ?? []).map(({ id, name }) => ({ id, name: name ?? id }));
+    }
+
+    /**
+     * The stages of a pathway, in order, from `waiting` to `done`.
+     *
+     * @param {string} pathway - The pathway's id.
+     * @returns {string[]} The stage ids; none when the pathway is not configured.
+     */
+    pathwayStages(pathway: string): string[] {
+        return (findPathway(this._opts.layout, pathway)?.stages ?? []).map(s => s.id);
     }
 
     /**
@@ -2042,14 +2136,14 @@ export class CoordinatorService {
     }
 
     /**
-     * Stops everything that runs on its own: the sweep, the end of the day, the polling and the look for appointments.
+     * Stops everything that runs on its own: the sweep, the end of the day, the polling and the look for waiting patients.
      *
      * @returns {void}
      */
     stop(): void {
         clearInterval(this._retention);
         clearInterval(this._takeover);
-        clearInterval(this._appointmentWatch);
+        clearInterval(this._waitingWatch);
         clearInterval(this._nhsoWatch);
         clearTimeout(this._midnight);
         for (const timer of this._timers.values()) {

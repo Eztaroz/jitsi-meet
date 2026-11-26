@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 
+import type { Participant } from './Participant';
 import { config } from './TestsConfig';
 import { expectations } from './expectations';
 import { identityUnavailableReason } from './recorderBot';
@@ -64,10 +65,11 @@ export function callCoordinator(route: string, init: RequestInit = {}, secret = 
  * Asks the coordinator service to start an encounter, and returns its answer whatever it is.
  *
  * @param {string} hn - The patient's HN.
+ * @param {Object} where - The clinic of the encounter, if it has one.
  * @returns {Promise<Object>} The HTTP status and the body.
  */
-export async function postEncounter(hn: string): Promise<{ body: IEncounter; status: number; }> {
-    const response = await callCoordinator('/encounters', { body: JSON.stringify({ hn }), method: 'POST' });
+export async function postEncounter(hn: string, where: { clinic?: string; } = {}): Promise<{ body: IEncounter; status: number; }> {
+    const response = await callCoordinator('/encounters', { body: JSON.stringify({ hn, ...where }), method: 'POST' });
 
     return { body: await response.json() as IEncounter, status: response.status };
 }
@@ -308,6 +310,47 @@ export async function restartCoordinator(): Promise<void> {
  */
 export function screenUrl(): string {
     return `${config.coordinator.apiUrl}/screen`;
+}
+
+/**
+ * Shows one of the screen's two views to a coordinator who has signed in: what the other holds cannot be seen or used.
+ *
+ * @param {Participant} screen - The browser the screen is open in.
+ * @param {string} view - Which view.
+ * @returns {Promise<void>}
+ */
+export async function showScreenView(screen: Participant, view: 'queue' | 'rooms'): Promise<void> {
+    await (await screen.driver.$(`#views button[data-view="${view}"]`)).click();
+}
+
+/**
+ * Opens an encounter's panel on the screen by clicking its card.
+ *
+ * @param {Participant} screen - The browser the screen is open in, showing the queue.
+ * @param {string} encounterId - The encounter.
+ * @returns {Promise<void>}
+ */
+export async function openEncounterPanel(screen: Participant, encounterId: string): Promise<void> {
+    // The card's place number: a part of the card that is no button of its own.
+    const card = await screen.driver.$(`.queue-entry[data-encounter="${encounterId}"] .position`);
+
+    await card.waitForExist({ timeout: 15_000, timeoutMsg: 'the encounter has no card' });
+    await card.click();
+    await (await screen.driver.$('.sheet')).waitForDisplayed({ timeout: 10_000 });
+}
+
+/**
+ * Clicks something in the open panel, once it is there to be clicked.
+ *
+ * @param {Participant} screen - The browser the screen is open in.
+ * @param {string} selector - What, within the panel.
+ * @returns {Promise<void>}
+ */
+export async function clickInPanel(screen: Participant, selector: string): Promise<void> {
+    const target = await screen.driver.$(`.sheet ${selector}`);
+
+    await target.waitForClickable({ timeout: 10_000, timeoutMsg: `the panel offers no ${selector}` });
+    await target.click();
 }
 
 /** An audit entry as the API reports it. */

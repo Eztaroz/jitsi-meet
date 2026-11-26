@@ -1,0 +1,424 @@
+import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtempSync } from 'node:fs';
+import { type Server, createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+
+import { CoordinatorService } from '../src/coordinatorService.ts';
+import type { IAppointment, IAppointmentSource } from '../src/his.ts';
+import { signToken } from '../src/jwt.ts';
+import { DatabaseError } from '../src/mariadbClient.ts';
+import type { INhsoChecker } from '../src/nhso.ts';
+import type { Prosody } from '../src/prosody.ts';
+import type { RecorderBot } from '../src/recorderBot.ts';
+import { type ILayout, parseRoleMarker } from '../src/rooms.ts';
+import { createScreenRoutes } from '../src/screenRoutes.ts';
+import { Store } from '../src/store.ts';
+
+const pair = () => generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { format: 'pem', type: 'pkcs8' },
+    publicKeyEncoding: { format: 'pem', type: 'spki' }
+});
+const hospital = pair();
+const own = pair();
+
+const stagesOf = (...ids: string[]) => ids.map(id => ({ id, name: id.toUpperCase() }));
+
+/** A center with a clinic that follows its own, shorter pathway and has a name, and one without a name. */
+const LAYOUT: ILayout = {
+    centers: [ {
+        clinics: [ { id: 'gyn', name: 'นรีเวช', pathway: 'short' }, { id: 'med' } ],
+        id: 'c1',
+        pathways: [ { id: 'short', stages: stagesOf('waiting', 'examination', 'done') } ],
+        stations: [ { id: 'examination', lounge: 'lounge-exam', stages: [ 'examination' ] } ]
+    } ]
+};
+
+/** A queue entry as the screen reads it. */
+interface IScreenEntry {
+    appointmentTime?: string;
+    clinic?: string;
+    doctor?: string;
+    encounterId: string;
+    history: { at: string; stage: string; }[];
+    hn?: string;
+    pathwayStages: string[];
+    startedAt: string;
+}
+
+/** The parts of the screen's state these tests read. */
+interface IScreenState {
+    clinics: { id: string; name: string; }[];
+    examination: { doctors: Record<string, IScreenEntry[]>; unassigned: IScreenEntry[]; };
+    nhso: { checked: boolean; statuses: Record<string, string>; };
+    queues: Record<string, IScreenEntry[]>;
+    rooms: { encounterId?: string; name: string; unqueuedSeconds?: number; }[];
+}
+
+/** A room as Prosody reports it, with a patient in it. */
+const patientIn = (hn: string) => ({
+    name: hn,
+    occupants: [ { endpointId: `e-${hn}`, hidden: false, identity: { user: { hospital_role: 'patient', id: `p-${hn}` } } } ]
+});
+
+describe('the state of the coordinator screen', () => {
+    let server: Server;
+    let service: CoordinatorService;
+    let state: () => Promise<IScreenState>;
+    let read: () => Promise<Response>;
+    let store: Store;
+
+    /** The rooms Prosody has open now. */
+    let prosodyRooms: { name: string; occupants: unknown[]; }[];
+
+    /**
+     * Starts an encounter.
+     *
+     * @param {string} hn - The patient's HN.
+     * @param {Object} where - The clinic, if any.
+     * @returns {Promise<string>} The encounter's id.
+     */
+    async function start(hn: string, where: { clinic?: string; } = {}): Promise<string> {
+        const { encounter, refused } = await service.startEncounter(hn, where);
+
+        assert.equal(refused, undefined);
+
+        return encounter?.id ?? '';
+    }
+
+    /**
+     * Finds an encounter's entry in the queue of its stage.
+     *
+     * @param {Object} from - The state.
+     * @param {string} id - The encounter's id.
+     * @returns {Object}
+     */
+    function entryOf(from: IScreenState, id: string): IScreenEntry {
+        const found = Object.values(from.queues).flat()
+            .find(e => e.encounterId === id);
+
+        assert.ok(found, `no queue has the encounter ${id}`);
+
+        return found;
+    }
+
+    /**
+     * Starts a service over a layout, and the screen's routes over it.
+     *
+     * @param {Object} layout - The layout.
+     * @param {Object} [his] - The HIS and the rooms its patients wait in.
+     * @param {Object} [his.appointments] - Gives the appointments.
+     * @param {string[]} [his.patients] - The HNs of the patients waiting in their own room.
+     * @param {string} [his.dir] - The store's directory, to start again on what an earlier service kept.
+     * @returns {Promise<void>}
+     */
+    async function open(layout: ILayout, { appointments, dir = mkdtempSync(join(tmpdir(), 'screen-state-')), nhso,
+        patients = [] }: {
+        appointments?: IAppointmentSource; dir?: string; nhso?: INhsoChecker; patients?: string[];
+    } = {}): Promise<void> {
+        prosodyRooms = patients.map(patientIn);
+
+        store = new Store(dir);
+        service = new CoordinatorService({
+            appointments,
+            auditKey: 'audit-key',
+            layout,
+            nhso,
+            prosody: { rooms: async () => ({ rooms: prosodyRooms }), sendMove: async () => undefined } as unknown as Prosody,
+            recorderBot: { recordRoom: async () => 'c-1' } as unknown as RecorderBot,
+            retentionMs: 90 * 24 * 3600_000,
+            retentionSweepMs: 3600_000,
+            roleMarkers: {
+                patient: parseRoleMarker('user.hospital_role=patient', 'X'),
+                staff: parseRoleMarker('user.hospital_role=staff', 'X')
+            },
+            signingKey: { kid: 'k1', privateKey: own.privateKey },
+            store,
+            timeZone: 'Asia/Bangkok',
+            token: { audience: 'jitsi', issuer: 'coordinator', subject: 'meet' }
+        });
+
+        const handle = createScreenRoutes({
+            act: async () => false,
+            screen: {
+                acceptedAudiences: [ 'jitsi' ],
+                acceptedIssuers: [ 'chat' ],
+                keyFor: async () => hospital.publicKey,
+                marker: parseRoleMarker('user.hospital_role=coordinator', 'X') as never
+            },
+            service
+        });
+        const now = Math.floor(Date.now() / 1000);
+        const jwt = signToken({
+            claims: {
+                aud: 'jitsi',
+                context: { user: { hospital_role: 'coordinator', id: 'coord-1' } },
+                exp: now + 3600,
+                iss: 'chat',
+                nbf: now - 60,
+                sub: 'meet.jitsi'
+            },
+            kid: 'hospital/key',
+            privateKey: hospital.privateKey
+        });
+
+        server = createServer((req, res) => {
+            handle(req, res, req.headers.authorization?.replace('Bearer ', '')).catch(error => {
+                // As the service's server answers: the error's own status and message.
+                res.writeHead(error.status ?? 500, { 'content-type': 'application/json' })
+                    .end(JSON.stringify({ error: error.message }));
+            });
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+
+        const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/screen/api/state`;
+
+        read = () => fetch(url, { headers: { authorization: `Bearer ${jwt}` } });
+        state = async () => {
+            const response = await read();
+
+            assert.equal(response.status, 200);
+
+            return await response.json() as IScreenState;
+        };
+    }
+
+    /**
+     * Stops the service and the server.
+     *
+     * @returns {void}
+     */
+    function close(): void {
+        server.close();
+        service.stop();
+        store.close();
+    }
+
+    afterEach(close);
+
+    it('says that it is the database that cannot be asked, so that the screen can name that trouble', async () => {
+        await open(LAYOUT);
+        store.consultationsByRecording = () => {
+            throw new DatabaseError('the database did not answer in time');
+        };
+
+        const response = await read();
+
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), { error: 'database' });
+    });
+
+    describe('of a center with clinics', () => {
+        beforeEach(() => open(LAYOUT));
+
+        it('lists the center\'s clinics, one without a name by its id', async () => {
+            assert.deepEqual((await state()).clinics, [ { id: 'gyn', name: 'นรีเวช' }, { id: 'med', name: 'med' } ]);
+        });
+
+        it('names the encounter\'s clinic on its queue entry, and none for an encounter without one', async () => {
+            const gyn = await start('HN1', { clinic: 'gyn' });
+            const none = await start('HN2');
+            const now = await state();
+
+            assert.equal(entryOf(now, gyn).clinic, 'gyn');
+            assert.equal(entryOf(now, gyn).hn, 'HN1');
+            assert.equal('clinic' in entryOf(now, none), false);
+        });
+
+        it('carries the clinic on the entries of examination\'s queues by doctor too', async () => {
+            const assigned = await start('HN1', { clinic: 'gyn' });
+            const unassigned = await start('HN2', { clinic: 'med' });
+
+            await service.changeStage(assigned, 'examination', 'coord-1');
+            await service.changeStage(unassigned, 'examination', 'coord-1');
+            await service.setDoctor(assigned, 'd-1', 'coord-1');
+
+            const { examination } = await state();
+
+            assert.deepEqual(examination.doctors['d-1']?.map(e => [ e.encounterId, e.hn, e.clinic ]),
+                [ [ assigned, 'HN1', 'gyn' ] ]);
+            assert.deepEqual(examination.unassigned.map(e => [ e.encounterId, e.hn, e.clinic ]),
+                [ [ unassigned, 'HN2', 'med' ] ]);
+        });
+
+        it('gives each entry the stages of its encounter\'s own pathway, in order', async () => {
+            const short = await start('HN1', { clinic: 'gyn' });
+            const usual = await start('HN2', { clinic: 'med' });
+            const now = await state();
+
+            assert.deepEqual(entryOf(now, short).pathwayStages, [ 'waiting', 'examination', 'done' ]);
+            assert.deepEqual(entryOf(now, usual).pathwayStages,
+                [ 'waiting', 'registration', 'intake', 'examination', 'aftercare', 'billing', 'pharmacy', 'done' ]);
+        });
+
+        it('gives each entry when its encounter started and every stage it entered, in order', async () => {
+            const id = await start('HN1', { clinic: 'med' });
+
+            await service.changeStage(id, 'intake', 'coord-1');
+            await service.changeStage(id, 'examination', 'coord-1');
+            await service.changeStage(id, 'intake', 'coord-1');
+
+            const kept = service.describeEncounter(id);
+            const entry = entryOf(await state(), id);
+
+            assert.equal(entry.startedAt, kept?.startedAt.toISOString());
+            assert.deepEqual(entry.history.map(h => h.stage), [ 'waiting', 'intake', 'examination', 'intake' ]);
+            assert.deepEqual(entry.history,
+                kept?.history.map(h => ({ at: h.at.toISOString(), stage: h.stage })));
+        });
+
+        it('carries the start and history on the entries of the queues by doctor too', async () => {
+            const id = await start('HN1', { clinic: 'med' });
+
+            await service.changeStage(id, 'examination', 'coord-1');
+
+            const [ entry ] = (await state()).examination.unassigned;
+
+            assert.equal(entry?.startedAt, service.describeEncounter(id)?.startedAt.toISOString());
+            assert.deepEqual(entry?.history.map(h => h.stage), [ 'waiting', 'examination' ]);
+        });
+
+        it('still names the doctor of an encounter on its entry after examination', async () => {
+            const assigned = await start('HN1', { clinic: 'med' });
+            const unassigned = await start('HN2', { clinic: 'med' });
+
+            await service.setDoctor(assigned, 'd-1', 'coord-1');
+            await service.changeStage(assigned, 'aftercare', 'coord-1');
+
+            const now = await state();
+
+            assert.equal(entryOf(now, assigned).doctor, 'd-1');
+            assert.equal('doctor' in entryOf(now, unassigned), false);
+        });
+    });
+
+    describe('of a center without clinics', () => {
+        beforeEach(() => open({ centers: [ { id: 'c1', stations: [] } ] }));
+
+        it('lists no clinic', async () => {
+            assert.deepEqual((await state()).clinics, []);
+        });
+    });
+
+    describe('of patients with appointments in the HIS', () => {
+        const booked: Record<string, IAppointment[]> = {
+            1111111: [ { clinicCode: 'MED', date: '2026-11-26', doctorCode: 1, time: '09:30' } ],
+            2222222: [ { clinicCode: 'MED', date: '2026-11-26', doctorCode: 2 } ]
+        };
+        const his: IAppointmentSource = { appointments: async hn => booked[hn] ?? [] };
+        const idOf = (hn: string) => service.state.encounters.find(e => e.hn === hn)?.id ?? '';
+        let dir: string;
+
+        beforeEach(async () => {
+            dir = mkdtempSync(join(tmpdir(), 'screen-state-'));
+            await open(LAYOUT, { appointments: his, dir, patients: [ '1111111', '2222222' ] });
+            await service.checkWaitingPatients();
+        });
+
+        it('gives the entry of an encounter that started from an appointment its time of day', async () => {
+            assert.equal(entryOf(await state(), idOf('1111111')).appointmentTime, '09:30');
+        });
+
+        it('gives none for an appointment with no time, nor for an encounter started without one', async () => {
+            const manual = await start('3333333');
+            const now = await state();
+
+            assert.equal('appointmentTime' in entryOf(now, idOf('2222222')), false);
+            assert.equal('appointmentTime' in entryOf(now, manual), false);
+        });
+
+        it('keeps the time across a restart, without asking the HIS again', async () => {
+            const id = idOf('1111111');
+
+            close();
+            await open(LAYOUT, { dir });
+
+            assert.equal(entryOf(await state(), id).appointmentTime, '09:30');
+        });
+    });
+
+    describe('of a patient in their own room with no encounter', () => {
+        const waitedIn = async (name: string) => (await state()).rooms.find(r => r.name === name)?.unqueuedSeconds;
+
+        beforeEach(async () => {
+            mock.timers.enable({ apis: [ 'Date' ], now: Date.now() });
+            await open(LAYOUT, { patients: [ '4444444' ] });
+        });
+
+        afterEach(() => mock.timers.reset());
+
+        it('says how long they have waited, from when the service first saw them so', async () => {
+            assert.equal(await waitedIn('4444444'), 0);
+
+            mock.timers.tick(90_000);
+
+            assert.equal(await waitedIn('4444444'), 90);
+        });
+
+        it('counts from a look of its own at the rooms, with no screen open and no HIS', async () => {
+            await service.checkWaitingPatients();
+            mock.timers.tick(30_000);
+
+            assert.equal(await waitedIn('4444444'), 30);
+        });
+
+        it('says nothing of a room with an encounter, with no patient in it, or of a lounge', async () => {
+            await start('4444444');
+            prosodyRooms.push({ name: '5555555', occupants: [] }, patientIn('lounge-exam'));
+
+            const { rooms } = await state();
+
+            assert.deepEqual(rooms.map(r => [ r.name, 'unqueuedSeconds' in r ]).sort(),
+                [ [ '4444444', false ], [ '5555555', false ], [ 'lounge-exam', false ] ]);
+        });
+
+        it('starts from zero once the patient has had an encounter, has left, or the service has restarted', async () => {
+            await waitedIn('4444444');
+            mock.timers.tick(60_000);
+
+            const id = await start('4444444');
+
+            await waitedIn('4444444');
+            await service.changeStage(id, 'done', 'coord-1');
+            assert.equal(await waitedIn('4444444'), 0);
+
+            mock.timers.tick(60_000);
+            prosodyRooms = [];
+            await state();
+            prosodyRooms = [ patientIn('4444444') ];
+            assert.equal(await waitedIn('4444444'), 0);
+
+            mock.timers.tick(60_000);
+            close();
+            await open(LAYOUT, { patients: [ '4444444' ] });
+            assert.equal(await waitedIn('4444444'), 0);
+        });
+    });
+
+    it('shows no NHSO authentication while there is no NHSO API to ask, only a declared bypass day', async () => {
+        await open(LAYOUT);
+
+        const id = await start('1111111');
+
+        assert.deepEqual((await state()).nhso, { bypass: null, checked: false, statuses: {} });
+        // The hospital's API still says that the status cannot be checked.
+        assert.deepEqual(service.nhsoStatuses(), { [id]: 'unavailable' });
+
+        await service.declareBypass('coordinator-1');
+        assert.deepEqual((await state()).nhso.statuses, { [id]: 'bypassed' });
+    });
+
+    it('shows each NHSO authentication where there is an NHSO API', async () => {
+        await open(LAYOUT, { nhso: { authenticated: async () => false } });
+
+        const id = await start('2222222');
+        const { nhso } = await state();
+
+        assert.equal(nhso.checked, true);
+        assert.equal(Object.keys(nhso.statuses).join(), id);
+    });
+});

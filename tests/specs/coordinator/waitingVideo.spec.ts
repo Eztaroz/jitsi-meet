@@ -2,7 +2,13 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { Participant } from '../../helpers/Participant';
 import { setTestProperties } from '../../helpers/TestProperties';
-import { coordinatorUnavailableReason, postEncounter, screenUrl, waitForRoom } from '../../helpers/coordinator';
+import {
+    coordinatorUnavailableReason,
+    openEncounterPanel,
+    postEncounter,
+    screenUrl,
+    waitForRoom
+} from '../../helpers/coordinator';
 import { expectations } from '../../helpers/expectations';
 import { joinMuc } from '../../helpers/joinMuc';
 import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
@@ -54,8 +60,18 @@ describe('Coordinator: a waiting video from the screen', () => {
         await (await screen.driver.$('#board')).waitForDisplayed({ timeout: 10_000 });
     });
 
-    const toggle = () => screen.driver.$(`.queue-entry[data-encounter="${encounterId}"]`).parentElement()
-        .$('.video-toggle');
+    // The video's button is in the encounter's panel, which stays open once a card has opened it.
+    const toggle = async () => {
+        if (!await (await screen.driver.$('.sheet')).isExisting()) {
+            await openEncounterPanel(screen, encounterId);
+        }
+
+        const button = await screen.driver.$('.sheet .video-toggle');
+
+        await button.waitForClickable({ timeout: 10_000 });
+
+        return button;
+    };
 
     it('plays the stage\'s default video into the patient\'s room as the video player', async () => {
         await (await toggle()).click();

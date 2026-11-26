@@ -6,6 +6,7 @@ import {
     coordinatorUnavailableReason,
     postEncounter,
     postMove,
+    postStage,
     screenUrl,
     waitForMove,
     waitForRoom
@@ -19,7 +20,9 @@ setTestProperties(__filename, {
     description: 'The coordinator screen shows each station as a team: a staff member waiting in the station\'s \
 lounge is listed as free; once the coordinator moves them into a patient\'s room they are listed as busy with that \
 patient, and the patient is shown at the station rather than only in the queue of their stage; when they are moved \
-back to the lounge they are free again and the patient is back in the queue. The screen follows without a reload. \
+back to the lounge they are free again and the patient is back in the queue. The strip has a dot for each of \
+the station\'s staff, named on hover; the head of the stage\'s column says whether the station has free staff while \
+the patient waits to be called; and one legend counts the board\'s waits by tier. The screen follows without a reload. \
 Skipped unless the deployment is the JWT variant of the recorder bot\'s test deployment with the coordinator service \
 on top of it.',
     usesBrowsers: [ 'p1', 'p2', 'p3' ]
@@ -43,6 +46,26 @@ describe('Coordinator: stations as teams on the screen', () => {
     }
 
     /**
+     * Returns the hints of the dots of the aftercare station's staff who are free, or busy.
+     *
+     * @param {string} state - Which: free or busy.
+     * @returns {Promise<string[]>}
+     */
+    async function dots(state: 'busy' | 'free'): Promise<string[]> {
+        return screen.driver.execute((which: string) => Array.from(document.querySelectorAll<HTMLElement>(
+            `.team[data-station="aftercare"] .team-dot[data-state="${which}"]`)).map(d => d.title), state);
+    }
+
+    /**
+     * Returns what the head of the aftercare column says of the station's staff.
+     *
+     * @returns {Promise<string>}
+     */
+    async function columnStaff(): Promise<string> {
+        return (await screen.driver.$('#queue-aftercare .col-staff')).getText();
+    }
+
+    /**
      * Returns the text of the patient's entry in the queues.
      *
      * @returns {Promise<string>}
@@ -62,7 +85,10 @@ describe('Coordinator: stations as teams on the screen', () => {
         }
 
         hn = uniqueHn('TEAM');
-        expect((await postEncounter(hn)).status).toBe(201);
+        const encounter = await postEncounter(hn);
+
+        expect(encounter.status).toBe(201);
+        expect((await postStage(encounter.body.id, 'aftercare')).status).toBe(200);
 
         await joinMuc({
             name: 'p2',
@@ -91,10 +117,25 @@ describe('Coordinator: stations as teams on the screen', () => {
     });
 
     it('lists the staff member in the lounge as free', async () => {
+        // The strip shows the counts; the names are behind them, and stay open as the screen refreshes.
+        const counts = await screen.driver.$('.team[data-station="aftercare"] summary');
+
+        await counts.waitForExist({ timeout: 15_000 });
+        await counts.click();
         await screen.driver.waitUntil(async () => (await teamText()).includes(staffIdentity.name),
             { timeout: 15_000, timeoutMsg: 'the staff member is not on their station\'s team' });
         expect(await teamText()).toContain('ว่าง 1');
         expect(await teamText()).toContain('ไม่ว่าง 0');
+        expect(await dots('free')).toEqual([ `${staffIdentity.name}: ว่าง` ]);
+    });
+
+    it('says in the column head that the free staff can call the patient who waits', async () => {
+        await screen.driver.waitUntil(async () => (await columnStaff()).includes('ว่าง 1 คน เรียกได้'),
+            { timeout: 15_000, timeoutMsg: 'the column does not say the station can call' });
+        expect(await (await screen.driver.$('#queue-aftercare .col-longest')).getText()).toContain('นานสุด');
+        expect(await (await screen.driver.$('#queue-aftercare .tier-bar [data-tier="ok"]')).getAttribute('title'))
+            .toContain('ไม่ถึง 5 นาที');
+        expect(await (await screen.driver.$('#tier-legend')).getText()).toContain('เกิน 15 นาที');
     });
 
     it('lists them as busy with the patient once they are in the patient\'s room, and shows the patient at the station', async () => {
@@ -106,6 +147,9 @@ describe('Coordinator: stations as teams on the screen', () => {
             { timeout: 15_000, timeoutMsg: 'the staff member is not shown as busy with the patient' });
         expect(await teamText()).toContain('ว่าง 0');
         expect(await teamText()).toContain('ไม่ว่าง 1');
+        expect(await dots('busy')).toEqual([ `${staffIdentity.name}: กับ ${hn.toLowerCase()}` ]);
+        await screen.driver.waitUntil(async () => !(await columnStaff()).includes('เรียกได้'),
+            { timeout: 15_000, timeoutMsg: 'the column still asks for a call' });
         await screen.driver.waitUntil(async () => (await ticketText()).includes('อยู่ที่ aftercare'),
             { timeout: 15_000, timeoutMsg: 'the patient is not shown at the station' });
     });

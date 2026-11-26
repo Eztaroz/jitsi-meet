@@ -7,16 +7,22 @@ import { stripTypeScriptTypes } from 'node:module';
 
 import type { CoordinatorService } from './coordinatorService.ts';
 import { HttpError, send } from './http.ts';
+import { DatabaseError } from './mariadbClient.ts';
 import { ProsodyUnavailableError } from './prosody.ts';
 import { describeSent } from './questionnaires.ts';
 import { type ICoordinatorAuth, SignInError, verifyCoordinator } from './screenAuth.ts';
+import { todayFigures } from './today.ts';
 
 /** The files of the coordinator screen, read once. */
 const SCREEN_FILES: Record<string, { body: Buffer; type: string; }> = {};
 
 for (const [ route, file, type ] of [
     [ '/screen', 'index.html', 'text/html; charset=utf-8' ],
-    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ]
+    [ '/screen/screen.css', 'screen.css', 'text/css; charset=utf-8' ],
+
+    // The typeface, subset to Thai and Latin; its licence is fonts/OFL.txt.
+    ...[ 'Regular', 'Medium', 'SemiBold', 'Bold' ].map(weight =>
+        [ `/screen/fonts/Niramit-${weight}.woff2`, `fonts/Niramit-${weight}.woff2`, 'font/woff2' ])
 ]) {
     SCREEN_FILES[route] = { body: readFileSync(new URL(`./screen/${file}`, import.meta.url)), type };
 }
@@ -26,6 +32,58 @@ SCREEN_FILES['/screen/screen.js'] = {
     body: Buffer.from(stripTypeScriptTypes(readFileSync(new URL('./screen/screen.ts', import.meta.url), 'utf8'))),
     type: 'text/javascript; charset=utf-8'
 };
+
+/**
+ * Returns what the screen shows of NHSO authentication (ADR 0020). With no NHSO API to ask, "cannot be checked" would be
+ * on every patient and say nothing, so the screen gets only the statuses of a declared bypass day. The hospital system's
+ * API still reports every status.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @returns {Object}
+ */
+function screenNhso(service: CoordinatorService) {
+    const checked = service.checksNhso();
+    const statuses = Object.entries(service.nhsoStatuses())
+        .filter(([ , status ]) => checked || status === 'bypassed');
+
+    return { bypass: service.bypassToday() ?? null, checked, statuses: Object.fromEntries(statuses) };
+}
+
+/**
+ * Adds to a queue entry what the screen shows of its encounter. The hospital system's queues do not carry it.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @param {Object} entry - An entry of a stage's queue, or of one of examination's queues.
+ * @returns {Object}
+ */
+function screenEntry<T extends { encounterId: string; }>(service: CoordinatorService, entry: T) {
+    const encounter = service.state.encounters.find(e => e.id === entry.encounterId);
+
+    return {
+        ...entry,
+        appointmentTime: encounter?.appointmentTime,
+        clinic: encounter?.clinic,
+        doctor: encounter?.doctor,
+        history: encounter?.history,
+        hn: encounter?.hn,
+
+        // Where the encounter can go: its next stage is not the next column when its pathway skips one.
+        pathwayStages: service.pathwayStages(encounter?.pathway ?? ''),
+        startedAt: encounter?.startedAt
+    };
+}
+
+/**
+ * Adds to a room how long its patient has waited in it in no queue, when one does. The hospital system's rooms do not
+ * carry it.
+ *
+ * @param {CoordinatorService} service - The coordinator service.
+ * @param {Object} room - A room, from the service's `rooms()`.
+ * @returns {Object}
+ */
+function screenRoom<T extends { name: string; }>(service: CoordinatorService, room: T) {
+    return { ...room, unqueuedSeconds: service.unqueuedSeconds(room.name) };
+}
 
 /**
  * Creates the handler of the requests under `/screen`.
@@ -52,7 +110,7 @@ export function createScreenRoutes({ act, screen, service }: {
      * @returns {Promise<void>}
      */
     return async function handleScreen(req: IncomingMessage, res: ServerResponse, token: string | undefined) {
-        const { pathname } = new URL(req.url ?? '/', 'http://localhost');
+        const { pathname, searchParams } = new URL(req.url ?? '/', 'http://localhost');
 
         if (!screen) {
             throw new HttpError(404, 'not found');
@@ -97,16 +155,20 @@ export function createScreenRoutes({ act, screen, service }: {
             if (route === '/state' && req.method === 'GET') {
                 const rooms = await service.rooms();
                 const queues = service.queues(rooms);
-                const hnOf = (id: string) => service.state.encounters.find(e => e.id === id)?.hn;
+                const examination = service.examinationQueues(rooms);
+                const onScreen = (entries: { encounterId: string; }[]) => entries.map(e => screenEntry(service, e));
+                const eachOnScreen = (lists: Record<string, { encounterId: string; }[]>) =>
+                    Object.fromEntries(Object.entries(lists).map(([ key, entries ]) => [ key, onScreen(entries) ]));
                 const recent = Date.now() - 2 * 60_000;
 
                 send(res, 200, {
+                    clinics: service.clinics(),
                     coordinator,
-                    examination: service.examinationQueues(rooms),
-                    nhso: {
-                        bypass: service.bypassToday() ?? null,
-                        statuses: service.nhsoStatuses()
+                    examination: {
+                        doctors: eachOnScreen(examination.doctors),
+                        unassigned: onScreen(examination.unassigned)
                     },
+                    nhso: screenNhso(service),
                     moves: service.state.moves
                         .filter(m => m.startedAt.getTime() >= recent || m.state === 'counting_down')
                         .map(m => ({
@@ -124,14 +186,23 @@ export function createScreenRoutes({ act, screen, service }: {
                             .filter(e => e.stage !== 'done' && e.questionnaires?.length)
                             .map(e => [ e.id, (e.questionnaires ?? []).map(describeSent) ]))
                     },
-                    queues: Object.fromEntries(Object.entries(queues).map(([ stage, entries ]) =>
-                        [ stage, entries.map(e => ({ ...e, hn: hnOf(e.encounterId) })) ])),
-                    rooms,
+                    queues: eachOnScreen(queues),
+                    rooms: rooms.map(room => screenRoom(service, room)),
                     videoCatalogue: service.videoCatalogue().map(({ id, title }) => ({ id, title })),
                     videos: service.playingVideos(),
                     stages: service.stages().map(({ id, name }) => ({ id, name })),
                     teams: service.teams(rooms)
                 });
+
+                return;
+            }
+            if (route === '/today' && req.method === 'GET') {
+                send(res, 200, todayFigures(service.state.encounters, {
+                    clinic: searchParams.get('clinic') || undefined,
+                    now: new Date(),
+                    stages: service.stages().map(s => s.id),
+                    timeZone: service.timeZone
+                }));
 
                 return;
             }
@@ -141,6 +212,11 @@ export function createScreenRoutes({ act, screen, service }: {
         } catch (error) {
             if (error instanceof ProsodyUnavailableError) {
                 throw new HttpError(503, `Prosody cannot be asked now (${error.code})`);
+            }
+
+            // The screen lists a database it cannot be read from as a trouble of its own.
+            if (error instanceof DatabaseError && pathname === '/screen/api/state') {
+                throw new HttpError(503, 'database');
             }
             throw error;
         }
