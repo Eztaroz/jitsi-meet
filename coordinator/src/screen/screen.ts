@@ -8,7 +8,10 @@
     /** Where the tab keeps the clinic its coordinator follows. */
     const CLINIC_KEY = 'coordinator-clinic';
 
-    /** Where the tab keeps the moves that failed or were refused, until dismissed, and the ids of those dismissed. */
+    /**
+     * Where the tab keeps the moves that failed or were refused, until dismissed, and the ids of those dismissed. The
+     * moves name staff and patients, so they go when the coordinator's session does; the ids name nobody.
+     */
     const FAILED_MOVES_KEY = 'coordinator-failed-moves';
     const DISMISSED_MOVES_KEY = 'coordinator-dismissed-moves';
 
@@ -327,8 +330,8 @@
 
     /**
      * The elements of the queue view, by key. Each refresh patches them in place rather than draw them anew, so that
-     * open team names, a half-typed field, a picked stage and the focus survive it. A card, and the open panel, is one
-     * element for as long as its encounter stays in one stage.
+     * open team names, a half-typed field, a picked stage and the focus survive it. A card is one element for as long as
+     * its encounter stays in one stage, and the open panel for as long as it is open.
      */
     const teamNodes = new Map<string, HTMLDetailsElement>();
     const columnNodes = new Map<string, HTMLElement>();
@@ -667,6 +670,8 @@
      * @returns {void}
      */
     function hold(trigger: HTMLButtonElement, request: Promise<IResult>, tell: (result: IResult) => void): void {
+        const focused = document.activeElement === trigger;
+
         trigger.disabled = true;
         request.then(result => {
             tell(result);
@@ -674,6 +679,11 @@
             return refresh();
         }).then(() => {
             trigger.disabled = false;
+
+            // A button held down loses the focus, which goes back to it unless something else has taken it since.
+            if (focused && trigger.isConnected && document.activeElement === document.body) {
+                trigger.focus({ preventScroll: true });
+            }
         });
     }
 
@@ -687,6 +697,9 @@
         clearTimeout(timer);
         closeDetail(false);
         sessionStorage.removeItem(TOKEN_KEY);
+
+        // Another person may sign in at this tab next, an expired token's included.
+        sessionStorage.removeItem(FAILED_MOVES_KEY);
         say();
         latest = undefined;
         unread = '';
@@ -1110,12 +1123,28 @@
     function createUnqueued(hn: string): HTMLElement {
         const card = el('div', undefined, 'uq-card');
         const wait = el('span', undefined, 'uq-wait');
-        const action = el('div', undefined, 'uq-action');
         const go = button('เข้าคิว', 'uq-go primary', 'arrow');
-        const choice = el('div', undefined, 'uq-clinics');
 
         card.dataset.hn = hn;
         wait.append(icon('clock'), el('span', undefined, 'wait'));
+        card.append(el('b', hn, 'uq-hn'), wait, el('span', undefined, 'badge uq-appointment'),
+            createQueueAction(hn, go));
+
+        return card;
+    }
+
+    /**
+     * Makes the button that queues a patient in no queue, with the choice of clinic it asks first when the center has
+     * more than one.
+     *
+     * @param {string} hn - The patient's HN.
+     * @param {HTMLButtonElement} go - The button.
+     * @returns {HTMLElement} Both.
+     */
+    function createQueueAction(hn: string, go: HTMLButtonElement): HTMLElement {
+        const action = el('div', undefined, 'uq-action');
+        const choice = el('div', undefined, 'uq-clinics');
+
         choice.hidden = true;
         choice.setAttribute('role', 'group');
         choice.setAttribute('aria-label', `เลือกคลินิกของ HN ${hn}`);
@@ -1138,9 +1167,39 @@
             }
         });
         action.append(go, choice);
-        card.append(el('b', hn, 'uq-hn'), wait, el('span', undefined, 'badge uq-appointment'), action);
+        drawClinicChoice(action, hn, go);
 
-        return card;
+        return action;
+    }
+
+    /**
+     * Fills the choice of clinic with the center's clinics, leaving it alone while they are the same.
+     *
+     * @param {HTMLElement} action - The button that queues and its choice, or an element that holds them.
+     * @param {string} hn - The patient's HN.
+     * @param {HTMLButtonElement} go - The button.
+     * @returns {void}
+     */
+    function drawClinicChoice(action: HTMLElement, hn: string, go: HTMLButtonElement): void {
+        const choice = action.querySelector('.uq-clinics') as HTMLElement;
+        const clinics = latest?.clinics ?? [];
+
+        if (!changed(choice, clinics)) {
+            return;
+        }
+
+        choice.textContent = '';
+        choice.appendChild(el('p', 'เข้าคิวคลินิกไหน'));
+        clinics.forEach(clinic => {
+            const pick = button(clinic.name, 'secondary');
+
+            pick.dataset.clinic = clinic.id;
+            pick.addEventListener('click', () => {
+                closeClinicChoices();
+                queuePatient(hn, clinic, go);
+            });
+            choice.appendChild(pick);
+        });
     }
 
     /**
@@ -1153,9 +1212,6 @@
     function updateUnqueued(card: HTMLElement, room: IRoom): void {
         const seconds = room.unqueuedSeconds ?? 0;
         const badge = card.querySelector('.uq-appointment') as HTMLElement;
-        const choice = card.querySelector('.uq-clinics') as HTMLElement;
-        const go = card.querySelector('.uq-go') as HTMLButtonElement;
-        const clinics = latest?.clinics ?? [];
 
         card.dataset.tier = tierOf(seconds);
         setText(card.querySelector('.wait') as Element, waited(seconds));
@@ -1169,22 +1225,7 @@
             badge.textContent = '';
             badge.append(icon(iconName), el('span', text));
         }
-        if (!changed(choice, clinics)) {
-            return;
-        }
-
-        choice.textContent = '';
-        choice.appendChild(el('p', 'เข้าคิวคลินิกไหน'));
-        clinics.forEach(clinic => {
-            const pick = button(clinic.name, 'secondary');
-
-            pick.dataset.clinic = clinic.id;
-            pick.addEventListener('click', () => {
-                closeClinicChoices();
-                queuePatient(room.name, clinic, go);
-            });
-            choice.appendChild(pick);
-        });
+        drawClinicChoice(card, room.name, card.querySelector('.uq-go') as HTMLButtonElement);
     }
 
     /**
@@ -1226,9 +1267,9 @@
     function closeClinicChoices(): HTMLElement | undefined {
         let was: HTMLElement | undefined;
 
-        unqueuedNodes.forEach(card => {
-            const choice = card.querySelector('.uq-clinics') as HTMLElement;
-            const go = card.querySelector('.uq-go') as HTMLElement;
+        document.querySelectorAll<HTMLElement>('.uq-action').forEach(action => {
+            const choice = action.querySelector('.uq-clinics') as HTMLElement;
+            const go = action.firstElementChild as HTMLElement;
 
             if (!choice.hidden) {
                 was = go;
@@ -1693,8 +1734,11 @@
         go.title = next ? `ส่งต่อไป ${next}` : 'เสร็จสิ้น';
         go.setAttribute('aria-label', next ? `ส่ง ${who} ไป ${next}` : `${who} เสร็จสิ้น`);
         go.querySelector('use')?.setAttribute('href', next ? '#i-arrow' : '#i-check');
-        // Lateness matters only while the patient has not got past the doctor.
-        drawBadges(find('.card-badges'), entry, index <= STAGES.findIndex(stage => stage[0] === 'examination'), nhso);
+        // Lateness matters only while the patient has not got past the doctor, which one sent back after has.
+        const beforeDoctorDone = index <= STAGES.findIndex(stage => stage[0] === 'examination')
+            && !entry.history.slice(0, -1).some(entered => entered.stage === 'examination');
+
+        drawBadges(find('.card-badges'), entry, beforeDoctorDone, nhso);
     }
 
     /**
@@ -1702,7 +1746,7 @@
      *
      * @param {HTMLElement} row - Where they go.
      * @param {Object} entry - The encounter's entry in its queue.
-     * @param {boolean} beforeDoctorDone - Whether its stage is examination or one before it.
+     * @param {boolean} beforeDoctorDone - Whether it has not got past examination.
      * @param {string|undefined} nhso - Its NHSO authentication, if it has one.
      * @returns {void}
      */
@@ -1804,12 +1848,20 @@
         $('detail').hidden = true;
         $('detail').querySelector('.sheet')?.remove();
         setBehindDetail(false);
+
+        let card: HTMLElement | undefined;
+
         ticketNodes.forEach((ticket, key) => {
             ticket.dataset.selected = 'false';
-            if (refocus && key.endsWith(`|${encounterId}`)) {
-                ticket.querySelector<HTMLElement>('.card-open')?.focus();
+            if (key.endsWith(`|${encounterId}`)) {
+                card = ticket;
             }
         });
+
+        // A patient opened from the attention list may have no card: the clinic filter keeps it off the board.
+        if (refocus) {
+            (card ? card.querySelector<HTMLElement>('.card-open') : $('att-toggle'))?.focus();
+        }
     }
 
     /**
@@ -1824,8 +1876,8 @@
     }
 
     /**
-     * Draws the open panel from the queues last read. It is made anew only when its encounter changes stage, and
-     * closes when the encounter is in no queue any more.
+     * Draws the open panel from the queues last read. Only the sections of its body are made anew, when its encounter
+     * changes stage; it closes when the encounter is in no queue any more.
      *
      * @returns {void}
      */
@@ -1848,14 +1900,15 @@
 
         const key = `${stage}|${selected}`;
         const holder = $('detail');
-        let sheet = holder.querySelector<HTMLElement>('.sheet');
+        const sheet = holder.querySelector<HTMLElement>('.sheet') ?? holder.appendChild(createSheet(entry));
 
-        if (sheet?.dataset.key !== key) {
-            const focused = sheet && (sheet.contains(document.activeElement) || document.activeElement === document.body);
+        if (sheet.dataset.key !== key) {
+            // The pinned action stays where it was: a key pressed again must not send the patient on once more.
+            const focused = sheet.dataset.key
+                && (sheet.contains(document.activeElement) || document.activeElement === document.body);
 
-            sheet?.remove();
-            sheet = holder.appendChild(createSheet(entry, index));
             sheet.dataset.key = key;
+            drawStageSections(sheet, entry, index);
             if (focused) {
                 sheet.querySelector<HTMLElement>('.sheet-close')?.focus();
             }
@@ -1867,14 +1920,13 @@
     }
 
     /**
-     * Makes an encounter's panel: the HN, the wait and the facts on top; a section for each thing that can be done;
+     * Makes an encounter's panel: the HN, the wait and the facts on top; a place for the sections of what can be done;
      * and the action that sends the patient on, pinned at the bottom.
      *
      * @param {Object} entry - The encounter's entry in its queue.
-     * @param {number} index - The stage's place in the stages.
      * @returns {HTMLElement}
      */
-    function createSheet(entry: IQueueEntry, index: number): HTMLElement {
+    function createSheet(entry: IQueueEntry): HTMLElement {
         const sheet = el('aside', undefined, 'sheet');
         const head = el('div', undefined, 'sheet-head');
         const top = el('div', undefined, 'sheet-top');
@@ -1899,12 +1951,6 @@
         top.append(title, close);
         head.append(top, el('div', undefined, 'sheet-alerts'), createMeter(), el('dl', undefined, 'facts'));
 
-        body.appendChild(createStepper(sheet, entry, STAGES[index][0]));
-        if (STAGES[index][0] === 'examination') {
-            body.appendChild(createDoctorSection(entry));
-        }
-        body.append(createVideoSection(entry), createQuestionnaireSection());
-
         // The second click of a double click would send the patient on twice.
         go.addEventListener('click', event => {
             if (event.detail < 2) {
@@ -1920,6 +1966,26 @@
         sheet.append(head, body, foot);
 
         return sheet;
+    }
+
+    /**
+     * Makes the panel's sections for the stage its encounter is in.
+     *
+     * @param {HTMLElement} sheet - The panel.
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {number} index - The stage's place in the stages.
+     * @returns {void}
+     */
+    function drawStageSections(sheet: HTMLElement, entry: IQueueEntry, index: number): void {
+        const body = sheet.querySelector('.sheet-body') as HTMLElement;
+        const [ stage ] = STAGES[index];
+
+        body.textContent = '';
+        body.appendChild(createStepper(sheet, entry, stage));
+        if (stage === 'examination') {
+            body.appendChild(createDoctorSection(entry));
+        }
+        body.append(createVideoSection(entry), createQuestionnaireSection());
     }
 
     /**
@@ -2257,24 +2323,41 @@
         const chips = sheet.querySelector<HTMLElement>('.doctor-chips');
         const known = Object.keys(latest?.examination.doctors ?? {});
 
-        if (!chips || !changed(chips, [ known, doctor ?? '' ])) {
+        if (!chips) {
             return;
         }
-        chips.textContent = '';
-        [ ...known, '' ].forEach(id => {
-            const chip = el('button', id || 'ยังไม่กำหนด', 'doctor-chip');
-            const pressed = id === (doctor ?? '');
 
-            chip.type = 'button';
-            chip.dataset.doctor = id;
-            chip.setAttribute('aria-pressed', String(pressed));
-            chip.addEventListener('click', () => {
-                if (chip.getAttribute('aria-pressed') !== 'true') {
-                    setDoctor(entry, id || null, chip);
-                }
-            });
-            chips.appendChild(chip);
+        const made = new Map(Array.from(chips.querySelectorAll<HTMLButtonElement>('.doctor-chip'))
+            .map(chip => [ chip.dataset.doctor, chip ]));
+
+        arrange(chips, [ ...known, '' ].map(id => {
+            const chip = made.get(id) ?? createDoctorChip(entry, id);
+
+            chip.setAttribute('aria-pressed', String(id === (doctor ?? '')));
+
+            return chip;
+        }));
+    }
+
+    /**
+     * Makes the chip that gives an encounter a doctor, or takes the doctor away.
+     *
+     * @param {Object} entry - The encounter's entry in its queue.
+     * @param {string} id - The doctor's identity id, or none.
+     * @returns {HTMLButtonElement}
+     */
+    function createDoctorChip(entry: IQueueEntry, id: string): HTMLButtonElement {
+        const chip = el('button', id || 'ยังไม่กำหนด', 'doctor-chip');
+
+        chip.type = 'button';
+        chip.dataset.doctor = id;
+        chip.addEventListener('click', () => {
+            if (chip.getAttribute('aria-pressed') !== 'true') {
+                setDoctor(entry, id || null, chip);
+            }
         });
+
+        return chip;
     }
 
     /**
@@ -2700,15 +2783,7 @@
         if (unstarted) {
             const start = button('เริ่ม encounter', 'start-encounter primary', 'play');
 
-            start.addEventListener('click', () => {
-                start.disabled = true;
-                act('/encounters', { hn: room.name }).then(result => {
-                    say(failed(result) ? 'เริ่ม encounter ไม่สำเร็จ (ระบบบันทึกอาจเต็ม)' : `เริ่ม encounter ของ ${room.name} แล้ว`,
-                        failed(result) ? 'error' : 'ok');
-                    refresh();
-                });
-            });
-            card.appendChild(start);
+            card.appendChild(createQueueAction(room.name, start));
         }
         people.forEach(o => card.appendChild(drawOccupant(o, room, rooms, moves)));
         if (!people.length) {
@@ -3005,20 +3080,6 @@
     }
 
     /**
-     * Opens a patient's panel from the attention list, which is the center's: a card that the clinic filter has taken
-     * off the board is brought back first.
-     *
-     * @param {Object} entry - The encounter's entry in its queue.
-     * @returns {void}
-     */
-    function openPatient(entry: IQueueEntry): void {
-        if (CLINIC_SHOWN && entry.clinic !== CLINIC_SHOWN) {
-            pickClinic('');
-        }
-        openDetail(entry.encounterId);
-    }
-
-    /**
      * Every patient of the center who is in a queue, whatever the clinic filter shows, in the stages' order.
      *
      * @returns {Object[]}
@@ -3131,7 +3192,7 @@
             return [ { icon: 'clock',
                 key: `long-wait|${id}`,
                 kind: 'long-wait',
-                open: () => openPatient(longest),
+                open: () => openDetail(longest.encounterId),
                 severity: 'high',
                 text: `รอนานเกิน ${WAIT_LONG_SECONDS / 60} นาที: ${name} ${long.length} ราย (นานสุด HN ${
                     longest.hn || '—'} ${Math.floor(longest.waitedSeconds / 60)} นาที)` } ];
@@ -3154,7 +3215,7 @@
             ? [ { icon: iconName,
                 key: kind,
                 kind,
-                open: () => openPatient(entries[0]),
+                open: () => openDetail(entries[0].encounterId),
                 severity,
                 text } ]
             : [];
@@ -3398,8 +3459,14 @@
             return Promise.resolve();
         }
 
+        // The coordinator may sign out, or another sign in, while a read is on its way: it then says nothing.
+        const stale = () => sessionStorage.getItem(TOKEN_KEY) !== token;
+
         return fetch('screen/api/state', { headers: { Authorization: `Bearer ${token}` } })
             .then(response => {
+                if (stale()) {
+                    return undefined;
+                }
                 if (response.status === 401 || response.status === 403) {
                     return response.json().then((body: { error: string; }) => {
                         showSignIn(ERRORS[body.error] || 'เข้าสู่ระบบไม่ได้');
@@ -3419,6 +3486,10 @@
                 const now = Date.parse(response.headers.get('date') ?? '') || Date.now();
 
                 return response.json().then((state: IState) => {
+                    if (stale()) {
+                        return;
+                    }
+
                     const who = state.coordinator.name || state.coordinator.id;
 
                     $('signin').hidden = true;
@@ -3446,10 +3517,13 @@
                     loadToday();
                     drawDetail();
 
-                    // The rooms are drawn anew: a list being chosen from would close, and a field being typed in would
-                    // lose its place.
-                    if (!($('rooms').contains(document.activeElement)
-                            && document.activeElement?.matches('select, input.move-hn'))) {
+                    // The rooms are drawn anew: a list or a choice of clinic being chosen from would close, and a field
+                    // being typed in would lose its place.
+                    const inUse = $('rooms').querySelector('.uq-clinics:not([hidden])')
+                        || ($('rooms').contains(document.activeElement)
+                            && document.activeElement?.matches('select, input.move-hn'));
+
+                    if (!inUse) {
                         drawRooms(state.rooms, state.moves);
                     }
                     drawOutcomes(state.moves);
@@ -3462,6 +3536,9 @@
                 });
             })
             .catch((error: Error) => {
+                if (stale()) {
+                    return;
+                }
                 showLive(false);
                 $('problem').hidden = false;
                 $('problem').textContent = 'ติดต่อระบบไม่ได้ กำลังลองใหม่';
@@ -3501,6 +3578,9 @@
 
     if (fromFragment) {
         sessionStorage.setItem(TOKEN_KEY, decodeURIComponent(fromFragment[1] ?? ''));
+
+        // It may be another coordinator's token than the tab had.
+        sessionStorage.removeItem(FAILED_MOVES_KEY);
         history.replaceState(null, '', location.pathname);
     }
     refresh();
