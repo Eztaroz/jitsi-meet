@@ -26,7 +26,7 @@ export interface IBypassDay {
 }
 
 /**
- * Asks the NHSO API whether an encounter's patient has authenticated. The API's spec is not here yet (GitHub #23): until
+ * Asks the NHSO API whether an encounter's patient has authenticated. The API's spec is not here yet (GitLab #41): until
  * it is, no checker is configured and every status that is not a bypass is `unavailable`.
  */
 export interface INhsoChecker {
