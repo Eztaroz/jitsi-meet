@@ -311,7 +311,7 @@ describe('the state of the coordinator screen', () => {
         beforeEach(async () => {
             dir = mkdtempSync(join(tmpdir(), 'screen-state-'));
             await open(LAYOUT, { appointments: his, dir, patients: [ '1111111', '2222222' ] });
-            await service.checkAppointments();
+            await service.checkWaitingPatients();
         });
 
         it('gives the entry of an encounter that started from an appointment its time of day', async () => {
@@ -355,7 +355,7 @@ describe('the state of the coordinator screen', () => {
         });
 
         it('counts from a look of its own at the rooms, with no screen open and no HIS', async () => {
-            await service.checkAppointments();
+            await service.checkWaitingPatients();
             mock.timers.tick(30_000);
 
             assert.equal(await waitedIn('4444444'), 30);

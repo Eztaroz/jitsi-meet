@@ -286,8 +286,8 @@ export class CoordinatorService {
      * forgotten once nobody waits in it without an encounter, so a patient who comes back is looked up again.
      */
     private readonly _appointmentChecks = new Map<string, { at: number; outcome?: AppointmentOutcome; }>();
-    private _appointmentWatch?: NodeJS.Timeout;
-    private _checkingAppointments = false;
+    private _waitingWatch?: NodeJS.Timeout;
+    private _checkingWaiting = false;
 
     /**
      * When this process first saw each patient who waits in their own room without an encounter, by room. Nothing
@@ -713,12 +713,12 @@ export class CoordinatorService {
      * @param {number} [everyMs] - How often.
      * @returns {void}
      */
-    startAppointments(everyMs = 5_000): void {
-        this._appointmentWatch = setInterval(() => {
-            this.checkAppointments().catch(error =>
+    startWaitingWatch(everyMs = 5_000): void {
+        this._waitingWatch = setInterval(() => {
+            this.checkWaitingPatients().catch(error =>
                 log.warn('could not look for patients waiting without an encounter', { error: (error as Error).name }));
         }, everyMs);
-        this._appointmentWatch.unref();
+        this._waitingWatch.unref();
     }
 
     /**
@@ -730,13 +730,13 @@ export class CoordinatorService {
      *
      * @returns {Promise<void>}
      */
-    async checkAppointments(): Promise<void> {
+    async checkWaitingPatients(): Promise<void> {
         const source = this._opts.appointments;
 
-        if (this._checkingAppointments) {
+        if (this._checkingWaiting) {
             return;
         }
-        this._checkingAppointments = true;
+        this._checkingWaiting = true;
         try {
             const rooms = await this.rooms();
 
@@ -764,7 +764,7 @@ export class CoordinatorService {
                 }
             }
         } finally {
-            this._checkingAppointments = false;
+            this._checkingWaiting = false;
         }
     }
 
@@ -2127,14 +2127,14 @@ export class CoordinatorService {
     }
 
     /**
-     * Stops everything that runs on its own: the sweep, the end of the day, the polling and the look for appointments.
+     * Stops everything that runs on its own: the sweep, the end of the day, the polling and the look for waiting patients.
      *
      * @returns {void}
      */
     stop(): void {
         clearInterval(this._retention);
         clearInterval(this._takeover);
-        clearInterval(this._appointmentWatch);
+        clearInterval(this._waitingWatch);
         clearInterval(this._nhsoWatch);
         clearTimeout(this._midnight);
         for (const timer of this._timers.values()) {

@@ -88,7 +88,7 @@ describe('a patient who joins their room with an appointment today gets an encou
         booked['1234567'] = [ appointment('GY2', '09:30', 205) ];
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         const [ encounter ] = open('1234567');
 
@@ -103,7 +103,7 @@ describe('a patient who joins their room with an appointment today gets an encou
     it('puts the patient in the queue, so staff can call them', async () => {
         booked['1234567'] = [ appointment('GYN', '09:30') ];
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         const id = open('1234567')[0].id;
 
@@ -118,7 +118,7 @@ describe('a patient who joins their room with an appointment today gets an encou
         booked['1234567'] = [ appointment('ENT', '10:00') ];
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         const [ encounter ] = open('1234567');
 
@@ -130,7 +130,7 @@ describe('a patient who joins their room with an appointment today gets an encou
     it('starts nothing for a patient without an appointment today, and says so on their room', async () => {
         rooms = [ { name: '7654321', occupants: [ patient('7654321') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         assert.deepEqual(open('7654321'), []);
         assert.equal((await service.rooms())[0].appointment, 'none');
@@ -139,21 +139,21 @@ describe('a patient who joins their room with an appointment today gets an encou
     it('does not ask the HIS again about a waiting patient within a minute', async () => {
         rooms = [ { name: '7654321', occupants: [ patient('7654321') ] } ];
 
-        await service.checkAppointments();
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
+        await service.checkWaitingPatients();
 
         assert.equal(asked.length, 1);
     });
 
     it('asks again about a patient who left and came back', async () => {
         rooms = [ { name: '7654321', occupants: [ patient('7654321') ] } ];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
         rooms = [];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
         booked['7654321'] = [ appointment('MED', '13:00') ];
         rooms = [ { name: '7654321', occupants: [ patient('7654321') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         assert.equal(asked.length, 2);
         assert.equal(open('7654321')[0].clinic, 'med');
@@ -162,16 +162,16 @@ describe('a patient who joins their room with an appointment today gets an encou
     it('takes the earliest of two clinics first, and the other once the first is done', async () => {
         booked['1234567'] = [ appointment('GYN', '08:00'), appointment('MED', '13:00') ];
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         const first = open('1234567')[0];
 
         assert.equal(first.clinic, 'gyn');
         await service.changeStage(first.id, 'done', 'coord-1');
         rooms = [];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         const second = open('1234567')[0];
 
@@ -182,13 +182,13 @@ describe('a patient who joins their room with an appointment today gets an encou
     it('says every appointment of today has had its encounter, and starts none again', async () => {
         booked['1234567'] = [ appointment('GYN', '08:00') ];
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
         await service.changeStage(open('1234567')[0].id, 'done', 'coord-1');
         rooms = [];
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         assert.deepEqual(open('1234567'), []);
         assert.equal((await service.rooms())[0].appointment, 'all_seen');
@@ -200,7 +200,7 @@ describe('a patient who joins their room with an appointment today gets an encou
         };
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         assert.deepEqual(open('1234567'), []);
         assert.equal((await service.rooms())[0].appointment, 'unreadable');
@@ -213,7 +213,7 @@ describe('a patient who joins their room with an appointment today gets an encou
         };
         rooms = [ { name: '1234567', occupants: [ patient('1234567') ] } ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         assert.deepEqual(open('1234567'), []);
         assert.equal((await service.rooms())[0].appointment, undefined);
@@ -227,7 +227,7 @@ describe('a patient who joins their room with an appointment today gets an encou
             { name: 'lounge-exam', occupants: [ staff('d-1') ] }
         ];
 
-        await service.checkAppointments();
+        await service.checkWaitingPatients();
 
         assert.deepEqual(asked, []);
     });
@@ -247,7 +247,7 @@ describe('a patient who joins their room with an appointment today gets an encou
             token: { audience: 'jitsi', issuer: 'coordinator', subject: 'meet' }
         });
 
-        await plain.checkAppointments();
+        await plain.checkWaitingPatients();
 
         assert.deepEqual(plain.state.encounters, []);
         assert.equal((await plain.rooms())[0].appointment, undefined);

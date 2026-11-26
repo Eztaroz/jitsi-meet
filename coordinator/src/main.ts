@@ -107,7 +107,7 @@ if (registry) {
 }
 // Notes how long patients have waited in no queue, and, with the HIS, starts the encounters of their appointments.
 // Only the active instance does: a standby has no service, so it never reads the HIS (ADR 0019).
-service.startAppointments();
+service.startWaitingWatch();
 const issuer = config.screen && {
     acceptedAudiences: config.screen.acceptedAudiences,
     acceptedIssuers: config.screen.acceptedIssuers,
