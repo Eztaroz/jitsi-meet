@@ -17,7 +17,8 @@ setTestProperties(__filename, {
     description: 'A coordinator of a center with several clinics follows one on the screen: the clinic bar counts each \
 clinic\'s patients, picking one leaves only its cards on the board while the header\'s figures stay the center\'s, the \
 cards name their clinic only while all are shown, and the pick survives a reload. A card sends its patient to the next \
-stage of their own pathway, which may skip one. Needs the test deployment\'s clinics "med" and "gyn", the second with \
+stage of their own pathway, which may skip one. Opening a patient from the attention list leaves the pick as it was. \
+Needs the test deployment\'s clinics "med" and "gyn", the second with \
 the pathway waiting, examination, done. Skipped unless the deployment is the JWT variant of the recorder bot\'s test \
 deployment with the coordinator service on top of it.',
     usesBrowsers: [ 'p1' ]
@@ -94,6 +95,22 @@ describe('Coordinator: the clinic filter', () => {
 
         await waitForCard(card(gyn, 'examination'));
         expect((await getQueues()).examination.some(e => e.encounterId === gyn)).toBe(true);
+    });
+
+    it('keeps the pick when the attention list opens a patient the filter hides', async () => {
+        // Neither patient ever joined, and the item leads to the first of those not in their room, in the stages'
+        // order: the "med" one in waiting, or an earlier one of another spec.
+        const item = await screen.driver.$('#att-list .att-item[data-kind="not-in-room"] .att-open');
+
+        await (await screen.driver.$('#att-toggle')).click();
+        await item.waitForClickable({ timeout: 10_000, timeoutMsg: 'the attention list has no such item' });
+        await item.click();
+        await (await screen.driver.$('.sheet')).waitForDisplayed({ timeout: 5_000 });
+        await (await screen.driver.$('.sheet .sheet-close')).click();
+
+        expect(await screen.driver.execute(() => sessionStorage.getItem('coordinator-clinic'))).toBe('gyn');
+        expect(await (await choice('gyn')).getAttribute('aria-pressed')).toBe('true');
+        expect(await exists(card(med))).toBe(false);
     });
 
     it('shows every clinic\'s cards again', async () => {

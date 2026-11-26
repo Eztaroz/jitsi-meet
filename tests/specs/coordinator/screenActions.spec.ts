@@ -26,7 +26,7 @@ import { patientLinkRoom, uniqueHn } from '../../helpers/recorderBot';
 import { generateToken } from '../../helpers/token';
 
 setTestProperties(__filename, {
-    description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none; \
+    description: 'A coordinator acts from the screen: starts an encounter for a patient\'s room that has none, at the clinic asked for; \
 in the panel a card opens, plays, stops and chooses a waiting video (where the deployment has a video player), sends \
 a health questionnaire, picks a stage on the stepper, sets, takes away and picks a doctor, and marks an encounter \
 done; sends the patient on from their card to the next stage, picks another stage for them, marks the encounter done \
@@ -35,6 +35,7 @@ The patient\'s card says that a health questionnaire waits for its answers, and 
 counts the moves under way, and its figure leads to the rooms and moves. \
 The attention list counts what needs the coordinator, as the tab\'s title does; its items open the patient\'s panel, \
 or the rooms for a move, and a refused move stays in it until it is dismissed, in that tab only. \
+Signing out leaves nothing of the moves in the tab. \
 A patient is offered no move, since patients stay in their own room (ADR 0011). A staff member being moved shows as \
 moving on every coordinator\'s screen, and what came of the move is shown in Thai with its reason: cancelled by the \
 staff member, refused. Every action is attributed in the audit log to the coordinator who made it, not to the system. \
@@ -188,6 +189,12 @@ describe('Coordinator: acting from the screen', () => {
             (card!.querySelector('.start-encounter') as HTMLElement).click();
         }, room);
 
+        // The center has two clinics, so it asks which first.
+        const med = await a.driver.$(`.room[data-room="${room}"] .uq-clinics button[data-clinic="med"]`);
+
+        await med.waitForClickable({ timeout: 5_000, timeoutMsg: 'it does not ask which clinic' });
+        await med.click();
+
         await a.driver.waitUntil(async () => !(await roomText(a, room)).includes('ยังไม่มี encounter'),
             { timeout: 15_000, timeoutMsg: 'the encounter was not started' });
         expect((await getQueues()).waiting.some(e => e.hn?.toLowerCase() === room)).toBe(true);
@@ -310,10 +317,17 @@ describe('Coordinator: acting from the screen', () => {
         await clickInPanel(a, '.doctor-set');
         await a.driver.waitUntil(async () => await doctorOf() === doctor, { timeoutMsg: 'the typed doctor was not set' });
 
+        // The screen is behind the API until its next refresh, and a chip it still shows pressed does nothing.
+        const chipPressed = async (who: string) => (await a.driver.$(
+            `.sheet .doctor-chip[data-doctor="${who}"][aria-pressed="true"]`)).waitForExist(
+            { timeout: 10_000, timeoutMsg: `the panel does not show the doctor "${who}"` });
+
+        await chipPressed(doctor);
         await clickInPanel(a, '.doctor-chip[data-doctor=""]');
         await a.driver.waitUntil(async () => await doctorOf() === undefined,
             { timeoutMsg: 'the doctor was not taken away' });
 
+        await chipPressed('');
         await clickInPanel(a, `.doctor-chip[data-doctor="${otherDoctor}"]`);
         await a.driver.waitUntil(async () => await doctorOf() === otherDoctor,
             { timeoutMsg: 'the picked doctor was not set' });
@@ -494,6 +508,18 @@ describe('Coordinator: acting from the screen', () => {
         await (await a.driver.$('.sheet .doctor-to')).waitForDisplayed({ timeout: 10_000 });
         await clickInPanel(a, '.sheet-close');
         await postStage(id, 'done');
+    });
+
+    it('keeps nothing of the moves in the tab once the coordinator signs out', async () => {
+        const kept = () => a.driver.execute(() => sessionStorage.getItem('coordinator-failed-moves'));
+
+        // They name staff and patients, and another person may sign in at the same tab.
+        expect(await kept()).toContain(closedRoom);
+        await (await a.driver.$('#sign-out')).click();
+        await (await a.driver.$('#signin-token')).waitForDisplayed({ timeout: 5_000 });
+        expect(await kept()).toBe(null);
+
+        await openScreen(a, coordinatorA);
     });
 
     it('leads from the header\'s figure of moves to the rooms and moves', async () => {

@@ -106,7 +106,10 @@ describe('Coordinator: queueing a patient who has no encounter', () => {
 
     it('asks which clinic, and queues them in waiting at the one picked', async () => {
         await clickInStrip('.uq-go');
-        await (await screen.driver.$('.uq-clinics button[data-clinic="gyn"]')).waitForDisplayed({ timeout: 5_000 });
+
+        // Another spec's patient may be in the strip too, with a choice of their own that stays closed.
+        await (await screen.driver.$(`.uq-card[data-hn="${room}"] .uq-clinics button[data-clinic="gyn"]`))
+            .waitForDisplayed({ timeout: 5_000 });
         expect((await getQueues()).waiting.some(e => e.hn?.toLowerCase() === room)).toBe(false);
 
         await clickInStrip('.uq-clinics button[data-clinic="gyn"]');
