@@ -144,6 +144,23 @@ services:
             ENABLE_BREAKOUT_ROOMS: 'false'
             ENABLE_RECORDING: 1
             JICOFO_AUTH_PASSWORD: ${JICOFO_AUTH_PASSWORD}
+            # Binds the REST server to every address of the container (rest.host = "0.0.0.0"). Without it Jicofo
+            # listens on 127.0.0.1 only, the published port above answers nothing, and the night pipeline's health
+            # check fails and rolls back a healthy deploy (GitLab #20).
+            JICOFO_ENABLE_REST: 'true'
+            # Upstream turns every REST route on, and the port above reaches the internal network. Only /about/health
+            # and /about/version are needed there (/stats and /rtcstats cannot be turned off: counts only, and
+            # rtcstats is off). /debug lists the rooms, whose names are patients' HNs (ADR 0005); /move-endpoints and
+            # /pin change the videobridges without authentication; nothing reads /metrics; the clients ask for a
+            # conference over XMPP, not /conference-request/v1. System properties, because the image has no variable
+            # for these, and a file mounted in /config stops Jicofo from starting: its init script chowns /config,
+            # and a compose config is read-only.
+            JAVA_TOOL_OPTIONS: >-
+                -Djicofo.rest.prometheus.enabled=false
+                -Djicofo.rest.conference-request.enabled=false
+                -Djicofo.rest.move-endpoints.enabled=false
+                -Djicofo.rest.debug.enabled=false
+                -Djicofo.rest.pin.enabled=false
             JICOFO_ENABLE_HEALTH_CHECKS: 'true'
             TZ: ${TZ:-Asia/Bangkok}
             XMPP_HIDDEN_DOMAIN: ${XMPP_HIDDEN_DOMAIN:-recorder.meet.jitsi}
